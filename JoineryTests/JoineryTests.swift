@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 import Testing
 @testable import Joinery
 
@@ -218,6 +219,16 @@ struct JoineryTests {
 
         schema.align(Set(ids), .right)
         #expect(schema.tables.allSatisfy { $0.position.x == 1000 })
+    }
+
+    @Test func boxSelectionPrefersTablesThenTiesThenWires() {
+        let table = UUID(), tie = UUID(), wire = UUID()
+        typealias Item = CanvasController.Item
+        #expect(CanvasController.boxSelection(tables: [table], ties: [tie], wires: [wire])
+            == [Item.table(table), .zipTie(tie), .relationship(wire)])
+        #expect(CanvasController.boxSelection(tables: [], ties: [tie], wires: [wire]) == [Item.zipTie(tie)])
+        #expect(CanvasController.boxSelection(tables: [], ties: [], wires: [wire]) == [Item.relationship(wire)])
+        #expect(CanvasController.boxSelection(tables: [], ties: [], wires: []).isEmpty)
     }
 
     @Test func typingNonsenseKeepsNothing() {

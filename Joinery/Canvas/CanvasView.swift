@@ -600,11 +600,12 @@ struct CanvasView: View {
             }
     }
 
-    /// Tables and wires the rectangle touches, and ties inside it.
+    /// What a selection rectangle picks up, of the tables and wires it touches and the ties inside it.
     private func items(in rect: CGRect) -> Set<CanvasController.Item> {
-        Set(schema.tables.filter { Metrics.frame(of: $0).intersects(rect) }.map { .table($0.id) }
-            + schema.zipTies.filter { rect.contains($0.position) }.map { .zipTie($0.id) }
-            + simulation.wires.filter { $0.value.points.contains(where: rect.contains) }.map { .relationship($0.key) })
+        CanvasController.boxSelection(
+            tables: schema.tables.filter { Metrics.frame(of: $0).intersects(rect) }.map(\.id),
+            ties: schema.zipTies.filter { rect.contains($0.position) }.map(\.id),
+            wires: simulation.wires.filter { $0.value.points.contains(where: rect.contains) }.map(\.key))
     }
 
     private func finishStroke() {

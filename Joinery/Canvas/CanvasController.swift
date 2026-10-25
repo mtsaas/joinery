@@ -80,6 +80,14 @@ final class CanvasController {
     var tableOffsets: [Table.ID: CGPoint] { dragOffset.map { offset in Dictionary(uniqueKeysWithValues: selectedTables.map { ($0, offset) }) } ?? [:] }
     var tieOffsets: [ZipTie.ID: CGPoint] { dragOffset.map { offset in Dictionary(uniqueKeysWithValues: selectedTies.map { ($0, offset) }) } ?? [:] }
 
+    /// What a selection rectangle selects, given everything it touches. With tables, everything; without, ties take
+    /// precedence over the wires through them (which are easy to catch by accident); with neither, the wires.
+    static func boxSelection(tables: [Table.ID], ties: [ZipTie.ID], wires: [Relationship.ID]) -> Set<Item> {
+        let tables = tables.map(Item.table), ties = ties.map(Item.zipTie), wires = wires.map(Item.relationship)
+        if !tables.isEmpty { return Set(tables + ties + wires) }
+        return Set(ties.isEmpty ? wires : ties)
+    }
+
     /// Selects `item` on a click: alone, or with Shift added to (or, if already there, taken out of) the selection.
     /// Clicking something already selected keeps the selection, so the whole group can be dragged.
     func click(_ item: Item, extending: Bool) {
