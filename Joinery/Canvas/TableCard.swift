@@ -78,13 +78,15 @@ struct Socket: View {
 
     var body: some View {
         let diameter = Metrics.socketDiameter * zoom
+        let target = max(Metrics.socketHitRadius * 2 * zoom, min(Metrics.minimumTarget, Metrics.rowHeight * zoom))
         Circle()
             .fill(color ?? Theme.card)
             .strokeBorder(color ?? Theme.socket, lineWidth: 1.5 * zoom)
             .frame(width: diameter, height: diameter)
             .scaleEffect(isHovered ? 1.45 : 1)
             .animation(.spring(duration: 0.25, bounce: 0.4), value: isHovered)
-            .frame(width: Metrics.socketHitRadius * 2 * zoom, height: Metrics.socketHitRadius * 2 * zoom)
+            // At least a comfortable target, but no taller than its row, so neighbors don't overlap.
+            .frame(width: target, height: target)
             .contentShape(.circle)
             .onHover { isHovered = $0 }
             .pointerStyle(.link)

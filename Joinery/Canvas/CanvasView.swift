@@ -60,6 +60,7 @@ struct CanvasView: View {
         let zoom = canvas.zoom, offset = canvas.offset, highlighted = highlightedRelationships
         let tieCrossings = canvas.stroke.map { Set(simulation.crossings(from: $0.start, to: $0.end).map(\.relationship)) } ?? []
         let selectedTie: ZipTie.ID? = if case .zipTie(let id) = canvas.selection { id } else { nil }
+        let hoveredTie = canvas.hoveredTie
         let colors = wireColors
         let relationships = schema.relationships
 
@@ -82,7 +83,8 @@ struct CanvasView: View {
                                    style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round))
                 }
                 for (id, tie) in routing.ties {
-                    drawTie(tie, isSelected: id == selectedTie, in: context, relationships: relationships, tieID: id)
+                    drawTie(tie, isSelected: id == selectedTie, isHovered: id == hoveredTie, in: context,
+                            relationships: relationships, tieID: id)
                 }
             }
         }
@@ -97,7 +99,7 @@ struct CanvasView: View {
     }
 
     /// Drawn where its wires actually are, so it rides along as they spring into place.
-    private func drawTie(_ tie: Routing.Tie, isSelected: Bool, in context: GraphicsContext,
+    private func drawTie(_ tie: Routing.Tie, isSelected: Bool, isHovered: Bool, in context: GraphicsContext,
                          relationships: [Relationship], tieID: ZipTie.ID) {
         let slots = tie.relationships.compactMap { id -> CGPoint? in
             guard let wire = simulation.wires[id],
@@ -113,7 +115,7 @@ struct CanvasView: View {
         let halfLength = Metrics.tieHalfLength(holding: tie.relationships.count)
         let band = CGRect(x: -Metrics.tieThickness / 2, y: -halfLength, width: Metrics.tieThickness, height: halfLength * 2)
         let shape = Path(roundedRect: band, cornerRadius: Metrics.tieThickness / 2)
-        context.fill(shape, with: .color(isSelected ? Color.accentColor : Theme.tie))
+        context.fill(shape, with: .color(isSelected ? Color.accentColor : isHovered ? Theme.tieHovered : Theme.tie))
         context.stroke(shape, with: .color(.black.opacity(0.18)), lineWidth: 0.5)
     }
 
@@ -208,8 +210,10 @@ struct CanvasView: View {
 
     private func tieHandle(_ tie: ZipTie, _ frame: Routing.Tie) -> some View {
         let length = Metrics.tieHalfLength(holding: tie.relationships.count) * 2 + Metrics.socketHitRadius
+        // Never smaller than a comfortable target on screen, however far out you've zoomed.
         return Color.clear
-            .frame(width: Metrics.socketHitRadius * 2 * canvas.zoom, height: length * canvas.zoom)
+            .frame(width: max(Metrics.socketHitRadius * 2 * canvas.zoom, Metrics.minimumTarget),
+                   height: max(length * canvas.zoom, Metrics.minimumTarget))
             .contentShape(.rect)
             .rotationEffect(.radians(atan2(frame.direction.y, frame.direction.x)))
             .position(canvas.viewPoint(frame.center))
@@ -227,7 +231,10 @@ struct CanvasView: View {
             .contextMenu {
                 Button("Cut Zip Tie", systemImage: "scissors", role: .destructive) { schema.removeZipTie(tie.id) }
             }
-            .pointerStyle(.grabIdle)
+            .onHover { isHovered in
+                if isHovered { canvas.hoveredTie = tie.id } else if canvas.hoveredTie == tie.id { canvas.hoveredTie = nil }
+            }
+            .pointerStyle(canvas.tieDrag[tie.id] == nil ? .grabIdle : .grabActive)
             .help("Zip tie: drag to move, Delete to cut")
     }
 

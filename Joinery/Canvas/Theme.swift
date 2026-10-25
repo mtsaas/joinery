@@ -6,6 +6,7 @@ enum Theme {
     static let cardBorder = Color(light: NSColor(white: 0, alpha: 0.1), dark: NSColor(white: 1, alpha: 0.1))
     static let gridDot = Color(light: NSColor(white: 0, alpha: 0.13), dark: NSColor(white: 1, alpha: 0.11))
     static let tie = Color(light: NSColor(white: 0.56, alpha: 1), dark: NSColor(white: 0.64, alpha: 1))
+    static let tieHovered = Color(light: NSColor(white: 0.36, alpha: 1), dark: NSColor(white: 0.86, alpha: 1))
     static let stroke = Color.red
     static let socket = Color(light: NSColor(white: 0, alpha: 0.28), dark: NSColor(white: 1, alpha: 0.3))
 }

@@ -22,6 +22,9 @@ struct ScrollWheelReader: NSViewRepresentable {
 
         override var isFlipped: Bool { true }
 
+        /// Clicks go through to the canvas; this only watches scrolls and pinches through its monitor.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if let monitor { NSEvent.removeMonitor(monitor) }

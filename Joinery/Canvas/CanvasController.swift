@@ -40,6 +40,7 @@ final class CanvasController {
 
     var tableDrag: [Table.ID: CGPoint] = [:]
     var tieDrag: [ZipTie.ID: CGPoint] = [:]
+    var hoveredTie: ZipTie.ID?
     var connection: Connection?
     var stroke: Stroke?
     var panOrigin: CGPoint?

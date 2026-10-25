@@ -19,6 +19,8 @@ enum Metrics {
     static let socketDiameter: CGFloat = 8
     /// How close the pointer has to come to a socket to grab it or drop a wire on it.
     static let socketHitRadius: CGFloat = 9
+    /// The smallest a grabbable thing gets on screen, in screen points, so zooming out doesn't make it unclickable.
+    static let minimumTarget: CGFloat = 24
 
     static let wireWidth: CGFloat = 2.25
     /// How far a wire runs straight out of its socket before curving.
