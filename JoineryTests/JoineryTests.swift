@@ -60,6 +60,31 @@ struct JoineryTests {
         #expect(slots[0].y < slots[1].y)
     }
 
+    /// Tying close to a socket the wires share once made them whip into a knot while settling.
+    @Test func tyingNearASocketNeverFoldsAWire() throws {
+        var schema = storefront()
+        let simulation = WireSimulation()
+        var time = settle(simulation, on: Routing(schema: schema))
+        let socket = Metrics.socket(row: 0, side: .trailing, in: Metrics.frame(of: schema.tables[0]))
+        let x = socket.x + Metrics.wireLead * 2
+        let tied = schema.zipTie(simulation, from: CGPoint(x: x, y: -200), to: CGPoint(x: x, y: 300))
+        try #require(tied != nil)
+
+        let routes = Routing(schema: schema).routes
+        var sharpest = 0.0
+        repeat {
+            time += 1.0 / 60
+            for wire in simulation.wires.values {
+                for (a, b, c) in zip(zip(wire.points, wire.points.dropFirst()), wire.points.dropFirst(2)).map({ ($0.0, $0.1, $1) }) {
+                    guard let u = (b - a).normalized, let v = (c - b).normalized else { continue }
+                    sharpest = max(sharpest, Double(acos(min(1, max(-1, u.dot(v))))) * 180 / .pi)
+                }
+            }
+        } while simulation.advance(toward: routes, to: time)
+
+        #expect(sharpest < 45, "a wire bent \(Int(sharpest))° while settling")
+    }
+
     @Test func strokeAcrossOneWireTiesNothing() {
         var schema = storefront()
         let simulation = WireSimulation()

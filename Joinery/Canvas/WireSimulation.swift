@@ -48,8 +48,9 @@ final class WireSimulation {
                 continue
             }
             if wire.points.count != route.points.count {
-                // Tied or untied: same shape, new number of points; it then springs onto its new route.
-                wire = Wire(points: Self.resample(wire.points, count: route.points.count))
+                // Tied or untied: keep the shape, with each new point starting where the wire is nearest to where that
+                // point is headed. It then slides into place rather than whipping across the canvas.
+                wire = Wire(points: route.points.map { Self.nearest(to: $0, on: wire.points) })
             }
             for _ in 0..<steps { wire.step(toward: route) }
             isMoving = !wire.settle(on: route) || isMoving
@@ -91,21 +92,14 @@ final class WireSimulation {
         }
     }
 
-    /// `points` redistributed evenly along their length.
-    static func resample(_ points: [CGPoint], count: Int) -> [CGPoint] {
-        guard points.count > 1, count > 1 else { return Array(repeating: points.first ?? .zero, count: count) }
-        var lengths = [0.0]
-        for (a, b) in zip(points, points.dropFirst()) { lengths.append(lengths[lengths.count - 1] + a.distance(to: b)) }
-        let total = lengths[lengths.count - 1]
-        var result: [CGPoint] = [], segment = 0
-        for index in 0..<count {
-            let target = total * CGFloat(index) / CGFloat(count - 1)
-            while segment < points.count - 2, lengths[segment + 1] < target { segment += 1 }
-            let span = lengths[segment + 1] - lengths[segment]
-            let t = span > 0 ? (target - lengths[segment]) / span : 0
-            result.append(points[segment] + (points[segment + 1] - points[segment]) * t)
+    /// The point on the polyline through `points` closest to `target`.
+    static func nearest(to target: CGPoint, on points: [CGPoint]) -> CGPoint {
+        guard var best = points.first else { return target }
+        for (a, b) in zip(points, points.dropFirst()) {
+            let candidate = closest(to: target, onSegment: a, b)
+            if candidate.distance(to: target) < best.distance(to: target) { best = candidate }
         }
-        return result
+        return best
     }
 }
 

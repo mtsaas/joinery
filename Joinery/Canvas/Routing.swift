@@ -80,13 +80,25 @@ struct Routing {
             )
         }
 
-        // The points a wire runs between on either side of its `index`th tie.
-        func neighbors(of relationship: Relationship, at index: Int) -> (CGPoint, CGPoint)? {
+        // The points a wire runs between on either side of its `index`th tie. Sockets come with the way the wire
+        // runs through them; neighboring ties don't have one yet.
+        func neighbors(of relationship: Relationship, at index: Int) -> (previous: Waypoint, next: Waypoint)? {
             guard let (start, end) = ends[relationship.id] else { return nil }
             let ties = relationship.zipTies
-            let previous = index == 0 ? start.point : tiePositions[ties[index - 1]] ?? start.point
-            let next = index == ties.count - 1 ? end.point : tiePositions[ties[index + 1]] ?? end.point
+            let previous = index == 0 ? start : tiePositions[ties[index - 1]].map { Waypoint(point: $0, tangent: .zero) } ?? start
+            let next = index == ties.count - 1 ? end : tiePositions[ties[index + 1]].map { Waypoint(point: $0, tangent: .zero) } ?? end
             return (previous, next)
+        }
+
+        // The way a wire runs through a tie at `center`: straight from its neighbors when it's far from them, but
+        // close to a socket, the way it leaves that socket, so it doesn't have to turn hard in the gap between.
+        func flow(of relationship: Relationship, at index: Int, through center: CGPoint) -> CGPoint? {
+            guard let (previous, next) = neighbors(of: relationship, at: index),
+                  let chord = (next.point - previous.point).normalized else { return nil }
+            let before = previous.point.distance(to: center), after = center.distance(to: next.point)
+            let near = before < after ? previous : next
+            let pull = max(0, 1 - min(before, after) / Self.socketReach) * (near.tangent == .zero ? 0 : 1)
+            return (chord * (1 - pull) + near.tangent * pull).normalized ?? chord
         }
 
         // A tie turns to follow its wires: along the average of the way they run through it.
@@ -96,8 +108,7 @@ struct Routing {
             var sum = CGPoint.zero
             for case let relationship? in tie.relationships.map({ relationships[$0] }) {
                 guard let index = relationship.zipTies.firstIndex(of: tie.id),
-                      let (previous, next) = neighbors(of: relationship, at: index),
-                      let way = (next - previous).normalized else { continue }
+                      let way = flow(of: relationship, at: index, through: center) else { continue }
                 sum += way.dot(tie.direction) < 0 ? -way : way
             }
             ties[tie.id] = Tie(center: center, direction: sum.normalized ?? tie.direction, relationships: tie.relationships)
@@ -108,8 +119,8 @@ struct Routing {
             var waypoints = [start]
             for (index, id) in relationship.zipTies.enumerated() {
                 guard let tie = ties[id], let slot = tie.relationships.firstIndex(of: relationship.id),
-                      let (previous, next) = neighbors(of: relationship, at: index) else { continue }
-                let tangent = (next - previous).dot(tie.direction) < 0 ? -tie.direction : tie.direction
+                      let way = flow(of: relationship, at: index, through: tie.center) else { continue }
+                let tangent = way.dot(tie.direction) < 0 ? -tie.direction : tie.direction
                 waypoints.append(Waypoint(point: tie.slot(slot), tangent: tangent, isTie: true))
             }
             waypoints.append(end)
@@ -119,6 +130,8 @@ struct Routing {
 
     /// Tables closer than this side by side are treated as stacked.
     private static let sideGap: CGFloat = 24
+    /// Within this of a socket, a tie turns toward the socket's own direction; at the socket, all the way.
+    private static let socketReach: CGFloat = 160
 
     /// A cubic Bézier between each pair of waypoints, leaving and arriving along their tangents.
     private static func route(through waypoints: [Waypoint]) -> Route {

@@ -30,9 +30,12 @@ func crossing(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint, _ d: CGPoint) -> CGFloat
 }
 
 func distance(from point: CGPoint, toSegment a: CGPoint, _ b: CGPoint) -> CGFloat {
+    point.distance(to: closest(to: point, onSegment: a, b))
+}
+
+func closest(to point: CGPoint, onSegment a: CGPoint, _ b: CGPoint) -> CGPoint {
     let ab = b - a
     let lengthSquared = ab.dot(ab)
-    guard lengthSquared > 0 else { return point.distance(to: a) }
-    let t = min(max((point - a).dot(ab) / lengthSquared, 0), 1)
-    return point.distance(to: a + ab * t)
+    guard lengthSquared > 0 else { return a }
+    return a + ab * min(max((point - a).dot(ab) / lengthSquared, 0), 1)
 }
