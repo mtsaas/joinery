@@ -92,9 +92,10 @@ struct JoineryTests {
 
     @Test func wiresCanBendAroundTablesInTheirWay() throws {
         var schema = storefront()
-        // A table squarely across the wire from orders to users, with room around it.
-        schema.tables[1].position.x = 700
-        let blockerID = schema.addTable(at: CGPoint(x: 350, y: -60))
+        // A table squarely across the wire from orders to users, a couple of hundred points from each socket. (Closer
+        // than that, a wire can't swerve fully clear without kinking, so near a socket it may pass partly under.)
+        schema.tables[1].position.x = 900
+        let blockerID = schema.addTable(at: CGPoint(x: 450, y: -60))
         let blocker = try #require(schema.table(blockerID))
         schema.tables[schema.tables.count - 1].columns += (1...4).map { Column(name: "c\($0)", type: .text) }
         let wire = schema.relationships[0].id

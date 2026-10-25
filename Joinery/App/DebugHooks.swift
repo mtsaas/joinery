@@ -9,7 +9,7 @@ import SwiftUI
 ///   frames 50 ms apart (out-0.png, out-1.png, …) to check an animation; `JOINERY_SNAPSHOT_DELAY` sets the wait.
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
-///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection),
+///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection), `place <x> <y>` (puts the selected ties there),
 ///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
 ///   `wait <seconds>`.
 @MainActor
@@ -71,6 +71,11 @@ enum DebugHooks {
                 canvas.edit(.tableName(document.wrappedValue.tables[table!].id))
             case "click" where numbers.count == 2:
                 NotificationCenter.default.post(name: .click, object: canvas, userInfo: ["point": CGPoint(x: numbers[0], y: numbers[1])])
+            case "place" where numbers.count == 2:
+                // Moves the selected ties to a point, in canvas points.
+                for index in document.wrappedValue.zipTies.indices where canvas.selectedTies.contains(document.wrappedValue.zipTies[index].id) {
+                    document.wrappedValue.zipTies[index].position = CGPoint(x: numbers[0], y: numbers[1])
+                }
             case "nudge" where numbers.count == 2:
                 document.wrappedValue.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: CGPoint(x: numbers[0], y: numbers[1]))
             case "type" where words.count > 1:
