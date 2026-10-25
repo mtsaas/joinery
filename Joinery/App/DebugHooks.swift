@@ -7,13 +7,18 @@ import SwiftUI
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
 ///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection),
-///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>` (real key events), `selection`, `counts`, `drop-preview <table.column> <x> <y>`, `open-palette`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
+///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
 ///   `wait <seconds>`.
 @MainActor
 final class DebugHooks: NSObject, NSApplicationDelegate {
     private let environment = ProcessInfo.processInfo.environment
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if environment["JOINERY_SCRIPT"] != nil {
+            NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { note in
+                print("menu opened:", (note.object as? NSMenu)?.items.map(\.title) ?? [])
+            }
+        }
         guard let path = environment["JOINERY_SNAPSHOT"] else { return }
         let delay = environment["JOINERY_SNAPSHOT_DELAY"].flatMap(Double.init) ?? 2
         let frames = environment["JOINERY_SNAPSHOT_FRAMES"].flatMap(Int.init) ?? 1
@@ -75,6 +80,8 @@ final class DebugHooks: NSObject, NSApplicationDelegate {
                 }
             case "open-palette":
                 canvas.togglePalette()
+            case "windows":
+                print("windows:", NSApp.windows.filter(\.isVisible).map { String(describing: type(of: $0)) })
             case "counts":
                 let schema = document.wrappedValue
                 print("tables \(schema.tables.count), foreign keys \(schema.relationships.count), ties \(schema.zipTies.count),",
@@ -111,7 +118,27 @@ final class DebugHooks: NSObject, NSApplicationDelegate {
             case "tie" where numbers.count == 4:
                 canvas.stroke = .init(start: CGPoint(x: numbers[0], y: numbers[1]), end: CGPoint(x: numbers[2], y: numbers[3]))
                 try? await Task.sleep(for: .seconds(0.5))
-                NotificationCenter.default.post(name: .finishStroke, object: canvas)
+                canvas.isStrokeFinished = true
+            case "rightdrag" where numbers.count == 4, "rightclick" where numbers.count == 2:
+                // Real right-button events, from one canvas point to another (or a click at one).
+                let start = CGPoint(x: numbers[0], y: numbers[1])
+                let end = numbers.count == 4 ? CGPoint(x: numbers[2], y: numbers[3]) : start
+                guard let window = NSApp.windows.first(where: \.isVisible), let height = window.contentView?.bounds.height else { break }
+                func post(_ type: NSEvent.EventType, _ point: CGPoint) {
+                    let view = canvas.viewPoint(point)
+                    if let event = NSEvent.mouseEvent(with: type, location: CGPoint(x: view.x, y: height - view.y), modifierFlags: [],
+                                                      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                      context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                }
+                post(.rightMouseDown, start)
+                for step in 1...20 where start != end {
+                    try? await Task.sleep(for: .seconds(0.02))
+                    post(.rightMouseDragged, start + (end - start) * (CGFloat(step) / 20))
+                }
+                try? await Task.sleep(for: .seconds(0.05))
+                post(.rightMouseUp, end)
             case "wait" where numbers.count == 1:
                 try? await Task.sleep(for: .seconds(numbers[0]))
             default:
@@ -137,8 +164,6 @@ extension DebugHooks {
 }
 
 extension Notification.Name {
-    /// Ends the canvas's tie line as if the drag had finished.
-    static let finishStroke = Notification.Name("JoineryFinishStroke")
     /// Clicks the empty canvas or a wire at `userInfo["point"]`, in canvas points.
     static let click = Notification.Name("JoineryClick")
 }

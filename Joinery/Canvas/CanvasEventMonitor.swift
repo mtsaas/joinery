@@ -4,6 +4,8 @@ import SwiftUI
 /// Input SwiftUI has no gesture or key handler for, watched in the window over the canvas's frame:
 /// - Two-finger scrolling or the mouse wheel pans; pinching or ⌘-scrolling zooms, around the pointer.
 /// - Holding Space turns dragging anywhere into panning.
+/// - Right-dragging from empty canvas or a wire draws a line that zip-ties the wires it crosses. Right-clicks pass
+///   through untouched, so tables and ties still get their context menus; a drag can't start while one is open.
 /// - In the command palette, the arrow keys move through the matches and Escape closes it.
 /// - While a table's cells are being edited, Tab and Shift-Tab step through them in our order (adding a column past
 ///   the last), and Escape stops editing; the text field would otherwise move focus anywhere in the window.
@@ -23,6 +25,10 @@ struct CanvasEventMonitor: NSViewRepresentable {
     final class EventView: NSView {
         var canvas: CanvasController?
         private var monitor: Any?
+        /// Where a right-button press started, while it might become a drag.
+        private var rightClick: NSEvent?
+        private var isMenuOpen = false
+        private var menuObservers: [Any] = []
 
         override var isFlipped: Bool { true }
 
@@ -33,8 +39,20 @@ struct CanvasEventMonitor: NSViewRepresentable {
             super.viewDidMoveToWindow()
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
+            menuObservers.forEach(NotificationCenter.default.removeObserver)
+            menuObservers = []
             guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify, .keyDown, .keyUp]) { [weak self] event in
+            menuObservers = [NSMenu.didBeginTrackingNotification, NSMenu.didEndTrackingNotification].map { name in
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                    let isOpen = name == NSMenu.didBeginTrackingNotification
+                    MainActor.assumeIsolated {
+                        self?.isMenuOpen = isOpen
+                        self?.rightClick = nil
+                    }
+                }
+            }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify, .keyDown, .keyUp,
+                                                                      .rightMouseDown, .rightMouseDragged, .rightMouseUp]) { [weak self] event in
                 let isHandled = MainActor.assumeIsolated { self?.handle(event) == true }
                 return isHandled ? nil : event
             }
@@ -67,6 +85,22 @@ struct CanvasEventMonitor: NSViewRepresentable {
                 guard !isTyping, event.keyCode == Key.space,
                       event.modifierFlags.isDisjoint(with: [.command, .option, .control]) else { return false }
                 canvas.isSpaceHeld = event.type == .keyDown
+            case .rightMouseDown:
+                rightClick = bounds.contains(convert(event.locationInWindow, from: nil)) ? event : nil
+                return false
+            case .rightMouseDragged:
+                guard let down = rightClick, !isMenuOpen else { return false }
+                let start = convert(down.locationInWindow, from: nil), location = convert(event.locationInWindow, from: nil)
+                if canvas.stroke == nil {
+                    guard start.distance(to: location) > 3 else { return true }
+                    NSCursor.crosshair.push()
+                }
+                canvas.stroke = .init(start: canvas.canvasPoint(start), end: canvas.canvasPoint(location))
+            case .rightMouseUp:
+                rightClick = nil
+                guard canvas.stroke != nil else { return false }
+                NSCursor.pop()
+                canvas.isStrokeFinished = true
             case .magnify, .scrollWheel:
                 let location = convert(event.locationInWindow, from: nil)
                 guard bounds.contains(location) else { return false }

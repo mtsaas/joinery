@@ -4,8 +4,6 @@ import SwiftUI
 /// saved; gestures write to the document only when they end, so each is a single undo step.
 @MainActor @Observable
 final class CanvasController {
-    enum Tool { case select, zipTie }
-
     enum Item: Hashable {
         case table(Table.ID)
         case relationship(Relationship.ID)
@@ -41,7 +39,6 @@ final class CanvasController {
     /// Until the person pans or zooms, the view keeps the whole schema fitted as the window resizes.
     private(set) var isFitted = true
     private(set) var viewSize = CGSize.zero
-    var tool = Tool.select
     var selection: Set<Item> = []
     /// The table whose cells are text fields. Only one at a time.
     var editingTable: Table.ID?
@@ -61,6 +58,8 @@ final class CanvasController {
     var hoveredTie: ZipTie.ID?
     var connection: Connection?
     var stroke: Stroke?
+    /// Set when the right-drag drawing `stroke` ends, for the view to tie the wires it crossed.
+    var isStrokeFinished = false
     /// The selection rectangle being dragged out, in canvas points.
     var marquee: CGRect?
     /// What a drag that started on empty canvas (or on a wire) is doing.

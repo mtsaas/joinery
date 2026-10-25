@@ -5,7 +5,7 @@ import SwiftUI
 /// Pointer: drag empty canvas to select a group, Shift-click to add to it, and drag any selected item to move them all.
 /// Scroll or hold Space and drag to pan; pinch or ⌘-scroll to zoom. Click a wire to select it; double-click to add a
 /// bend point it runs through. Drag from a socket onto another column to add a foreign key, or onto a table to give it
-/// a column for one. Option-drag across wires to zip-tie them. Double-click a cell to edit it.
+/// a column for one. Right-drag (or Option-drag) across wires to zip-tie them. Double-click a cell to edit it.
 ///
 /// Keyboard: T adds a table, Return edits the selected one, arrows nudge, Delete removes, ⌘A selects everything. While
 /// editing, Tab and Shift-Tab step through cells, Return adds a column, Escape finishes.
@@ -103,7 +103,7 @@ struct CanvasView: View {
             canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })
         }
         .onDeleteCommand { if isCanvasKeyTarget { canvas.deleteSelection(in: &schema) } }
-        .onExitCommand { canvas.selection = []; canvas.tool = .select }
+        .onExitCommand { canvas.selection = [] }
         .onChange(of: canvas.requestedFocus) { _, requested in
             guard let requested else { return }
             canvas.editingTable = owner(of: requested)
@@ -126,10 +126,12 @@ struct CanvasView: View {
             step(key)
         }
         .onChange(of: canvas.isSpaceHeld) { if !canvas.isSpaceHeld { canvas.panOrigin = nil } }
-        #if DEBUG
-        .onReceive(NotificationCenter.default.publisher(for: .finishStroke)) { note in
-            if note.object as AnyObject? === canvas { finishStroke() }
+        .onChange(of: canvas.isStrokeFinished) {
+            guard canvas.isStrokeFinished else { return }
+            canvas.isStrokeFinished = false
+            finishStroke()
         }
+        #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: .click)) { note in
             if note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint { click(at: point) }
         }
@@ -182,8 +184,6 @@ struct CanvasView: View {
         commands += [
             PaletteCommand(id: "avoid", title: "Wires Avoid Tables", subtitle: wiresAvoidTables ? "On" : "Off",
                            symbol: "point.topleft.down.to.point.bottomright.curvepath") { wiresAvoidTables.toggle() },
-            PaletteCommand(id: "zip-tool", title: "Zip Tie Tool", subtitle: canvas.tool == .zipTie ? "On" : "Off",
-                           symbol: "arrow.triangle.merge") { canvas.tool = canvas.tool == .zipTie ? .select : .zipTie },
             PaletteCommand(id: "select-all", title: "Select All", symbol: "checkmark.rectangle.stack", shortcut: "⌘A") {
                 canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })
             },
@@ -250,7 +250,6 @@ struct CanvasView: View {
         .contentShape(.rect)
         .onTapGesture(coordinateSpace: .canvas) { location in click(at: canvas.canvasPoint(location)) }
         .gesture(backgroundDrag)
-        .pointerStyle(canvas.tool == .zipTie ? .rectSelection : nil)
     }
 
     /// Drawn where its wires actually are, so it rides along as they spring into place. A bend point is a dot.
@@ -562,7 +561,8 @@ struct CanvasView: View {
         }
     }
 
-    /// With Option or the Zip Tie tool, draws a line to tie wires; otherwise drags out a selection rectangle.
+    /// With Option, draws a line to tie wires (as a right-drag does, through the event monitor); otherwise drags out a
+    /// selection rectangle.
     private var backgroundDrag: some Gesture {
         DragGesture(minimumDistance: 3, coordinateSpace: .canvas)
             .onChanged { value in
@@ -570,7 +570,7 @@ struct CanvasView: View {
                 if canvas.backgroundDrag == nil {
                     isCanvasFocused = true
                     let flags = NSEvent.modifierFlags
-                    if canvas.tool == .zipTie || flags.contains(.option) {
+                    if flags.contains(.option) {
                         canvas.backgroundDrag = .stroke
                     } else {
                         canvas.backgroundDrag = .marquee(base: flags.contains(.shift) ? canvas.selection : [])

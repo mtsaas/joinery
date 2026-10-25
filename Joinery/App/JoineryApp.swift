@@ -27,15 +27,9 @@ struct SchemaWindow: View {
                 ToolbarItem(placement: .navigation) {
                     ZoomMenu(canvas: canvas, bounds: document.schema.bounds)
                 }
-                ToolbarItemGroup(placement: .principal) {
+                ToolbarItem(placement: .principal) {
                     Button("Table", systemImage: "tablecells") { canvas.addTable(to: &document.schema) }
                         .help("Add a table (T)")
-                    Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Binding {
-                        canvas.tool == .zipTie
-                    } set: {
-                        canvas.tool = $0 ? .zipTie : .select
-                    })
-                    .help("Draw a line across wires to tie them together. Hold Option to do this without the tool.")
                 }
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
