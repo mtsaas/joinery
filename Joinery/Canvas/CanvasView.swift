@@ -2,66 +2,132 @@ import SwiftUI
 
 /// The infinite canvas: tables, the springy wires between their columns, and the zip ties that bundle them.
 ///
-/// Drag empty space to pan (or scroll), pinch or ⌘-scroll to zoom. Drag from a column's socket onto another column to
-/// add a foreign key. Option-drag across wires, or drag with the Zip Tie tool, to tie them together.
+/// Pointer: drag empty canvas to select a group, Shift-click to add to it, and drag any selected item to move them all.
+/// Scroll or hold Space and drag to pan; pinch or ⌘-scroll to zoom. Click a wire to add a bend point it runs through,
+/// Option-click to select it. Drag from a socket onto another column to add a foreign key. Option-drag across wires to
+/// zip-tie them. Double-click a cell to edit it.
+///
+/// Keyboard: T adds a table, Return edits the selected one, arrows nudge, Delete removes, ⌘A selects everything. While
+/// editing, Tab and Shift-Tab step through cells, Return adds a column, Escape finishes.
 struct CanvasView: View {
     @Binding var schema: Schema
     @Bindable var canvas: CanvasController
 
     @State private var simulation = WireSimulation()
     @State private var isAnimating = false
-    @FocusState private var isFocused: Bool
+    /// The last click, to tell a double-click from two clicks.
+    @State private var lastClick: (item: CanvasController.Item, time: TimeInterval)?
+    @FocusState private var isCanvasFocused: Bool
+    @FocusState private var field: CanvasController.Field?
 
     var body: some View {
-        let routing = Routing(schema: schema, tableOffsets: canvas.tableDrag, tieOffsets: canvas.tieDrag)
-        let socketColors = socketColors(routing)
+        let routing = Routing(schema: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets)
+        let colors = wireColors
+        let foreignKeys = Dictionary(schema.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
+                                     uniquingKeysWith: { first, _ in first })
+        let socketColors = socketColors(routing, colors: colors)
         ZStack(alignment: .topLeading) {
             GridLayer(zoom: canvas.zoom, offset: canvas.offset)
-            wireLayer(routing)
+            wireLayer(routing, colors: colors)
             ForEach(schema.tables) { table in
-                tableView(table, socketColors: socketColors)
+                tableView(table, socketColors: socketColors, foreignKeys: foreignKeys)
             }
             ForEach(schema.zipTies) { tie in
                 if let frame = routing.ties[tie.id] { tieHandle(tie, frame) }
             }
             gestureOverlay
+            if canvas.isSpaceHeld { panSurface }
         }
         .coordinateSpace(.canvas)
         .clipped()
-        .background { ScrollWheelReader(canvas: canvas) }
+        .background { CanvasEventMonitor(canvas: canvas) }
         .onGeometryChange(for: CGSize.self, of: \.size) { canvas.resize(to: $0, fitting: schema.bounds) }
         .overlay {
             if schema.tables.isEmpty {
                 ContentUnavailableView {
                     Label("No Tables", systemImage: "tablecells")
                 } description: {
-                    Text("Add a table, then drag between column sockets to draw foreign keys.")
+                    Text("Press T to add a table, then drag between column sockets to draw foreign keys.")
                 } actions: {
                     Button("Add Table") { canvas.addTable(to: &schema) }
                 }
             }
         }
+        .overlay(alignment: .bottom) {
+            if canvas.editingTable != nil {
+                EditingHints(togglePrimaryKey: togglePrimaryKey, deleteColumn: deleteFocusedColumn)
+                    .padding(.bottom, 20)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.smooth(duration: 0.2), value: canvas.editingTable != nil)
         .focusable()
-        .focused($isFocused)
+        .focused($isCanvasFocused)
         .focusEffectDisabled()
-        .onDeleteCommand { canvas.deleteSelection(in: &schema) }
-        .onExitCommand { canvas.selection = nil; canvas.tool = .select }
+        // Key presses reach these even while a cell has focus, so each checks that none does. (`isCanvasFocused` won't
+        // do: it's true while anything inside the canvas has focus, cells included.)
+        .onKeyPress("t") {
+            guard isCanvasKeyTarget else { return .ignored }
+            canvas.addTable(to: &schema)
+            return .handled
+        }
+        .onKeyPress(.return) {
+            guard isCanvasKeyTarget, canvas.selection.count == 1, case .table(let id)? = canvas.selection.first else { return .ignored }
+            canvas.edit(.tableName(id))
+            return .handled
+        }
+        .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
+            guard isCanvasKeyTarget else { return .ignored }
+            nudge(press)
+            return .handled
+        }
+        .onCommand(#selector(NSText.selectAll(_:))) {
+            canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })
+        }
+        .onDeleteCommand { if isCanvasKeyTarget { canvas.deleteSelection(in: &schema) } }
+        .onExitCommand { canvas.selection = []; canvas.tool = .select }
+        .onChange(of: canvas.requestedFocus) { _, requested in
+            guard let requested else { return }
+            canvas.editingTable = owner(of: requested)
+            // The fields exist only once the table has redrawn as being edited.
+            DispatchQueue.main.async {
+                field = requested
+                canvas.requestedFocus = nil
+            }
+        }
+        .onChange(of: field) { old, new in
+            if let new {
+                canvas.editingTable = owner(of: new)
+            } else if old != nil, canvas.requestedFocus == nil {
+                finishEditing()
+            }
+        }
+        .onChange(of: canvas.fieldKey) { _, key in
+            guard let key else { return }
+            canvas.fieldKey = nil
+            step(key)
+        }
+        .onChange(of: canvas.isSpaceHeld) { if !canvas.isSpaceHeld { canvas.panOrigin = nil } }
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: .finishStroke)) { note in
             if note.object as AnyObject? === canvas { finishStroke() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .click)) { note in
+            if note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint { click(at: point) }
+        }
         #endif
     }
 
+    /// Whether keys are for the canvas itself rather than a cell being edited.
+    private var isCanvasKeyTarget: Bool { isCanvasFocused && field == nil }
+
     // MARK: Wires
 
-    private func wireLayer(_ routing: Routing) -> some View {
+    private func wireLayer(_ routing: Routing, colors: [Relationship.ID: Color]) -> some View {
         // Read here, not in the renderer, so changes redraw the canvas.
         let zoom = canvas.zoom, offset = canvas.offset, highlighted = highlightedRelationships
         let tieCrossings = canvas.stroke.map { Set(simulation.crossings(from: $0.start, to: $0.end).map(\.relationship)) } ?? []
-        let selectedTie: ZipTie.ID? = if case .zipTie(let id) = canvas.selection { id } else { nil }
-        let hoveredTie = canvas.hoveredTie
-        let colors = wireColors
+        let selectedTies = canvas.selectedTies, hoveredTie = canvas.hoveredTie
         let relationships = schema.relationships
 
         return TimelineView(.animation(paused: !isAnimating)) { timeline in
@@ -83,27 +149,24 @@ struct CanvasView: View {
                                    style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round))
                 }
                 for (id, tie) in routing.ties {
-                    drawTie(tie, isSelected: id == selectedTie, isHovered: id == hoveredTie, in: context,
-                            relationships: relationships, tieID: id)
+                    drawTie(tie, id: id, isSelected: selectedTies.contains(id), isHovered: id == hoveredTie,
+                            color: tie.relationships.first.flatMap { colors[$0] } ?? .gray,
+                            relationships: relationships, in: context)
                 }
             }
         }
         .contentShape(.rect)
-        .onTapGesture(coordinateSpace: .canvas) { location in
-            isFocused = true
-            let point = canvas.canvasPoint(location)
-            canvas.selection = simulation.wire(near: point, within: 6 / canvas.zoom).map(CanvasController.Selection.relationship)
-        }
-        .gesture(panOrTieGesture)
+        .onTapGesture(coordinateSpace: .canvas) { location in click(at: canvas.canvasPoint(location)) }
+        .gesture(backgroundDrag)
         .pointerStyle(canvas.tool == .zipTie ? .rectSelection : nil)
     }
 
-    /// Drawn where its wires actually are, so it rides along as they spring into place.
-    private func drawTie(_ tie: Routing.Tie, isSelected: Bool, isHovered: Bool, in context: GraphicsContext,
-                         relationships: [Relationship], tieID: ZipTie.ID) {
-        let slots = tie.relationships.compactMap { id -> CGPoint? in
-            guard let wire = simulation.wires[id],
-                  let index = relationships.first(where: { $0.id == id })?.zipTies.firstIndex(of: tieID) else { return nil }
+    /// Drawn where its wires actually are, so it rides along as they spring into place. A bend point is a dot.
+    private func drawTie(_ tie: Routing.Tie, id: ZipTie.ID, isSelected: Bool, isHovered: Bool, color: Color,
+                         relationships: [Relationship], in context: GraphicsContext) {
+        let slots = tie.relationships.compactMap { wireID -> CGPoint? in
+            guard let wire = simulation.wires[wireID],
+                  let index = relationships.first(where: { $0.id == wireID })?.zipTies.firstIndex(of: id) else { return nil }
             let sample = (index + 1) * Routing.samplesPerSegment
             return wire.points.indices.contains(sample) ? wire.points[sample] : nil
         }
@@ -111,6 +174,13 @@ struct CanvasView: View {
         var context = context
         let center = slots.reduce(.zero, +) / CGFloat(slots.count)
         context.translateBy(x: center.x, y: center.y)
+        if tie.relationships.count == 1 {
+            let radius = Metrics.bendPointDiameter / 2
+            let dot = Path(ellipseIn: CGRect(x: -radius, y: -radius, width: radius * 2, height: radius * 2))
+            context.fill(dot, with: .color(isSelected ? Color.accentColor : Theme.card))
+            context.stroke(dot, with: .color(isSelected ? Color.accentColor : color), lineWidth: isHovered ? 2.25 : 1.5)
+            return
+        }
         context.rotate(by: .radians(atan2(tie.direction.y, tie.direction.x)))
         let halfLength = Metrics.tieHalfLength(holding: tie.relationships.count)
         let band = CGRect(x: -Metrics.tieThickness / 2, y: -halfLength, width: Metrics.tieThickness, height: halfLength * 2)
@@ -127,43 +197,46 @@ struct CanvasView: View {
     }
 
     /// Sockets with wires take their wires' color; the rest have none.
-    private func socketColors(_ routing: Routing) -> [Routing.Socket: Color] {
-        let wireColors = wireColors
-        var colors: [Routing.Socket: Color] = [:]
-        for (id, sockets) in routing.sockets {
-            colors[sockets.from] = colors[sockets.from] ?? wireColors[id]
-            colors[sockets.to] = wireColors[id]
+    private func socketColors(_ routing: Routing, colors: [Relationship.ID: Color]) -> [Routing.Socket: Color] {
+        var sockets: [Routing.Socket: Color] = [:]
+        for (id, ends) in routing.sockets {
+            sockets[ends.from] = sockets[ends.from] ?? colors[id]
+            sockets[ends.to] = colors[id]
         }
-        return colors
+        return sockets
     }
 
-    /// The wires to show over the rest, which fade: those of the selected table, wire, or tie. Nil highlights none.
+    /// The wires to show over the rest, which fade: those of whatever's selected. Nil highlights none.
     private var highlightedRelationships: Set<Relationship.ID>? {
-        switch canvas.selection {
-        case .table(let id):
-            let columns = Set(schema.table(id)?.columns.map(\.id) ?? [])
-            return Set(schema.relationships.filter { columns.contains($0.from) || columns.contains($0.to) }.map(\.id))
-        case .relationship(let id): return [id]
-        case .zipTie(let id): return Set(schema.zipTies.first { $0.id == id }?.relationships ?? [])
-        case nil: return nil
+        guard !canvas.selection.isEmpty else { return nil }
+        let tables = canvas.selectedTables
+        let columns = Set(schema.tables.filter { tables.contains($0.id) }.flatMap(\.columns).map(\.id))
+        var wires = Set(schema.relationships.filter { columns.contains($0.from) || columns.contains($0.to) }.map(\.id))
+        for item in canvas.selection {
+            switch item {
+            case .relationship(let id): wires.insert(id)
+            case .zipTie(let id): wires.formUnion(schema.zipTies.first { $0.id == id }?.relationships ?? [])
+            case .table: break
+            }
         }
+        return wires
     }
 
     // MARK: Tables
 
-    private func tableView(_ table: Table, socketColors: [Routing.Socket: Color]) -> some View {
-        let frame = Metrics.frame(of: table).offsetBy(dx: canvas.tableDrag[table.id]?.x ?? 0, dy: canvas.tableDrag[table.id]?.y ?? 0)
+    private func tableView(_ table: Table, socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> some View {
+        let offset = canvas.tableOffsets[table.id] ?? .zero
+        let frame = Metrics.frame(of: table).offsetBy(dx: offset.x, dy: offset.y)
         let origin = canvas.viewPoint(frame.origin)
+        let isEditing = canvas.editingTable == table.id
         return ZStack(alignment: .topLeading) {
-            TableCard(table: table, zoom: canvas.zoom, isSelected: canvas.selection == .table(table.id),
-                      targetColumn: canvas.connection?.target)
+            TableCard(table: binding(for: table.id), zoom: canvas.zoom, isSelected: canvas.selection.contains(.table(table.id)),
+                      isEditing: isEditing, targetColumn: canvas.connection?.target, foreignKeys: foreignKeys,
+                      focus: $field, submit: submit)
                 .position(x: origin.x + frame.width * canvas.zoom / 2, y: origin.y + frame.height * canvas.zoom / 2)
-                .gesture(moveGesture(table))
-                .contextMenu {
-                    Button("Edit Table…", systemImage: "info.circle") { select(.table(table.id)); canvas.showsInspector = true }
-                    Divider()
-                    Button("Delete Table", systemImage: "trash", role: .destructive) { schema.removeTable(table.id) }
-                }
+                // While editing, clicks belong to the cells.
+                .gesture(itemGesture(.table(table.id)) { beginEditing(table, at: $0) }, including: isEditing ? .subviews : .all)
+                .contextMenu { tableMenu(table) }
             ForEach(Array(table.columns.enumerated()), id: \.element.id) { row, column in
                 ForEach(Side.allCases, id: \.self) { side in
                     let socket = Metrics.socket(row: row, side: side, in: frame)
@@ -176,17 +249,57 @@ struct CanvasView: View {
         }
     }
 
-    private func moveGesture(_ table: Table) -> some Gesture {
+    @ViewBuilder
+    private func tableMenu(_ table: Table) -> some View {
+        Button("Rename", systemImage: "pencil") { canvas.edit(.tableName(table.id)) }
+        Button("Add Column", systemImage: "plus") { addColumn(to: table.id, after: table.columns.last?.id) }
+        Picker("Color", selection: binding(for: table.id).color) {
+            ForEach(TableColor.allCases) { color in
+                Label(color.rawValue.capitalized, systemImage: "circle.fill")
+                    .tint(color.color)
+                    .tag(color)
+            }
+        }
+        Divider()
+        Button("Delete Table", systemImage: "trash", role: .destructive) { schema.removeTable(table.id) }
+    }
+
+    /// Looks the table up on every access, so a binding a text field holds after its table is deleted can't index past
+    /// the end.
+    private func binding(for id: Table.ID) -> Binding<Table> {
+        Binding {
+            schema.table(id) ?? Table(name: "", position: .zero, color: .blue)
+        } set: { table in
+            if let index = schema.tables.firstIndex(where: { $0.id == id }) { schema.tables[index] = table }
+        }
+    }
+
+    /// Clicking selects, Shift-clicking adds; dragging moves everything selected; double-clicking calls `doubleClick`
+    /// with where, in canvas points.
+    private func itemGesture(_ item: CanvasController.Item, doubleClick: @escaping (CGPoint) -> Void) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .canvas)
             .onChanged { value in
-                select(.table(table.id))
-                canvas.tableDrag[table.id] = CGPoint(value.translation) / canvas.zoom
+                if canvas.dragOffset == nil {
+                    isCanvasFocused = true
+                    canvas.click(item, extending: NSEvent.modifierFlags.contains(.shift))
+                }
+                canvas.dragOffset = CGPoint(value.translation) / canvas.zoom
             }
             .onEnded { value in
-                canvas.tableDrag[table.id] = nil
+                canvas.dragOffset = nil
                 let delta = CGPoint(value.translation) / canvas.zoom
-                guard delta != .zero, let index = schema.tables.firstIndex(where: { $0.id == table.id }) else { return }
-                schema.tables[index].position += delta
+                if delta.length * canvas.zoom > 2 {
+                    schema.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
+                    lastClick = nil
+                    return
+                }
+                let now = ProcessInfo.processInfo.systemUptime
+                if let last = lastClick, last.item == item, now - last.time < NSEvent.doubleClickInterval {
+                    lastClick = nil
+                    doubleClick(canvas.canvasPoint(value.location))
+                } else {
+                    lastClick = (item, now)
+                }
             }
     }
 
@@ -200,15 +313,104 @@ struct CanvasView: View {
             .onEnded { _ in
                 if let connection = canvas.connection, let target = connection.target,
                    let id = schema.connect(connection.from, to: target) {
-                    canvas.selection = .relationship(id)
+                    canvas.selection = [.relationship(id)]
                 }
                 canvas.connection = nil
             }
     }
 
-    // MARK: Zip ties
+    // MARK: Editing
+
+    /// Edits the cell double-clicked; the key cell toggles the primary key instead.
+    private func beginEditing(_ table: Table, at point: CGPoint) {
+        let local = point - table.position
+        let row = Int(((local.y - Metrics.headerHeight) / Metrics.rowHeight).rounded(.down))
+        guard local.y >= Metrics.headerHeight, table.columns.indices.contains(row) else {
+            return canvas.edit(.tableName(table.id))
+        }
+        let column = table.columns[row].id
+        switch Metrics.gridColumn(atX: local.x) {
+        case .key: togglePrimaryKey(column)
+        case .name: canvas.edit(.columnName(column))
+        case .type: canvas.edit(.columnType(column))
+        }
+    }
+
+    /// Return: from the table's name to its first column, from a name to its type, from a type to a new column.
+    private func submit(_ submitted: CanvasController.Field) {
+        guard let tableID = owner(of: submitted), let table = schema.table(tableID) else { return }
+        switch submitted {
+        case .tableName:
+            if let first = table.columns.first { field = .columnName(first.id) } else { addColumn(to: tableID, after: nil) }
+        case .columnName(let id):
+            field = .columnType(id)
+        case .columnType(let id):
+            addColumn(to: tableID, after: id)
+        }
+    }
+
+    /// Tab and Shift-Tab through the table's cells in reading order; Tab past the last adds a column.
+    private func step(_ key: CanvasController.FieldKey) {
+        guard let current = field, let id = canvas.editingTable, let table = schema.table(id) else { return }
+        let order = [CanvasController.Field.tableName(id)] + table.columns.flatMap { [.columnName($0.id), .columnType($0.id)] }
+        let index = order.firstIndex(of: current) ?? 0
+        switch key {
+        case .next where index == order.count - 1: addColumn(to: id, after: table.columns.last?.id)
+        case .next: field = order[index + 1]
+        case .previous: field = order[max(index - 1, 0)]
+        case .done: isCanvasFocused = true
+        }
+    }
+
+    private func addColumn(to table: Table.ID, after column: Column.ID?) {
+        if let id = schema.addColumn(to: table, after: column) { canvas.edit(.columnName(id)) }
+    }
+
+    /// The column whose cell has focus.
+    private var focusedColumn: Column.ID? {
+        switch field {
+        case .columnName(let id), .columnType(let id): id
+        default: nil
+        }
+    }
+
+    private func togglePrimaryKey() {
+        if let column = focusedColumn { togglePrimaryKey(column) }
+    }
+
+    private func togglePrimaryKey(_ column: Column.ID) {
+        guard let (table, row) = schema.columnLocations[column],
+              let index = schema.tables.firstIndex(where: { $0.id == table.id }) else { return }
+        schema.tables[index].columns[row].isPrimaryKey.toggle()
+    }
+
+    /// Deletes the focused column and moves up to the cell above.
+    private func deleteFocusedColumn() {
+        guard let column = focusedColumn, let (table, row) = schema.columnLocations[column] else { return }
+        field = row > 0 ? .columnName(table.columns[row - 1].id) : .tableName(table.id)
+        schema.removeColumn(column)
+    }
+
+    /// Ends editing: columns left without a name are dropped.
+    private func finishEditing() {
+        guard let id = canvas.editingTable else { return }
+        canvas.editingTable = nil
+        for column in schema.table(id)?.columns ?? [] where column.name.trimmingCharacters(in: .whitespaces).isEmpty {
+            schema.removeColumn(column.id)
+        }
+    }
+
+    private func owner(of field: CanvasController.Field) -> Table.ID? {
+        switch field {
+        case .tableName(let id): id
+        case .columnName(let id), .columnType(let id): schema.columnLocations[id]?.table.id
+        }
+    }
+
+    // MARK: Zip ties and bend points
 
     private func tieHandle(_ tie: ZipTie, _ frame: Routing.Tie) -> some View {
+        let isBendPoint = tie.relationships.count == 1
         let length = Metrics.tieHalfLength(holding: tie.relationships.count) * 2 + Metrics.socketHitRadius
         // Never smaller than a comfortable target on screen, however far out you've zoomed.
         return Color.clear
@@ -217,60 +419,136 @@ struct CanvasView: View {
             .contentShape(.rect)
             .rotationEffect(.radians(atan2(frame.direction.y, frame.direction.x)))
             .position(canvas.viewPoint(frame.center))
-            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .canvas)
-                .onChanged { value in
-                    select(.zipTie(tie.id))
-                    canvas.tieDrag[tie.id] = CGPoint(value.translation) / canvas.zoom
-                }
-                .onEnded { value in
-                    canvas.tieDrag[tie.id] = nil
-                    let delta = CGPoint(value.translation) / canvas.zoom
-                    guard delta != .zero, let index = schema.zipTies.firstIndex(where: { $0.id == tie.id }) else { return }
-                    schema.zipTies[index].position += delta
-                })
+            // Double-clicking a bend point straightens the wire again.
+            .gesture(itemGesture(.zipTie(tie.id)) { _ in if isBendPoint { schema.removeZipTie(tie.id) } })
             .contextMenu {
-                Button("Cut Zip Tie", systemImage: "scissors", role: .destructive) { schema.removeZipTie(tie.id) }
+                if isBendPoint {
+                    Button("Remove Bend Point", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
+                        schema.removeZipTie(tie.id)
+                    }
+                    Button("Delete Foreign Key", systemImage: "trash", role: .destructive) {
+                        schema.removeRelationships { $0.id == tie.relationships[0] }
+                    }
+                } else {
+                    Button("Cut Zip Tie", systemImage: "scissors", role: .destructive) { schema.removeZipTie(tie.id) }
+                }
             }
             .onHover { isHovered in
                 if isHovered { canvas.hoveredTie = tie.id } else if canvas.hoveredTie == tie.id { canvas.hoveredTie = nil }
             }
-            .pointerStyle(canvas.tieDrag[tie.id] == nil ? .grabIdle : .grabActive)
-            .help("Zip tie: drag to move, Delete to cut")
+            .pointerStyle(canvas.dragOffset != nil && canvas.selection.contains(.zipTie(tie.id)) ? .grabActive : .grabIdle)
+            .help(isBendPoint ? "Bend point: drag to reroute, double-click to remove" : "Zip tie: drag to move, Delete to cut")
     }
 
-    /// Pans, or with Option or the Zip Tie tool, draws a line that ties the wires it crosses.
-    private var panOrTieGesture: some Gesture {
-        DragGesture(minimumDistance: 2, coordinateSpace: .canvas)
+    // MARK: Empty canvas
+
+    /// A click on empty canvas clears the selection; on a wire, adds a bend point there, or with Option selects it.
+    private func click(at point: CGPoint) {
+        isCanvasFocused = true
+        let flags = NSEvent.modifierFlags
+        guard let hit = simulation.hit(near: point, within: Metrics.wireHitRadius / canvas.zoom) else {
+            if !flags.contains(.shift) { canvas.selection = [] }
+            return
+        }
+        if flags.contains(.option) {
+            canvas.click(.relationship(hit.relationship), extending: flags.contains(.shift))
+        } else if let bend = schema.addBendPoint(on: hit.relationship, at: hit.point, direction: hit.tangent, segment: hit.segment) {
+            canvas.selection = [.zipTie(bend)]
+        }
+    }
+
+    /// From a wire: makes a bend point and drags it. With Option or the Zip Tie tool: draws a line to tie wires.
+    /// Otherwise: drags out a selection rectangle.
+    private var backgroundDrag: some Gesture {
+        DragGesture(minimumDistance: 3, coordinateSpace: .canvas)
             .onChanged { value in
-                if canvas.stroke == nil, canvas.panOrigin == nil {
-                    if canvas.tool == .zipTie || NSEvent.modifierFlags.contains(.option) {
-                        canvas.stroke = .init(start: canvas.canvasPoint(value.startLocation), end: canvas.canvasPoint(value.location))
+                let start = canvas.canvasPoint(value.startLocation), now = canvas.canvasPoint(value.location)
+                if canvas.backgroundDrag == nil {
+                    isCanvasFocused = true
+                    let flags = NSEvent.modifierFlags
+                    if canvas.tool == .zipTie || flags.contains(.option) {
+                        canvas.backgroundDrag = .stroke
+                    } else if let hit = simulation.hit(near: start, within: Metrics.wireHitRadius / canvas.zoom),
+                              let bend = schema.addBendPoint(on: hit.relationship, at: hit.point, direction: hit.tangent,
+                                                             segment: hit.segment) {
+                        canvas.selection = [.zipTie(bend)]
+                        canvas.backgroundDrag = .move
                     } else {
-                        canvas.panOrigin = canvas.offset
+                        canvas.backgroundDrag = .marquee(base: flags.contains(.shift) ? canvas.selection : [])
                     }
                 }
-                if let origin = canvas.panOrigin {
-                    canvas.pan(by: origin + CGPoint(value.translation) - canvas.offset)
-                } else {
-                    canvas.stroke?.end = canvas.canvasPoint(value.location)
+                switch canvas.backgroundDrag {
+                case .stroke:
+                    canvas.stroke = .init(start: start, end: now)
+                case .move:
+                    canvas.dragOffset = now - start
+                case .marquee(let base):
+                    let rect = CGRect(x: min(start.x, now.x), y: min(start.y, now.y), width: abs(now.x - start.x), height: abs(now.y - start.y))
+                    canvas.marquee = rect
+                    canvas.selection = base.union(items(in: rect))
+                case nil:
+                    break
                 }
             }
-            .onEnded { _ in finishStroke() }
+            .onEnded { _ in
+                switch canvas.backgroundDrag {
+                case .stroke:
+                    finishStroke()
+                case .move:
+                    if let offset = canvas.dragOffset { schema.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: offset) }
+                    canvas.dragOffset = nil
+                case .marquee, nil:
+                    canvas.marquee = nil
+                }
+                canvas.backgroundDrag = nil
+            }
+    }
+
+    /// Tables the rectangle touches, and ties inside it.
+    private func items(in rect: CGRect) -> Set<CanvasController.Item> {
+        Set(schema.tables.filter { Metrics.frame(of: $0).intersects(rect) }.map { .table($0.id) }
+            + schema.zipTies.filter { rect.contains($0.position) }.map { .zipTie($0.id) })
     }
 
     private func finishStroke() {
         if let stroke = canvas.stroke, let tie = schema.zipTie(simulation, from: stroke.start, to: stroke.end) {
-            canvas.selection = .zipTie(tie)
+            canvas.selection = [.zipTie(tie)]
         }
         canvas.stroke = nil
-        canvas.panOrigin = nil
+    }
+
+    /// While Space is held, covers everything so any drag pans.
+    private var panSurface: some View {
+        Color.clear
+            .contentShape(.rect)
+            .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .canvas)
+                .onChanged { value in
+                    let origin = canvas.panOrigin ?? canvas.offset
+                    canvas.panOrigin = origin
+                    canvas.pan(by: origin + CGPoint(value.translation) - canvas.offset)
+                }
+                .onEnded { _ in canvas.panOrigin = nil })
+            .pointerStyle(canvas.panOrigin == nil ? .grabIdle : .grabActive)
+    }
+
+    /// Arrow keys move the selection a point, or ten with Shift.
+    private func nudge(_ press: KeyPress) {
+        let step: CGFloat = press.modifiers.contains(.shift) ? 10 : 1
+        let delta = switch press.key {
+        case .upArrow: CGPoint(x: 0, y: -step)
+        case .downArrow: CGPoint(x: 0, y: step)
+        case .leftArrow: CGPoint(x: -step, y: 0)
+        default: CGPoint(x: step, y: 0)
+        }
+        schema.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
     }
 
     // MARK: Overlay
 
-    /// The wire being dragged out and the tie line being drawn, above the tables.
+    /// The wire being dragged out, the tie line and the selection rectangle, above the tables.
     private var gestureOverlay: some View {
         let zoom = canvas.zoom, offset = canvas.offset, connection = canvas.connection, stroke = canvas.stroke
+        let marquee = canvas.marquee
         // Previews the color it'll take once dropped.
         let color = connection.map { connection in
             connection.target.flatMap { schema.columnLocations[$0]?.table.color.color } ?? Theme.socket
@@ -283,6 +561,7 @@ struct CanvasView: View {
                 let reach = max(abs(connection.end.x - connection.start.x) * 0.45, 36)
                 var path = Path()
                 path.move(to: connection.start)
+                path.addLine(to: connection.start + way * Metrics.wireLead)
                 path.addCurve(to: connection.end, control1: connection.start + way * reach, control2: connection.end - way * reach)
                 context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round))
                 let dot = Metrics.socketDiameter
@@ -295,13 +574,45 @@ struct CanvasView: View {
                 path.addLine(to: stroke.end)
                 context.stroke(path, with: .color(Theme.stroke), style: StrokeStyle(lineWidth: 1.5 / zoom, lineCap: .round))
             }
+            if let marquee {
+                let shape = Path(marquee)
+                context.fill(shape, with: .color(Color.accentColor.opacity(0.08)))
+                context.stroke(shape, with: .color(Color.accentColor.opacity(0.7)), lineWidth: 1 / zoom)
+            }
         }
         .allowsHitTesting(false)
     }
+}
 
-    private func select(_ selection: CanvasController.Selection) {
-        isFocused = true
-        if canvas.selection != selection { canvas.selection = selection }
+/// Shortcuts while editing a table, in a capsule at the bottom of the canvas. The ⌘ ones are buttons, so they work
+/// from inside a text field.
+private struct EditingHints: View {
+    let togglePrimaryKey: () -> Void
+    let deleteColumn: () -> Void
+
+    var body: some View {
+        HStack(spacing: 16) {
+            hint("⇥", "Next")
+            hint("⏎", "New column")
+            Button(action: togglePrimaryKey) { hint("⌘K", "Primary key") }
+                .keyboardShortcut("k")
+            Button(action: deleteColumn) { hint("⌘⌫", "Delete column") }
+                .keyboardShortcut(.delete)
+            hint("?", "Nullable")
+            hint("⎋", "Done")
+        }
+        .buttonStyle(.plain)
+        .font(.callout)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .glassEffect()
+    }
+
+    private func hint(_ keys: String, _ label: String) -> some View {
+        HStack(spacing: 5) {
+            Text(keys).fontWeight(.semibold)
+            Text(label).foregroundStyle(.secondary)
+        }
     }
 }
 

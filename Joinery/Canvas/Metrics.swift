@@ -3,13 +3,16 @@ import CoreGraphics
 /// Sizes on the canvas, in canvas points (multiply by the zoom for the screen). Tables are laid out from these alone,
 /// so sockets can be placed without measuring views.
 enum Metrics {
-    static let tableWidth: CGFloat = 212
+    static let tableWidth: CGFloat = 236
+    /// The grid's key column (PK, FK) and type column; names get the rest.
+    static let keyColumnWidth: CGFloat = 30
+    static let typeColumnWidth: CGFloat = 86
     static let headerHeight: CGFloat = 30
     static let rowHeight: CGFloat = 22
     /// Below the last row, so it doesn't sit on the card's rounded bottom edge.
     static let bottomPadding: CGFloat = 4
-    /// From the card's side edges to its text, the same on both sides.
-    static let contentInset: CGFloat = 12
+    /// From a cell's edges to its text, the same on both sides.
+    static let cellInset: CGFloat = 8
     static let cornerRadius: CGFloat = 10
     /// Between a selected card and its ring; the ring's inner radius is `cornerRadius + selectionGap`.
     static let selectionGap: CGFloat = 3
@@ -19,6 +22,8 @@ enum Metrics {
     static let socketDiameter: CGFloat = 8
     /// How close the pointer has to come to a socket to grab it or drop a wire on it.
     static let socketHitRadius: CGFloat = 9
+    /// How close a click has to come to a wire to land on it, in screen points.
+    static let wireHitRadius: CGFloat = 6
     /// The smallest a grabbable thing gets on screen, in screen points, so zooming out doesn't make it unclickable.
     static let minimumTarget: CGFloat = 24
 
@@ -31,6 +36,14 @@ enum Metrics {
     static let tieThickness: CGFloat = 5
     /// How far a tie reaches past its outermost wires.
     static let tieOverhang: CGFloat = 4.5
+    static let bendPointDiameter: CGFloat = 7
+
+    /// Which grid column a point on a table falls in, by its distance from the table's left edge.
+    enum GridColumn { case key, name, type }
+
+    static func gridColumn(atX x: CGFloat) -> GridColumn {
+        x < keyColumnWidth ? .key : x < tableWidth - typeColumnWidth ? .name : .type
+    }
 
     static func size(of table: Table) -> CGSize {
         CGSize(width: tableWidth, height: headerHeight + CGFloat(table.columns.count) * rowHeight + bottomPadding)

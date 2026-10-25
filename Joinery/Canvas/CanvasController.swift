@@ -6,10 +6,17 @@ import SwiftUI
 final class CanvasController {
     enum Tool { case select, zipTie }
 
-    enum Selection: Hashable {
+    enum Item: Hashable {
         case table(Table.ID)
         case relationship(Relationship.ID)
         case zipTie(ZipTie.ID)
+    }
+
+    /// A text field on a table card being edited.
+    enum Field: Hashable {
+        case tableName(Table.ID)
+        case columnName(Column.ID)
+        case columnType(Column.ID)
     }
 
     /// A wire being dragged out of a socket, in canvas points.
@@ -35,15 +42,53 @@ final class CanvasController {
     private(set) var isFitted = true
     private(set) var viewSize = CGSize.zero
     var tool = Tool.select
-    var selection: Selection?
-    var showsInspector = false
+    var selection: Set<Item> = []
+    /// The table whose cells are text fields. Only one at a time.
+    var editingTable: Table.ID?
+    /// A field to focus as soon as the view can, set by things outside the view such as menu commands.
+    var requestedFocus: Field?
+    var isSpaceHeld = false
+    /// Tab, Shift-Tab or Escape pressed in a cell, for the view to act on.
+    var fieldKey: FieldKey?
 
-    var tableDrag: [Table.ID: CGPoint] = [:]
-    var tieDrag: [ZipTie.ID: CGPoint] = [:]
+    enum FieldKey { case next, previous, done }
+
+    /// How far the selected tables and ties have been dragged, not yet saved to the document.
+    var dragOffset: CGPoint?
     var hoveredTie: ZipTie.ID?
     var connection: Connection?
     var stroke: Stroke?
+    /// The selection rectangle being dragged out, in canvas points.
+    var marquee: CGRect?
+    /// What a drag that started on empty canvas (or on a wire) is doing.
+    var backgroundDrag: BackgroundDrag?
+
+    enum BackgroundDrag {
+        /// Drawing a line across wires to zip-tie them.
+        case stroke
+        /// Dragging out a selection rectangle, adding to `base` if Shift was held.
+        case marquee(base: Set<Item>)
+        /// Moving the selection: a bend point just made on the wire under the pointer.
+        case move
+    }
     var panOrigin: CGPoint?
+
+    var selectedTables: Set<Table.ID> { Set(selection.compactMap { if case .table(let id) = $0 { id } else { nil } }) }
+    var selectedTies: Set<ZipTie.ID> { Set(selection.compactMap { if case .zipTie(let id) = $0 { id } else { nil } }) }
+
+    /// Where dragged items are drawn until the drag ends.
+    var tableOffsets: [Table.ID: CGPoint] { dragOffset.map { offset in Dictionary(uniqueKeysWithValues: selectedTables.map { ($0, offset) }) } ?? [:] }
+    var tieOffsets: [ZipTie.ID: CGPoint] { dragOffset.map { offset in Dictionary(uniqueKeysWithValues: selectedTies.map { ($0, offset) }) } ?? [:] }
+
+    /// Selects `item` on a click: alone, or with Shift added to (or, if already there, taken out of) the selection.
+    /// Clicking something already selected keeps the selection, so the whole group can be dragged.
+    func click(_ item: Item, extending: Bool) {
+        if extending {
+            if selection.contains(item) { selection.remove(item) } else { selection.insert(item) }
+        } else if !selection.contains(item) {
+            selection = [item]
+        }
+    }
 
     func canvasPoint(_ viewPoint: CGPoint) -> CGPoint { (viewPoint - offset) / zoom }
     func viewPoint(_ canvasPoint: CGPoint) -> CGPoint { canvasPoint * zoom + offset }
@@ -88,23 +133,29 @@ final class CanvasController {
         isFitted = true
     }
 
-    /// Adds a table in the middle of the view, stepped down and right from any already there.
+    /// Adds a table in the middle of the view, stepped down and right from any already there, and starts naming it.
     func addTable(to schema: inout Schema) {
         let middle = canvasPoint(CGPoint(x: viewSize.width / 2, y: viewSize.height / 2))
         var position = CGPoint(x: (middle.x - Metrics.tableWidth / 2).rounded(), y: (middle.y - 80).rounded())
         while schema.tables.contains(where: { $0.position.distance(to: position) < 8 }) { position += CGPoint(x: 24, y: 24) }
-        selection = .table(schema.addTable(at: position))
-        showsInspector = true
+        let id = schema.addTable(at: position)
+        selection = [.table(id)]
+        edit(.tableName(id))
+    }
+
+    func edit(_ field: Field) {
+        requestedFocus = field
     }
 
     func deleteSelection(in schema: inout Schema) {
-        switch selection {
-        case .table(let id): schema.removeTable(id)
-        case .relationship(let id): schema.removeRelationships { $0.id == id }
-        case .zipTie(let id): schema.removeZipTie(id)
-        case nil: return
+        for item in selection {
+            switch item {
+            case .table(let id): schema.removeTable(id)
+            case .relationship(let id): schema.removeRelationships { $0.id == id }
+            case .zipTie(let id): schema.removeZipTie(id)
+            }
         }
-        selection = nil
+        selection = []
     }
 }
 

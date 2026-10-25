@@ -1,16 +1,17 @@
 import CoreGraphics
 import Foundation
 
-/// Spring constants for wires, per second squared. Tuned by eye against the zip-tie reference: wires should overshoot
-/// once or twice and settle in about a second.
+/// Spring constants for wires, per second squared. Wires should feel like a pressurized air hose: a short lag behind
+/// a moving table, a few percent of overshoot, settled in about a third of a second (measured: 4%, 0.35 s for a
+/// 60-point jump). Raise `damping` toward 1 for less overshoot, lower the stiffnesses for more lag.
 enum Spring {
-    static let ends = 520.0
-    static let middle = 120.0
-    static let tie = 900.0
+    static let ends = 2200.0
+    static let middle = 1100.0
+    static let tie = 3000.0
     /// How much each point follows its neighbors' displacement, which sends a wobble travelling along the wire.
-    static let tension = 700.0
+    static let tension = 1500.0
     /// Fraction of critical damping.
-    static let damping = 0.32
+    static let damping = 0.7
     static let timeStep = 1.0 / 240
 }
 
@@ -59,16 +60,27 @@ final class WireSimulation {
         return isMoving
     }
 
-    /// The wire within `tolerance` of `point`, nearest first.
-    func wire(near point: CGPoint, within tolerance: CGFloat) -> Relationship.ID? {
-        var best: (id: Relationship.ID, distance: CGFloat)?
+    struct Hit {
+        var relationship: Relationship.ID
+        /// The nearest point on the wire.
+        var point: CGPoint
+        /// The way the wire runs there, a unit vector.
+        var tangent: CGPoint
+        /// Which of the wire's segments between sockets and ties it's on, counting from the foreign key's end.
+        var segment: Int
+    }
+
+    /// The nearest wire within `tolerance` of `point`, and where on it.
+    func hit(near point: CGPoint, within tolerance: CGFloat) -> Hit? {
+        var best: (hit: Hit, distance: CGFloat)?
         for (id, wire) in wires {
-            for (a, b) in zip(wire.points, wire.points.dropFirst()) {
-                let d = distance(from: point, toSegment: a, b)
-                if d <= tolerance, d < best?.distance ?? .infinity { best = (id, d) }
+            for (index, (a, b)) in zip(wire.points, wire.points.dropFirst()).enumerated() {
+                let nearest = closest(to: point, onSegment: a, b), distance = nearest.distance(to: point)
+                guard distance <= tolerance, distance < best?.distance ?? .infinity, let tangent = (b - a).normalized else { continue }
+                best = (Hit(relationship: id, point: nearest, tangent: tangent, segment: index / Routing.samplesPerSegment), distance)
             }
         }
-        return best?.id
+        return best?.hit
     }
 
     struct Crossing {

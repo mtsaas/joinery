@@ -76,8 +76,34 @@ extension Schema {
         guard !removed.isEmpty else { return }
         relationships.removeAll { removed.contains($0.id) }
         for index in zipTies.indices { zipTies[index].relationships.removeAll(where: removed.contains) }
-        // A tie holding one wire is just a kink in it.
-        for tie in zipTies where tie.relationships.count < 2 { removeZipTie(tie.id) }
+        zipTies.removeAll { $0.relationships.isEmpty }
+    }
+
+    /// Routes one wire through `point`, which lies on the wire's `segment`th stretch between sockets and ties.
+    /// - Parameter direction: The way the wire runs there.
+    @discardableResult
+    mutating func addBendPoint(on relationship: Relationship.ID, at point: CGPoint, direction: CGPoint, segment: Int) -> ZipTie.ID? {
+        guard let index = relationships.firstIndex(where: { $0.id == relationship }) else { return nil }
+        let bend = ZipTie(position: point, direction: direction, relationships: [relationship])
+        zipTies.append(bend)
+        relationships[index].zipTies.insert(bend.id, at: min(max(segment, 0), relationships[index].zipTies.count))
+        return bend.id
+    }
+
+    /// Moves tables and ties together, as when dragging a selection.
+    mutating func move(tables: Set<Table.ID>, ties: Set<ZipTie.ID>, by delta: CGPoint) {
+        for index in self.tables.indices where tables.contains(self.tables[index].id) { self.tables[index].position += delta }
+        for index in zipTies.indices where ties.contains(zipTies[index].id) { zipTies[index].position += delta }
+    }
+
+    /// Adds an empty column after `column`, or at the end, and returns it.
+    @discardableResult
+    mutating func addColumn(to table: Table.ID, after column: Column.ID? = nil) -> Column.ID? {
+        guard let index = tables.firstIndex(where: { $0.id == table }) else { return nil }
+        let new = Column(name: "", type: .text)
+        let position = column.flatMap { id in tables[index].columns.firstIndex { $0.id == id } }.map { $0 + 1 }
+        tables[index].columns.insert(new, at: position ?? tables[index].columns.endIndex)
+        return new.id
     }
 
     mutating func removeZipTie(_ id: ZipTie.ID) {
@@ -101,7 +127,7 @@ extension Schema {
             let wire = relationships[index].id
             relationships[index].zipTies = relationships[index].zipTies.uniqued.filter { wiresOf[$0]?.contains(wire) == true }
         }
-        for tie in zipTies where tie.relationships.count < 2 { removeZipTie(tie.id) }
+        for tie in zipTies where tie.relationships.isEmpty { removeZipTie(tie.id) }
     }
 }
 

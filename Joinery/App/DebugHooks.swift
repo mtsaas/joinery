@@ -6,7 +6,8 @@ import SwiftUI
 ///   frames 50 ms apart (out-0.png, out-1.png, …) to check an animation; `JOINERY_SNAPSHOT_DELAY` sets the wait.
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
-///   ties), `select <table>`, `inspect`, `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
+///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection),
+///   `type <text>` and `key tab|return|escape` (real key events), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
 ///   `wait <seconds>`.
 @MainActor
 final class DebugHooks: NSObject, NSApplicationDelegate {
@@ -49,9 +50,24 @@ final class DebugHooks: NSObject, NSApplicationDelegate {
             case "move" where table != nil && numbers.count == 2:
                 document.wrappedValue.tables[table!].position += CGPoint(x: numbers[0], y: numbers[1])
             case "select" where table != nil:
-                canvas.selection = .table(document.wrappedValue.tables[table!].id)
-            case "inspect":
-                canvas.showsInspector = true
+                canvas.selection = [.table(document.wrappedValue.tables[table!].id)]
+            case "edit" where table != nil:
+                canvas.edit(.tableName(document.wrappedValue.tables[table!].id))
+            case "click" where numbers.count == 2:
+                NotificationCenter.default.post(name: .click, object: canvas, userInfo: ["point": CGPoint(x: numbers[0], y: numbers[1])])
+            case "nudge" where numbers.count == 2:
+                document.wrappedValue.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: CGPoint(x: numbers[0], y: numbers[1]))
+            case "type" where words.count > 1:
+                for character in step.drop(while: { $0 == " " }).dropFirst(5) { await press(String(character)) }
+            case "key" where words.count == 2:
+                let codes: [String: (UInt16, String)] = ["tab": (48, "\t"), "return": (36, "\r"), "escape": (53, "\u{1b}")]
+                if let (code, characters) = codes[words[1]] { await press(characters, keyCode: code) }
+            case "dump":
+                for table in document.wrappedValue.tables {
+                    print(table.name, table.columns.map { "\($0.name):\($0.typeLabel)" }.joined(separator: " "))
+                }
+            case "space":
+                canvas.isSpaceHeld.toggle()
             case "zoom" where numbers.count == 1:
                 canvas.zoom(by: numbers[0])
             case "look" where numbers.count == 3:
@@ -71,8 +87,25 @@ final class DebugHooks: NSObject, NSApplicationDelegate {
     }
 }
 
+extension DebugHooks {
+    /// Presses a key through the window like a keyboard would; text fields and key monitors see it as real.
+    @MainActor
+    private static func press(_ characters: String, keyCode: UInt16 = 0) async {
+        guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible) else { return }
+        for type in [NSEvent.EventType.keyDown, .keyUp] {
+            guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                               windowNumber: window.windowNumber, context: nil, characters: characters,
+                                               charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode) else { continue }
+            NSApp.postEvent(event, atStart: false)
+        }
+        try? await Task.sleep(for: .seconds(0.08))
+    }
+}
+
 extension Notification.Name {
     /// Ends the canvas's tie line as if the drag had finished.
     static let finishStroke = Notification.Name("JoineryFinishStroke")
+    /// Clicks the empty canvas or a wire at `userInfo["point"]`, in canvas points.
+    static let click = Notification.Name("JoineryClick")
 }
 #endif

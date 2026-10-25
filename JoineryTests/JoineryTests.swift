@@ -93,18 +93,53 @@ struct JoineryTests {
         #expect(schema.zipTies.isEmpty)
     }
 
-    @Test func deletingAWireCutsATieLeftHoldingOne() throws {
+    @Test func deletingAWireLeavesTheOtherBentThroughTheTie() throws {
         var schema = storefront()
         let simulation = WireSimulation()
         _ = settle(simulation, on: Routing(schema: schema))
         let tie = schema.zipTie(simulation, from: CGPoint(x: 374, y: -200), to: CGPoint(x: 374, y: 300))
-        try #require(tie != nil)
+        let tieID = try #require(tie)
 
         schema.removeTable(schema.tables[2].id)
 
-        #expect(schema.zipTies.isEmpty)
+        #expect(schema.zipTies.map(\.relationships.count) == [1])
         #expect(schema.relationships.count == 1)
+        #expect(schema.relationships[0].zipTies == [tieID])
+    }
+
+    @Test func bendPointRoutesItsWireThroughIt() throws {
+        var schema = storefront()
+        let simulation = WireSimulation()
+        _ = settle(simulation, on: Routing(schema: schema))
+        let wire = schema.relationships[0].id
+        let bend = schema.addBendPoint(on: wire, at: CGPoint(x: 360, y: 120), direction: CGPoint(x: 1, y: 0), segment: 0)
+        let bendID = try #require(bend)
+
+        let routing = Routing(schema: schema)
+        let route = try #require(routing.routes[wire]), direction = try #require(routing.ties[bendID]?.direction)
+        let n = Routing.samplesPerSegment
+        #expect(route.points[n] == CGPoint(x: 360, y: 120))
+        // Passes through square to the bend point: along its direction on both sides.
+        for way in [route.points[n] - route.points[n - 1], route.points[n + 1] - route.points[n]] {
+            #expect(abs(try #require(way.normalized).dot(direction)) > 0.99)
+        }
+
+        schema.removeZipTie(bendID)
         #expect(schema.relationships[0].zipTies.isEmpty)
+    }
+
+    @Test(arguments: [("int", DataType.integer, false), ("text?", .text, true), ("ts", .timestamp, false),
+                      ("TIMESTAMPTZ", .timestamp, false), ("bool?", .boolean, true), ("var", .varchar, false),
+                      ("jsonb", .json, false), ("u", .uuid, false)])
+    func typingATypeReadsIt(input: String, type: DataType, isNullable: Bool) throws {
+        let parsed = try #require(DataType.parse(input))
+        #expect(parsed.type == type)
+        #expect(parsed.isNullable == isNullable)
+    }
+
+    @Test func typingNonsenseKeepsNothing() {
+        #expect(DataType.parse("zzz") == nil)
+        #expect(DataType.parse("?") == nil)
     }
 
     @Test func repairDropsDanglingReferences() {

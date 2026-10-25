@@ -8,15 +8,22 @@ Requires macOS 26 and Xcode 26 or later. Open `Joinery.xcodeproj` and press ⌘R
 
 | Action | How |
 | --- | --- |
-| Add a table | Toolbar table button, or Insert ▸ Table (⌥⌘T) |
-| Edit tables and columns | Select a table, then show the inspector (toolbar, right) |
+| Add a table | **T**, the toolbar table button, or Insert ▸ Table (⌥⌘T); type its name straight away |
+| Edit cells | Double-click a cell, or press Return with a table selected |
+| Move between cells | Tab / Shift-Tab; Return goes name → type → new column; Tab past the last cell adds a column |
+| Set a type | Type it or its start: `int`, `ts`, `bool`, `jsonb`; end with `?` for nullable |
+| Primary key / delete column | ⌘K / ⌘⌫ while editing, or double-click the key cell to toggle PK |
+| Finish editing | Escape (a first Escape closes the type suggestions) |
 | Add a foreign key | Drag from a column's socket onto another column (the referenced one) |
+| Reroute a wire | Click it to add a bend point there, or drag it to add one and move it; double-click a bend point to remove it |
 | Zip-tie wires | Option-drag a line across two or more wires, or turn on the Zip Tie tool and drag |
-| Move a zip tie | Drag it |
-| Cut a zip tie | Select it and press Delete, or use its context menu |
-| Pan / zoom | Scroll or drag empty canvas / pinch, ⌘-scroll, ⌘+ ⌘- ⌘0, Zoom to Fit ⌘1 |
+| Select | Click; Shift-click to add; drag on empty canvas for a box; ⌘A for everything; Option-click a wire |
+| Move | Drag anything selected to move the whole selection; arrow keys nudge (Shift for 10 points) |
+| Delete | Delete removes the selection; right-click tables, ties and bend points for more |
+| Pan / zoom | Scroll, or hold Space and drag / pinch, ⌘-scroll, ⌘+ ⌘- ⌘0, Zoom to Fit ⌘1 |
 
-Each wire takes the color of the table it references. Selecting a table, wire or tie highlights its wires.
+Each wire takes the color of the table it references, and FK cells match it. Wires leave sockets and pass through
+ties and bend points square to them.
 
 ## Layout
 
@@ -25,8 +32,7 @@ Joinery/
   App/         App entry, document window, menu commands, debug hooks
   Document/    Schema model (Codable JSON, .joinery) and its edits
   Canvas/      Canvas view, table cards, routing, wire physics, zip tying
-  Inspector/   Inspector for the selection
-JoineryTests/  Swift Testing: physics, zip tying, schema repair
+JoineryTests/  Swift Testing: physics, zip ties and bend points, type parsing, schema repair
 scripts/       build.sh (unsandboxed CLI build), make_icon.swift
 ```
 
