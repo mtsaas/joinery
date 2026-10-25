@@ -1,0 +1,435 @@
+{
+  "relationships": [
+    {
+      "from": "818B33D1-5D4F-53D2-A468-7C83DBC3B356",
+      "id": "508ACFD0-B79E-5675-A5DF-484DD96936E8",
+      "to": "28BBB6B6-9083-5243-A02D-4222F7D4FF81",
+      "zipTies": []
+    },
+    {
+      "from": "EFE66800-3F6C-50FD-83FB-5C4231DAD189",
+      "id": "6BC3555B-3E23-53FA-BBC0-C0E37E4E14B7",
+      "to": "5C0253EF-73EF-587B-99D7-1FDD3BCB2223",
+      "zipTies": []
+    },
+    {
+      "from": "CA472493-709C-5607-BABD-D4AB9BD797B7",
+      "id": "5A8A2599-7068-5538-9606-A713ED579761",
+      "to": "5C0253EF-73EF-587B-99D7-1FDD3BCB2223",
+      "zipTies": []
+    },
+    {
+      "from": "6A5B1F9D-595C-5F4E-BCA8-9800BE2CE61E",
+      "id": "D1856D9B-4BDC-5431-9BFB-1469970A014D",
+      "to": "28BBB6B6-9083-5243-A02D-4222F7D4FF81",
+      "zipTies": []
+    },
+    {
+      "from": "5C3B8EC9-D420-519A-A511-70B15859A924",
+      "id": "1C293BEA-0A37-5441-AFDA-6AA368DFD4BC",
+      "to": "B7464015-3050-5AB6-B9CF-BDF23746E19B",
+      "zipTies": []
+    },
+    {
+      "from": "698037BA-BDDF-591F-A9F6-22B0A1B7701C",
+      "id": "46D2F73E-4082-5400-B4DB-C1B3EB5844D7",
+      "to": "3D11A99C-54DA-57C7-AC56-BF546BE1D023",
+      "zipTies": []
+    },
+    {
+      "from": "D9E2E41A-7DE7-5AFF-9876-FA0642AE31F4",
+      "id": "61F652D1-A649-552D-AD01-C363BBDDCFFB",
+      "to": "7E1C0640-5B99-56C2-A015-3DA03D0FFB3C",
+      "zipTies": []
+    },
+    {
+      "from": "0169CD7F-569E-5C92-8F80-9BACAF6F8299",
+      "id": "A1A3D3CD-EE1F-55BC-AC42-B3F813B65326",
+      "to": "3D11A99C-54DA-57C7-AC56-BF546BE1D023",
+      "zipTies": []
+    },
+    {
+      "from": "8EB09B74-A431-5830-8E4A-BF890AF60372",
+      "id": "B115CED3-ED4E-50A2-A241-26B42DB23646",
+      "to": "7E1C0640-5B99-56C2-A015-3DA03D0FFB3C",
+      "zipTies": []
+    },
+    {
+      "from": "C65A08D8-6E29-527A-8734-D545D7F2AB5B",
+      "id": "E915718B-5D40-539F-A919-A073BBAC8D22",
+      "to": "28BBB6B6-9083-5243-A02D-4222F7D4FF81",
+      "zipTies": []
+    }
+  ],
+  "tables": [
+    {
+      "color": "blue",
+      "columns": [
+        {
+          "id": "28BBB6B6-9083-5243-A02D-4222F7D4FF81",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "id": "63B91722-386D-5FF9-BDA4-CF7C0B4C374D",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "email",
+          "type": "text"
+        },
+        {
+          "id": "A570FA15-3E0A-535A-97FD-6C12550787BF",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "name",
+          "type": "text"
+        },
+        {
+          "id": "33C366D3-3A2B-5AC0-9A9B-E09FD17B5AF0",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "created_at",
+          "type": "timestamp"
+        }
+      ],
+      "id": "C4BA10C0-980F-5E97-A8EB-5329EAD89DE5",
+      "name": "users",
+      "position": [
+        0,
+        189.0
+      ]
+    },
+    {
+      "color": "orange",
+      "columns": [
+        {
+          "id": "B7464015-3050-5AB6-B9CF-BDF23746E19B",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "id": "818B33D1-5D4F-53D2-A468-7C83DBC3B356",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "user_id",
+          "type": "uuid"
+        },
+        {
+          "id": "987E8794-C614-5C45-AD3F-0471FE206440",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "line1",
+          "type": "text"
+        },
+        {
+          "id": "562E8526-9939-5D12-BC8F-3DA60403345A",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "city",
+          "type": "text"
+        },
+        {
+          "id": "9E6375A7-6885-55ED-949D-E9A48F232302",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "postal_code",
+          "type": "varchar"
+        }
+      ],
+      "id": "F1A6445D-D58E-5B6C-A57B-1217B7231B8D",
+      "name": "addresses",
+      "position": [
+        366,
+        211.0
+      ]
+    },
+    {
+      "color": "green",
+      "columns": [
+        {
+          "id": "5C0253EF-73EF-587B-99D7-1FDD3BCB2223",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "id": "EFE66800-3F6C-50FD-83FB-5C4231DAD189",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "parent_id",
+          "type": "uuid"
+        },
+        {
+          "id": "5E874960-BCA4-52B5-BB69-0714975FA504",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "name",
+          "type": "text"
+        }
+      ],
+      "id": "FD082164-9087-5580-B840-0E4A90C82EBA",
+      "name": "categories",
+      "position": [
+        0,
+        55.0
+      ]
+    },
+    {
+      "color": "purple",
+      "columns": [
+        {
+          "id": "7E1C0640-5B99-56C2-A015-3DA03D0FFB3C",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "id": "CA472493-709C-5607-BABD-D4AB9BD797B7",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "category_id",
+          "type": "uuid"
+        },
+        {
+          "id": "973A6FE2-C3E3-558B-B105-95FF0BA11289",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "name",
+          "type": "text"
+        },
+        {
+          "id": "5C424C7D-2204-5182-810F-EA8AC4B18667",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "price",
+          "type": "numeric"
+        },
+        {
+          "id": "F102FE95-FA1D-56BC-9897-255B7A946EDD",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "in_stock",
+          "type": "boolean"
+        },
+        {
+          "id": "4050E1D9-6932-5CEC-8EF0-06B7FCAAB073",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "attributes",
+          "type": "json"
+        }
+      ],
+      "id": "F81C7F5C-6E3B-517B-B109-FD8E2AC35BAC",
+      "name": "products",
+      "position": [
+        366,
+        11.0
+      ]
+    },
+    {
+      "color": "pink",
+      "columns": [
+        {
+          "id": "3D11A99C-54DA-57C7-AC56-BF546BE1D023",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "id": "6A5B1F9D-595C-5F4E-BCA8-9800BE2CE61E",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "user_id",
+          "type": "uuid"
+        },
+        {
+          "id": "5C3B8EC9-D420-519A-A511-70B15859A924",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "shipping_address_id",
+          "type": "uuid"
+        },
+        {
+          "id": "AAC3C7DC-EF14-5E50-BD42-F1D35E948D9A",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "status",
+          "type": "text"
+        },
+        {
+          "id": "BFED4DA6-8B56-5D99-AA06-425D391C0CA5",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "total",
+          "type": "numeric"
+        },
+        {
+          "id": "BDB94A33-EA83-5E49-A9DB-0FF11708E0F8",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "placed_at",
+          "type": "timestamp"
+        }
+      ],
+      "id": "F01CC62A-5E2C-5FF2-BBB2-62AE06D7C270",
+      "name": "orders",
+      "position": [
+        732,
+        200.0
+      ]
+    },
+    {
+      "color": "teal",
+      "columns": [
+        {
+          "id": "D03541E6-8893-54EA-91F4-C3C47FFCAC5F",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "id": "698037BA-BDDF-591F-A9F6-22B0A1B7701C",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "order_id",
+          "type": "uuid"
+        },
+        {
+          "id": "D9E2E41A-7DE7-5AFF-9876-FA0642AE31F4",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "product_id",
+          "type": "uuid"
+        },
+        {
+          "id": "48ADD3DA-FAB2-5900-AC98-6478513F4061",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "quantity",
+          "type": "integer"
+        },
+        {
+          "id": "5E913BD2-0E04-5FF1-BD4B-7F4E8F2E62F0",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "unit_price",
+          "type": "numeric"
+        }
+      ],
+      "id": "6E1088BB-4D44-59D1-9D06-373D2CA1A900",
+      "name": "order_items",
+      "position": [
+        1098,
+        22.0
+      ]
+    },
+    {
+      "color": "indigo",
+      "columns": [
+        {
+          "id": "8014F653-EBF9-5F62-AA8C-C123B621AD62",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "id": "0169CD7F-569E-5C92-8F80-9BACAF6F8299",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "order_id",
+          "type": "uuid"
+        },
+        {
+          "id": "8587ADF9-0F29-5769-BECF-1F42D3B94B4B",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "amount",
+          "type": "numeric"
+        },
+        {
+          "id": "6984400E-CD42-584C-B4DF-5A99A0A11953",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "provider",
+          "type": "text"
+        },
+        {
+          "id": "A9889AF0-4556-56C6-B303-37ABBE08D803",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "paid_at",
+          "type": "timestamp"
+        }
+      ],
+      "id": "A70BD60D-021C-5C63-BE73-8993C6033997",
+      "name": "payments",
+      "position": [
+        1098,
+        200.0
+      ]
+    },
+    {
+      "color": "red",
+      "columns": [
+        {
+          "id": "D8261249-7251-500A-B5DA-CEEBA6A297EF",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "id",
+          "type": "uuid"
+        },
+        {
+          "id": "8EB09B74-A431-5830-8E4A-BF890AF60372",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "product_id",
+          "type": "uuid"
+        },
+        {
+          "id": "C65A08D8-6E29-527A-8734-D545D7F2AB5B",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "user_id",
+          "type": "uuid"
+        },
+        {
+          "id": "CD29C38D-3E8E-517B-AB13-E1DB79AEB835",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "rating",
+          "type": "integer"
+        },
+        {
+          "id": "4DAF13D6-CD31-5F11-AEBA-FAA364EF5C4E",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "body",
+          "type": "text"
+        },
+        {
+          "id": "5812A142-4195-5E5A-967A-45956D816D53",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "is_verified",
+          "type": "boolean"
+        }
+      ],
+      "id": "26F6CD43-CDD1-523F-87BA-EF54CC7B28FB",
+      "name": "reviews",
+      "position": [
+        732,
+        0.0
+      ]
+    }
+  ],
+  "zipTies": []
+}

@@ -1,0 +1,551 @@
+{
+  "relationships": [
+    {
+      "from": "B709A621-3DDF-53FE-87F7-7D0B8E8F706F",
+      "id": "F8405ED0-73AB-5DB9-AE21-CA4FC177780E",
+      "to": "49661575-4AE1-57B9-B89F-7DDDBC810511",
+      "zipTies": []
+    },
+    {
+      "from": "E5AC6818-01A6-5682-BB29-F9D931C29403",
+      "id": "AF555D9A-E0F2-5091-A23C-8276434C971D",
+      "to": "2551F56B-D9D8-5C60-8662-82622155F8F5",
+      "zipTies": []
+    },
+    {
+      "from": "F29493D0-DA7B-5A34-A24F-9B9258FC22E1",
+      "id": "28A01249-ABAD-51A2-9E22-71290B377266",
+      "to": "D715F1C8-A40C-52BD-BFDD-BF67DB975451",
+      "zipTies": []
+    },
+    {
+      "from": "EDBCBC2A-6633-5220-8F6C-8B99F1C65FD7",
+      "id": "81AB4C49-1F54-5DD7-B721-4216E5EF0BF3",
+      "to": "ACE4C906-AE1E-552E-B510-D8054D5CAEB2",
+      "zipTies": []
+    },
+    {
+      "from": "D79B5BF8-4749-51B4-BF33-36DE406FE082",
+      "id": "0898F5FB-53E0-58AD-83DB-0D9B96174EAA",
+      "to": "7E95A1AB-A338-5C5F-8498-65CB1E74E542",
+      "zipTies": []
+    },
+    {
+      "from": "EFFE8726-9715-59DA-8D9A-85071983E183",
+      "id": "6D24C25B-7959-52BE-AD9A-81452870FC99",
+      "to": "5699E067-24A6-5EC9-B63C-1A36B3FA86EA",
+      "zipTies": []
+    },
+    {
+      "from": "BF818D71-758D-535F-BF16-052A12996E73",
+      "id": "FB39E79E-20B3-5063-9FE2-135D03F837D6",
+      "to": "A7581806-E697-58A1-9941-ECF840284A58",
+      "zipTies": []
+    },
+    {
+      "from": "1D070382-36AF-54DD-B44E-88891911DE5B",
+      "id": "5F57478A-AB0B-5AD9-9FD7-8DC426CB2784",
+      "to": "A7581806-E697-58A1-9941-ECF840284A58",
+      "zipTies": []
+    },
+    {
+      "from": "07337416-A75C-572E-BB9E-FA308CC9AE3B",
+      "id": "F2916BF8-9A5C-5196-80E0-5FB66915935E",
+      "to": "A1D3CCE2-5E14-5760-9C0A-1EB8B2D3785B",
+      "zipTies": []
+    },
+    {
+      "from": "38BD9156-215D-54CF-BFCA-5B08D2EB2D10",
+      "id": "D86EF2A6-BE51-5C4E-8A5E-F5828EFC3B18",
+      "to": "3ED9450F-0D03-54FB-AF96-112067B3B330",
+      "zipTies": []
+    },
+    {
+      "from": "E89F4DD1-E871-5499-9B9B-01A6B012FA1D",
+      "id": "553A91FE-88EC-5084-A650-518D2B144188",
+      "to": "5699E067-24A6-5EC9-B63C-1A36B3FA86EA",
+      "zipTies": []
+    }
+  ],
+  "tables": [
+    {
+      "color": "blue",
+      "columns": [
+        {
+          "id": "49661575-4AE1-57B9-B89F-7DDDBC810511",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "ArtistId",
+          "type": "integer"
+        },
+        {
+          "id": "82950B1F-88F6-5A9B-A53E-B63535C7A636",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Name",
+          "type": "varchar"
+        }
+      ],
+      "id": "C3D8C4E6-E01F-59CC-AF46-9E62748A8FD6",
+      "name": "Artist",
+      "position": [
+        0,
+        0.0
+      ]
+    },
+    {
+      "color": "orange",
+      "columns": [
+        {
+          "id": "2551F56B-D9D8-5C60-8662-82622155F8F5",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "AlbumId",
+          "type": "integer"
+        },
+        {
+          "id": "F16F0D3C-CC5B-54A9-B55F-A7F7D71CCCA7",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Title",
+          "type": "varchar"
+        },
+        {
+          "id": "B709A621-3DDF-53FE-87F7-7D0B8E8F706F",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "ArtistId",
+          "type": "integer"
+        }
+      ],
+      "id": "43A26145-DBD1-5D37-BA47-DC8A8EEAD0EF",
+      "name": "Album",
+      "position": [
+        366,
+        179.0
+      ]
+    },
+    {
+      "color": "green",
+      "columns": [
+        {
+          "id": "D715F1C8-A40C-52BD-BFDD-BF67DB975451",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "MediaTypeId",
+          "type": "integer"
+        },
+        {
+          "id": "EEA58FEA-CCBA-5ADF-84DF-347D4AA34D99",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Name",
+          "type": "varchar"
+        }
+      ],
+      "id": "72ECB91A-5035-51A4-B4EE-B3D04B3F264D",
+      "name": "MediaType",
+      "position": [
+        0,
+        512.0
+      ]
+    },
+    {
+      "color": "purple",
+      "columns": [
+        {
+          "id": "ACE4C906-AE1E-552E-B510-D8054D5CAEB2",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "GenreId",
+          "type": "integer"
+        },
+        {
+          "id": "AB7300DD-BA46-546D-A35E-CFFED92AB857",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Name",
+          "type": "varchar"
+        }
+      ],
+      "id": "B2581806-EBDF-5205-B7A9-42F687EC41C5",
+      "name": "Genre",
+      "position": [
+        0,
+        400.0
+      ]
+    },
+    {
+      "color": "pink",
+      "columns": [
+        {
+          "id": "5699E067-24A6-5EC9-B63C-1A36B3FA86EA",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "TrackId",
+          "type": "integer"
+        },
+        {
+          "id": "6E5A5F97-A0B5-51FA-B893-6BDA376801AF",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Name",
+          "type": "varchar"
+        },
+        {
+          "id": "E5AC6818-01A6-5682-BB29-F9D931C29403",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "AlbumId",
+          "type": "integer"
+        },
+        {
+          "id": "F29493D0-DA7B-5A34-A24F-9B9258FC22E1",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "MediaTypeId",
+          "type": "integer"
+        },
+        {
+          "id": "EDBCBC2A-6633-5220-8F6C-8B99F1C65FD7",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "GenreId",
+          "type": "integer"
+        },
+        {
+          "id": "C10554F4-DC25-506A-B149-834D08794F37",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Composer",
+          "type": "varchar"
+        },
+        {
+          "id": "B0556EB7-CCA7-5754-A76C-73F7FED48F28",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Milliseconds",
+          "type": "integer"
+        },
+        {
+          "id": "2C6CF4C1-45A9-594D-9A19-2878D4902CD2",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Bytes",
+          "type": "integer"
+        },
+        {
+          "id": "80001891-AD5C-58EF-944C-E6C74968E0FA",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "UnitPrice",
+          "type": "numeric"
+        }
+      ],
+      "id": "478EC428-709E-5CE7-898E-27169A4903AE",
+      "name": "Track",
+      "position": [
+        732,
+        335.0
+      ]
+    },
+    {
+      "color": "teal",
+      "columns": [
+        {
+          "id": "7E95A1AB-A338-5C5F-8498-65CB1E74E542",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "PlaylistId",
+          "type": "integer"
+        },
+        {
+          "id": "CFEDF771-0964-5417-90C0-D7FD28831F64",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Name",
+          "type": "varchar"
+        }
+      ],
+      "id": "8ECC0483-4660-59AD-9A5F-C3807C04A4D6",
+      "name": "Playlist",
+      "position": [
+        0,
+        624.0
+      ]
+    },
+    {
+      "color": "indigo",
+      "columns": [
+        {
+          "id": "D79B5BF8-4749-51B4-BF33-36DE406FE082",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "PlaylistId",
+          "type": "integer"
+        },
+        {
+          "id": "EFFE8726-9715-59DA-8D9A-85071983E183",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "TrackId",
+          "type": "integer"
+        }
+      ],
+      "id": "8241E37B-3E2A-535D-89AF-FCD197E1435C",
+      "name": "PlaylistTrack",
+      "position": [
+        1098,
+        401.0
+      ]
+    },
+    {
+      "color": "red",
+      "columns": [
+        {
+          "id": "A7581806-E697-58A1-9941-ECF840284A58",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "EmployeeId",
+          "type": "integer"
+        },
+        {
+          "id": "CD3E2B71-AE73-5164-80C0-C6688C7781EB",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "LastName",
+          "type": "varchar"
+        },
+        {
+          "id": "570F12B8-19DF-582F-9309-7B47FF750646",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "FirstName",
+          "type": "varchar"
+        },
+        {
+          "id": "90AA6C16-8207-582F-8CE9-9A4AB586FE18",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Title",
+          "type": "varchar"
+        },
+        {
+          "id": "BF818D71-758D-535F-BF16-052A12996E73",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ReportsTo",
+          "type": "integer"
+        },
+        {
+          "id": "1EF03F81-43AF-5990-A210-149FD62C7222",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "BirthDate",
+          "type": "timestamp"
+        },
+        {
+          "id": "E46F4AA5-9782-5970-9005-AA578EB5338F",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "HireDate",
+          "type": "timestamp"
+        },
+        {
+          "id": "A3704140-4173-533D-9CC1-A80B0178CE65",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "City",
+          "type": "varchar"
+        },
+        {
+          "id": "C43291A5-D5D8-5C97-A242-D667EE480C6D",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Country",
+          "type": "varchar"
+        },
+        {
+          "id": "0B7FEC7D-A9DA-51DB-BD54-3C5EBB9BC0AB",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Email",
+          "type": "varchar"
+        }
+      ],
+      "id": "E892A375-7640-5C6C-BA76-1B3E84A12730",
+      "name": "Employee",
+      "position": [
+        0,
+        112.0
+      ]
+    },
+    {
+      "color": "yellow",
+      "columns": [
+        {
+          "id": "A1D3CCE2-5E14-5760-9C0A-1EB8B2D3785B",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "CustomerId",
+          "type": "integer"
+        },
+        {
+          "id": "F957CE93-57FC-572C-B09F-9F39A6C6213D",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "FirstName",
+          "type": "varchar"
+        },
+        {
+          "id": "44AEEE30-20EA-56EF-87FA-F84487A1617B",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "LastName",
+          "type": "varchar"
+        },
+        {
+          "id": "F088451E-7F72-558A-AA6D-2DDBF61E6293",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Company",
+          "type": "varchar"
+        },
+        {
+          "id": "6F1088A5-FBD7-5E6E-88AB-38D41CB4BA34",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "City",
+          "type": "varchar"
+        },
+        {
+          "id": "E3285786-FB37-560C-A57F-069F461B3DB2",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Country",
+          "type": "varchar"
+        },
+        {
+          "id": "8DB5272F-CF9E-50D0-B18C-389FFA5920A8",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Email",
+          "type": "varchar"
+        },
+        {
+          "id": "1D070382-36AF-54DD-B44E-88891911DE5B",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "SupportRepId",
+          "type": "integer"
+        }
+      ],
+      "id": "315DA10D-38AC-5AF0-8BF2-512CF74FE231",
+      "name": "Customer",
+      "position": [
+        366,
+        313.0
+      ]
+    },
+    {
+      "color": "mint",
+      "columns": [
+        {
+          "id": "3ED9450F-0D03-54FB-AF96-112067B3B330",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "InvoiceId",
+          "type": "integer"
+        },
+        {
+          "id": "07337416-A75C-572E-BB9E-FA308CC9AE3B",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CustomerId",
+          "type": "integer"
+        },
+        {
+          "id": "C9D71915-B936-5174-8072-93FDEA1F027E",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "InvoiceDate",
+          "type": "timestamp"
+        },
+        {
+          "id": "CB1B1845-565D-5BAD-9BBC-973C7BB71084",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "BillingCity",
+          "type": "varchar"
+        },
+        {
+          "id": "70A42722-18DA-5E00-9AA1-3D1657CD148B",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "BillingCountry",
+          "type": "varchar"
+        },
+        {
+          "id": "627E4243-0DDF-5337-8EA6-23C3A61D08CE",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Total",
+          "type": "numeric"
+        }
+      ],
+      "id": "3F64B429-4917-5E00-9FAA-D231665BBBD7",
+      "name": "Invoice",
+      "position": [
+        732,
+        135.0
+      ]
+    },
+    {
+      "color": "cyan",
+      "columns": [
+        {
+          "id": "AC2E8835-C449-5C1A-86A2-036F61A8C9C4",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "InvoiceLineId",
+          "type": "integer"
+        },
+        {
+          "id": "38BD9156-215D-54CF-BFCA-5B08D2EB2D10",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "InvoiceId",
+          "type": "integer"
+        },
+        {
+          "id": "E89F4DD1-E871-5499-9B9B-01A6B012FA1D",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "TrackId",
+          "type": "integer"
+        },
+        {
+          "id": "C8CC910A-6298-566C-894D-96280CAC1779",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "UnitPrice",
+          "type": "numeric"
+        },
+        {
+          "id": "58537C0F-BD46-502F-B7B9-F9D60BA4F41F",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Quantity",
+          "type": "integer"
+        }
+      ],
+      "id": "85D50B0F-2F2D-5BBE-8107-FC8E652E095C",
+      "name": "InvoiceLine",
+      "position": [
+        1098,
+        223.0
+      ]
+    }
+  ],
+  "zipTies": []
+}

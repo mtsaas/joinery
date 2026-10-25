@@ -2,65 +2,56 @@ import SwiftUI
 
 @main
 struct JoineryApp: App {
-    #if DEBUG
-    @NSApplicationDelegateAdaptor private var debugHooks: DebugHooks
-    #endif
+    @NSApplicationDelegateAdaptor private var appDelegate: AppDelegate
 
     var body: some Scene {
-        DocumentGroup(newDocument: SchemaDocument()) { file in
-            SchemaWindow(document: file.$document)
+        Window("Joinery", id: "library") {
+            LibraryView(library: .shared)
         }
-        .defaultSize(width: 1280, height: 820)
-        .commands { CanvasCommands() }
+        .defaultSize(width: 1440, height: 880)
+        .commands {
+            LibraryCommands(library: .shared)
+            CanvasCommands()
+        }
     }
 }
 
-/// A document's window: the canvas and its toolbar.
-struct SchemaWindow: View {
-    @Binding var document: SchemaDocument
-    @State private var canvas = CanvasController()
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// `.joinery` files opened from Finder (or passed on the command line) are copied into the library.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls where url.pathExtension == "joinery" { Library.shared.importSchema(from: url) }
+    }
 
-    var body: some View {
-        CanvasView(schema: $document.schema, canvas: canvas)
-            .ignoresSafeArea()
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    ZoomMenu(canvas: canvas, bounds: document.schema.bounds)
-                }
-                ToolbarItem(placement: .principal) {
-                    Button("Table", systemImage: "tablecells") { canvas.addTable(to: &document.schema) }
-                        .help("Add a table (T)")
-                }
-            }
-            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-            .focusedSceneValue(\.canvasController, canvas)
-            .focusedSceneValue(\.schema, $document.schema)
-            #if DEBUG
-            .task { await DebugHooks.script($document.schema, canvas: canvas) }
-            #endif
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        #if DEBUG
+        DebugHooks.launched()
+        #endif
     }
 }
 
-private struct ZoomMenu: View {
-    let canvas: CanvasController
-    let bounds: CGRect?
+/// File menu items for the library.
+struct LibraryCommands: Commands {
+    let library: Library
 
-    var body: some View {
-        Menu(Self.percent(canvas.zoom)) {
-            Button("Zoom In") { canvas.zoom(by: 1.25) }
-            Button("Zoom Out") { canvas.zoom(by: 0.8) }
-            Button("Zoom to Fit") { canvas.zoomToFit(bounds) }
+    var body: some Commands {
+        CommandGroup(replacing: .newItem) {
+            Button("New Schema") { library.newSchema(in: library.selection.flatMap(library.collection(of:))) }
+                .keyboardShortcut("n")
+            Button("New Collection") { library.newCollection() }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             Divider()
-            ForEach([0.5, 1, 2] as [CGFloat], id: \.self) { level in
-                Button(Self.percent(level)) { canvas.zoom(by: level / canvas.zoom) }
-            }
+            Button("Import Schema…") { importSchema() }
+                .keyboardShortcut("o")
+            Button("Add Examples") { try? library.addExamples() }
+            Button("Show Library in Finder") { library.showInFinder(library.root) }
         }
-        .monospacedDigit()
-        .fixedSize()
-        .help("Zoom")
     }
 
-    private static func percent(_ zoom: CGFloat) -> String {
-        Double(zoom).formatted(.percent.precision(.fractionLength(0)))
+    private func importSchema() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.joinerySchema]
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK else { return }
+        for url in panel.urls { library.importSchema(from: url) }
     }
 }

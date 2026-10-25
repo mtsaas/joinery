@@ -1,0 +1,595 @@
+{
+  "relationships": [
+    {
+      "from": "A7E87FE0-52D3-52D5-BB39-E88EBC839595",
+      "id": "09EFA6FA-0B5B-585B-A12D-3C30CA5D852B",
+      "to": "2A23DE09-29A4-5CC5-A408-44F22B74E73A",
+      "zipTies": []
+    },
+    {
+      "from": "755F1758-60D8-555B-A7C4-E707C9B85AB4",
+      "id": "45AF20E4-E191-5C58-AFFB-056DEE0F5116",
+      "to": "7682D3E1-F1CB-5E08-A541-D5784813221B",
+      "zipTies": []
+    },
+    {
+      "from": "D5E4D8D2-F1C2-5B39-8D0B-6FE0062A79A8",
+      "id": "7101A41E-17DB-5E77-93E6-1F85660C07C8",
+      "to": "7682D3E1-F1CB-5E08-A541-D5784813221B",
+      "zipTies": []
+    },
+    {
+      "from": "A47A9928-CAAA-5F02-BECB-6DC6762E8CFD",
+      "id": "70B70B8C-6C55-5B2C-AC5A-6A9B192881B7",
+      "to": "98BADD8D-AF6A-50A1-BD1B-DBE1AE4A8F9B",
+      "zipTies": []
+    },
+    {
+      "from": "1E75F88D-8923-548A-83CF-01CC189D6E85",
+      "id": "16EB5B4A-8BB3-50E5-A093-D025151DA0B2",
+      "to": "98BADD8D-AF6A-50A1-BD1B-DBE1AE4A8F9B",
+      "zipTies": []
+    },
+    {
+      "from": "54FC3D8D-BCA6-5EA3-9B2B-F91267078F62",
+      "id": "48DD5DC6-C31B-5E2D-AB5D-B859D2ECCBB9",
+      "to": "7682D3E1-F1CB-5E08-A541-D5784813221B",
+      "zipTies": []
+    },
+    {
+      "from": "4BD77EB5-4590-56F4-82EB-B6F804E7457D",
+      "id": "535C1B7C-AB51-51AB-AA2E-CCE631561806",
+      "to": "98BADD8D-AF6A-50A1-BD1B-DBE1AE4A8F9B",
+      "zipTies": []
+    },
+    {
+      "from": "2DC3D855-7787-55E5-AB02-09464D5AFEF1",
+      "id": "0804E73A-991E-5907-93A9-BEDD50B7F5FC",
+      "to": "7682D3E1-F1CB-5E08-A541-D5784813221B",
+      "zipTies": []
+    },
+    {
+      "from": "E27365A0-1A16-54A2-81A1-7F45CA2FFE6C",
+      "id": "7BB7C5C3-5633-5C49-B0D0-252FEDAAEE9A",
+      "to": "1F80C8D7-BF60-515C-A732-1DD0F9079F12",
+      "zipTies": []
+    },
+    {
+      "from": "2552F360-3C94-54CB-A1F9-FF48E9267FE6",
+      "id": "FC80781A-91A6-5DCA-A0C4-ED90DDBA1F4A",
+      "to": "98BADD8D-AF6A-50A1-BD1B-DBE1AE4A8F9B",
+      "zipTies": []
+    },
+    {
+      "from": "8439B241-0E87-53D0-B016-F76CDFD428C3",
+      "id": "D472C5A3-8292-5A71-AB0B-FF17C8C1F721",
+      "to": "98BADD8D-AF6A-50A1-BD1B-DBE1AE4A8F9B",
+      "zipTies": []
+    },
+    {
+      "from": "CEC91EB1-4BC3-564C-811C-1DCC5142541E",
+      "id": "D907B3AE-859A-5355-A75B-F3703F5A875D",
+      "to": "7682D3E1-F1CB-5E08-A541-D5784813221B",
+      "zipTies": []
+    },
+    {
+      "from": "9BCABF2C-CB07-566F-AB54-6A8EC7C17BDD",
+      "id": "9B9E27CE-2770-5598-987E-F23E1323EC1B",
+      "to": "7682D3E1-F1CB-5E08-A541-D5784813221B",
+      "zipTies": []
+    },
+    {
+      "from": "23720DF7-283B-5B1D-B7D5-4562FD53562E",
+      "id": "248DA4F6-9532-5637-82E3-6799E44EF013",
+      "to": "7682D3E1-F1CB-5E08-A541-D5784813221B",
+      "zipTies": []
+    },
+    {
+      "from": "D6E1C021-DBF3-5DA3-B3AD-8DE9AAE7E53F",
+      "id": "4843D149-713E-5FAC-AA71-F7A7E6918BB5",
+      "to": "7682D3E1-F1CB-5E08-A541-D5784813221B",
+      "zipTies": []
+    }
+  ],
+  "tables": [
+    {
+      "color": "blue",
+      "columns": [
+        {
+          "id": "98BADD8D-AF6A-50A1-BD1B-DBE1AE4A8F9B",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "Id",
+          "type": "integer"
+        },
+        {
+          "id": "4A3AAC07-25B1-5061-B805-AFD8F0AF5967",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Reputation",
+          "type": "integer"
+        },
+        {
+          "id": "A45304B1-91E0-507B-9489-6A3EA556C5A6",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CreationDate",
+          "type": "timestamp"
+        },
+        {
+          "id": "7537E063-3612-54BD-ADEC-C3567359D6E9",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "DisplayName",
+          "type": "varchar"
+        },
+        {
+          "id": "CF10070D-062A-5F82-B422-C675721FC599",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "LastAccessDate",
+          "type": "timestamp"
+        },
+        {
+          "id": "C386A477-F6ED-5AE6-863B-1E2111697E32",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Location",
+          "type": "varchar"
+        },
+        {
+          "id": "094EB303-2FC2-5F77-825F-B78F29F9344B",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "AboutMe",
+          "type": "text"
+        },
+        {
+          "id": "DD6C8C58-CBDD-57FB-B8F0-3601E6B86E3E",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Views",
+          "type": "integer"
+        },
+        {
+          "id": "154DC41C-8CEB-5D00-B3DD-8B82F53B24E4",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "UpVotes",
+          "type": "integer"
+        },
+        {
+          "id": "C68834DB-7ADE-5990-8F5E-E4E96DD672F8",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "DownVotes",
+          "type": "integer"
+        }
+      ],
+      "id": "BF9A0896-A9EC-5D42-B22C-A4EB63D9E6DB",
+      "name": "Users",
+      "position": [
+        0,
+        234.0
+      ]
+    },
+    {
+      "color": "orange",
+      "columns": [
+        {
+          "id": "2A23DE09-29A4-5CC5-A408-44F22B74E73A",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "Id",
+          "type": "integer"
+        },
+        {
+          "id": "335EA1FD-4FFC-537B-9911-80084AFF15D7",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Type",
+          "type": "varchar"
+        }
+      ],
+      "id": "1E02AA3C-BC1A-521F-9417-0EDA2076701A",
+      "name": "PostTypes",
+      "position": [
+        0,
+        122.0
+      ]
+    },
+    {
+      "color": "green",
+      "columns": [
+        {
+          "id": "7682D3E1-F1CB-5E08-A541-D5784813221B",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "Id",
+          "type": "integer"
+        },
+        {
+          "id": "A7E87FE0-52D3-52D5-BB39-E88EBC839595",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "PostTypeId",
+          "type": "integer"
+        },
+        {
+          "id": "755F1758-60D8-555B-A7C4-E707C9B85AB4",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "AcceptedAnswerId",
+          "type": "integer"
+        },
+        {
+          "id": "D5E4D8D2-F1C2-5B39-8D0B-6FE0062A79A8",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ParentId",
+          "type": "integer"
+        },
+        {
+          "id": "DB042B01-6637-5B36-A76D-362CEE914031",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CreationDate",
+          "type": "timestamp"
+        },
+        {
+          "id": "43C3A5AB-B154-5034-B9AC-92DB4C45AD6E",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Score",
+          "type": "integer"
+        },
+        {
+          "id": "0235DBF7-B996-52C5-A6AE-AF7EEDC763B9",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ViewCount",
+          "type": "integer"
+        },
+        {
+          "id": "60742339-1EF2-53A7-BB33-A724696DEBD7",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Body",
+          "type": "text"
+        },
+        {
+          "id": "A47A9928-CAAA-5F02-BECB-6DC6762E8CFD",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "OwnerUserId",
+          "type": "integer"
+        },
+        {
+          "id": "1E75F88D-8923-548A-83CF-01CC189D6E85",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "LastEditorUserId",
+          "type": "integer"
+        },
+        {
+          "id": "2723007B-F144-5C9B-AEB9-3975C8D386DA",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Title",
+          "type": "varchar"
+        },
+        {
+          "id": "E3EB8BE9-FF81-56F3-B6FC-A408B36DD3AB",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Tags",
+          "type": "varchar"
+        },
+        {
+          "id": "868F7E73-BE4A-50DC-BA15-8FEEE6417546",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "AnswerCount",
+          "type": "integer"
+        },
+        {
+          "id": "C22AAF57-2CD5-58B6-A9E1-A4E981039C27",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CommentCount",
+          "type": "integer"
+        },
+        {
+          "id": "A3655CE9-503F-552D-8CFB-1327902876A8",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ClosedDate",
+          "type": "timestamp"
+        }
+      ],
+      "id": "F20573A3-FE4C-596B-9FBE-A5733AB3043C",
+      "name": "Posts",
+      "position": [
+        366,
+        79.0
+      ]
+    },
+    {
+      "color": "purple",
+      "columns": [
+        {
+          "id": "4E1D63BF-3156-5A85-B05A-063866F632DA",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "Id",
+          "type": "integer"
+        },
+        {
+          "id": "54FC3D8D-BCA6-5EA3-9B2B-F91267078F62",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "PostId",
+          "type": "integer"
+        },
+        {
+          "id": "4B5C47B3-7F75-5321-98EC-E399F9AFB5BE",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Score",
+          "type": "integer"
+        },
+        {
+          "id": "84930BCC-57AD-5090-B3A5-86D7A58346DD",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Text",
+          "type": "text"
+        },
+        {
+          "id": "0E99334E-AFC8-57CD-B69A-8C601F322590",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CreationDate",
+          "type": "timestamp"
+        },
+        {
+          "id": "4BD77EB5-4590-56F4-82EB-B6F804E7457D",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "UserId",
+          "type": "integer"
+        }
+      ],
+      "id": "CE96DC9B-B8D9-5F45-B60F-DF2B77BE9E80",
+      "name": "Comments",
+      "position": [
+        732,
+        356.0
+      ]
+    },
+    {
+      "color": "pink",
+      "columns": [
+        {
+          "id": "1F80C8D7-BF60-515C-A732-1DD0F9079F12",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "Id",
+          "type": "integer"
+        },
+        {
+          "id": "355C79ED-B910-537F-B6CE-FD76382EE0EA",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Name",
+          "type": "varchar"
+        }
+      ],
+      "id": "FE2BC9F0-0595-53A2-9876-9F4821DCAAA6",
+      "name": "VoteTypes",
+      "position": [
+        0,
+        522.0
+      ]
+    },
+    {
+      "color": "teal",
+      "columns": [
+        {
+          "id": "EE21F3B3-10FB-52CF-8AFE-D18FFF4A3707",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "Id",
+          "type": "integer"
+        },
+        {
+          "id": "2DC3D855-7787-55E5-AB02-09464D5AFEF1",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "PostId",
+          "type": "integer"
+        },
+        {
+          "id": "E27365A0-1A16-54A2-81A1-7F45CA2FFE6C",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "VoteTypeId",
+          "type": "integer"
+        },
+        {
+          "id": "2552F360-3C94-54CB-A1F9-FF48E9267FE6",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "UserId",
+          "type": "integer"
+        },
+        {
+          "id": "1DA6B114-20F4-5ED6-A731-BD4C84FD850D",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CreationDate",
+          "type": "timestamp"
+        },
+        {
+          "id": "E4D4B471-D3F5-515C-BBDF-719260006212",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "BountyAmount",
+          "type": "integer"
+        }
+      ],
+      "id": "95D5B1C0-E804-53CA-82F1-F3D7C683DADB",
+      "name": "Votes",
+      "position": [
+        732,
+        556.0
+      ]
+    },
+    {
+      "color": "indigo",
+      "columns": [
+        {
+          "id": "CE00392D-213E-51C7-9CFE-EE012B7723BE",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "Id",
+          "type": "integer"
+        },
+        {
+          "id": "8439B241-0E87-53D0-B016-F76CDFD428C3",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "UserId",
+          "type": "integer"
+        },
+        {
+          "id": "AF966760-16CE-59F0-843C-332A76033EBE",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Name",
+          "type": "varchar"
+        },
+        {
+          "id": "B05B9C51-C2D8-50D8-8C66-FFB845D876E3",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Date",
+          "type": "timestamp"
+        },
+        {
+          "id": "D3A5AD8D-A891-57E2-A28F-359720402BCF",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Class",
+          "type": "integer"
+        },
+        {
+          "id": "7CC72C01-71EF-5512-899A-4847920471B1",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "TagBased",
+          "type": "boolean"
+        }
+      ],
+      "id": "4937A7BB-2EA8-5737-9F4A-D2430AD77352",
+      "name": "Badges",
+      "position": [
+        366,
+        477.0
+      ]
+    },
+    {
+      "color": "red",
+      "columns": [
+        {
+          "id": "F11EE037-AF23-53A4-B3E2-2FA1CBE04C25",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "Id",
+          "type": "integer"
+        },
+        {
+          "id": "88BE45AF-1AF2-51CD-9BED-6052C7EE82A9",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "TagName",
+          "type": "varchar"
+        },
+        {
+          "id": "19B92630-5857-506E-A06B-34E5DFDF2531",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Count",
+          "type": "integer"
+        },
+        {
+          "id": "CEC91EB1-4BC3-564C-811C-1DCC5142541E",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ExcerptPostId",
+          "type": "integer"
+        },
+        {
+          "id": "9BCABF2C-CB07-566F-AB54-6A8EC7C17BDD",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "WikiPostId",
+          "type": "integer"
+        }
+      ],
+      "id": "851B458F-F8F1-5E50-BC0E-3F1CFDED6678",
+      "name": "Tags",
+      "position": [
+        732,
+        178.0
+      ]
+    },
+    {
+      "color": "yellow",
+      "columns": [
+        {
+          "id": "0CED7224-0614-525B-89A5-70C77F74094C",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "Id",
+          "type": "integer"
+        },
+        {
+          "id": "7B30A4DC-0BAC-582F-816A-28024A061E18",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CreationDate",
+          "type": "timestamp"
+        },
+        {
+          "id": "23720DF7-283B-5B1D-B7D5-4562FD53562E",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "PostId",
+          "type": "integer"
+        },
+        {
+          "id": "D6E1C021-DBF3-5DA3-B3AD-8DE9AAE7E53F",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "RelatedPostId",
+          "type": "integer"
+        },
+        {
+          "id": "D8FBDF8A-2F89-5447-A56F-20BA78E3C269",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "LinkTypeId",
+          "type": "integer"
+        }
+      ],
+      "id": "32B22E10-EEB2-544C-BA1F-5C3C799DE3BE",
+      "name": "PostLinks",
+      "position": [
+        732,
+        0.0
+      ]
+    }
+  ],
+  "zipTies": []
+}

@@ -1,0 +1,621 @@
+{
+  "relationships": [
+    {
+      "from": "20DF486A-51D2-5826-A81C-908A8D7F2A53",
+      "id": "DF91DE45-D003-5471-85FA-E72040BC7C17",
+      "to": "5D843718-D9AA-5609-8818-5A7C74F7D735",
+      "zipTies": []
+    },
+    {
+      "from": "2A12FEC7-A921-5C33-B243-102A0A899BF7",
+      "id": "BE7AB0C4-70D1-586F-A701-2ABFF5672E3C",
+      "to": "1CE73866-B187-5C06-9C2C-0399ABC15B79",
+      "zipTies": []
+    },
+    {
+      "from": "E4A3E59E-27C8-5DC8-AC8C-EFE527AD2C2B",
+      "id": "809D8FE1-5ED6-544B-9453-6597651ACB45",
+      "to": "BAF886D2-95F8-569E-B8FD-BC73FEB8F137",
+      "zipTies": []
+    },
+    {
+      "from": "2C1E084C-348F-5CE0-A270-6C54E418BFEB",
+      "id": "8ACA16E7-A20B-58B1-8E82-6C2C35C43174",
+      "to": "5C5C8E0A-51ED-5ED4-A426-BC605D516C32",
+      "zipTies": []
+    },
+    {
+      "from": "D6BD171C-F055-582A-A959-E22138533C5D",
+      "id": "0883D24B-E297-5062-86DC-E6F17FBD74BB",
+      "to": "5C5C8E0A-51ED-5ED4-A426-BC605D516C32",
+      "zipTies": []
+    },
+    {
+      "from": "D515A3E7-7052-5A07-A670-28EFC0DBA9F1",
+      "id": "7F80E8F2-C33E-557A-8690-B169D0812076",
+      "to": "BAF5C34D-A9DD-5C7A-A668-5733A5A9FBA6",
+      "zipTies": []
+    },
+    {
+      "from": "BE905119-91B6-5225-95AB-B86C24A264CF",
+      "id": "19B6BEFC-D77E-5FBC-8CAD-BB219A53330B",
+      "to": "1BD2FE25-6573-5B24-AF66-F6118EE357C4",
+      "zipTies": []
+    },
+    {
+      "from": "BADE549E-49C9-55C5-8F52-EF0BAD50A4BE",
+      "id": "8896DF1D-131F-54BF-8EBD-A7AD1938444D",
+      "to": "5C5C8E0A-51ED-5ED4-A426-BC605D516C32",
+      "zipTies": []
+    },
+    {
+      "from": "DE8865F9-F0B5-5C61-A944-27F371C1BBE3",
+      "id": "6F961968-EDC5-5AA6-B484-5BD4E5890BC0",
+      "to": "498D783B-E783-5154-8847-37E5703F8DB7",
+      "zipTies": []
+    },
+    {
+      "from": "6B8408F8-3573-54C8-9E77-949852DEA62E",
+      "id": "EF065D90-FFA2-5BBE-A8FB-764CEBECC7AC",
+      "to": "1885C0AA-79F9-50CF-96DC-BBC4F8A311B9",
+      "zipTies": []
+    },
+    {
+      "from": "A1D282FF-A62C-598F-A20D-B9A60DC9B54A",
+      "id": "A899BC21-9EAB-57A0-AF1B-65E8B6E5AFF2",
+      "to": "FA1F2F07-A4B5-5B84-A789-880121073B8E",
+      "zipTies": []
+    }
+  ],
+  "tables": [
+    {
+      "color": "blue",
+      "columns": [
+        {
+          "id": "1CE73866-B187-5C06-9C2C-0399ABC15B79",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "CategoryID",
+          "type": "integer"
+        },
+        {
+          "id": "FEF1D814-F6D9-5115-AAD1-9BBFD1E03689",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CategoryName",
+          "type": "varchar"
+        },
+        {
+          "id": "591B57B7-C7B7-5152-BD65-E47177FE9479",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Description",
+          "type": "text"
+        },
+        {
+          "id": "9C3003A9-1F19-5FE9-A51C-E853DBE3367F",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Picture",
+          "type": "bytea"
+        }
+      ],
+      "id": "4E26C13E-41F9-5784-BEF6-F4C46C71AF6E",
+      "name": "Categories",
+      "position": [
+        0,
+        0.0
+      ]
+    },
+    {
+      "color": "orange",
+      "columns": [
+        {
+          "id": "5D843718-D9AA-5609-8818-5A7C74F7D735",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "SupplierID",
+          "type": "integer"
+        },
+        {
+          "id": "EEC3257C-C7B0-58A3-9CAD-3F3D2E0F1DAA",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CompanyName",
+          "type": "varchar"
+        },
+        {
+          "id": "4B5679D1-81A2-54A1-B39A-622BF6C9AF4E",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ContactName",
+          "type": "varchar"
+        },
+        {
+          "id": "FD15B460-6111-5ABF-BC04-C43E2358CB48",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "City",
+          "type": "varchar"
+        },
+        {
+          "id": "3EA2EBFF-4BDF-5A15-AB79-F55C2D405A79",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Country",
+          "type": "varchar"
+        },
+        {
+          "id": "BB1CBBA7-841D-5E97-802B-21C742A44087",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Phone",
+          "type": "varchar"
+        },
+        {
+          "id": "A76A9E8D-0203-53C2-BDFA-8BC511FF670C",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "HomePage",
+          "type": "text"
+        }
+      ],
+      "id": "D62C837E-25D0-565F-AE66-240F0843FD94",
+      "name": "Suppliers",
+      "position": [
+        0,
+        868.0
+      ]
+    },
+    {
+      "color": "green",
+      "columns": [
+        {
+          "id": "FA1F2F07-A4B5-5B84-A789-880121073B8E",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "ProductID",
+          "type": "integer"
+        },
+        {
+          "id": "D3909839-3E0C-531E-A7E7-2ADF14F3C0A5",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "ProductName",
+          "type": "varchar"
+        },
+        {
+          "id": "20DF486A-51D2-5826-A81C-908A8D7F2A53",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "SupplierID",
+          "type": "integer"
+        },
+        {
+          "id": "2A12FEC7-A921-5C33-B243-102A0A899BF7",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "CategoryID",
+          "type": "integer"
+        },
+        {
+          "id": "4B2CCA6C-3913-568D-A9E2-328DE7162161",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "QuantityPerUnit",
+          "type": "varchar"
+        },
+        {
+          "id": "6623A976-AE7A-549E-B477-2C787A10E53B",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "UnitPrice",
+          "type": "numeric"
+        },
+        {
+          "id": "397BA999-7ACD-5E54-8C1B-D1EF7F9E69AE",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "UnitsInStock",
+          "type": "integer"
+        },
+        {
+          "id": "FBA9E6A9-D036-55D2-A821-85933DDA4521",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "UnitsOnOrder",
+          "type": "integer"
+        },
+        {
+          "id": "33CD0391-E1CB-5908-ACF9-26224DDFCBEF",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ReorderLevel",
+          "type": "integer"
+        },
+        {
+          "id": "1C49FB65-A122-563D-88D0-63211FA25C73",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Discontinued",
+          "type": "boolean"
+        }
+      ],
+      "id": "9243C3AC-D85B-5729-81AC-6211567B6B8A",
+      "name": "Products",
+      "position": [
+        366,
+        478.0
+      ]
+    },
+    {
+      "color": "purple",
+      "columns": [
+        {
+          "id": "1BD2FE25-6573-5B24-AF66-F6118EE357C4",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "CustomerID",
+          "type": "varchar"
+        },
+        {
+          "id": "854C1CFF-5B0B-53B3-AC55-7327D5835184",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CompanyName",
+          "type": "varchar"
+        },
+        {
+          "id": "46836F28-AE33-5D9B-96E8-AF82330DEDF0",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ContactName",
+          "type": "varchar"
+        },
+        {
+          "id": "80CDCBE7-9536-5586-9FDB-EA81A6822E17",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "City",
+          "type": "varchar"
+        },
+        {
+          "id": "151806D4-D799-56CA-8929-768BC4A514C1",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Country",
+          "type": "varchar"
+        },
+        {
+          "id": "D9C05131-FA72-517F-BCA8-777CE7B59E93",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Phone",
+          "type": "varchar"
+        }
+      ],
+      "id": "6423B24B-AAA6-5A4E-982E-ED35770E9DDD",
+      "name": "Customers",
+      "position": [
+        0,
+        156.0
+      ]
+    },
+    {
+      "color": "pink",
+      "columns": [
+        {
+          "id": "BAF886D2-95F8-569E-B8FD-BC73FEB8F137",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "RegionID",
+          "type": "integer"
+        },
+        {
+          "id": "EB1F76FC-73F2-5B55-B715-CD070FE09482",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "RegionDescription",
+          "type": "varchar"
+        }
+      ],
+      "id": "8629C6A9-65F7-51DB-B139-353593D8DAC7",
+      "name": "Region",
+      "position": [
+        0,
+        622.0
+      ]
+    },
+    {
+      "color": "teal",
+      "columns": [
+        {
+          "id": "BAF5C34D-A9DD-5C7A-A668-5733A5A9FBA6",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "TerritoryID",
+          "type": "varchar"
+        },
+        {
+          "id": "B4279A7D-CC1C-5F19-A367-5CB29DC4FD50",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "TerritoryDescription",
+          "type": "varchar"
+        },
+        {
+          "id": "E4A3E59E-27C8-5DC8-AC8C-EFE527AD2C2B",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "RegionID",
+          "type": "integer"
+        }
+      ],
+      "id": "B8D62812-48C3-58D3-A0ED-F52108CC5C98",
+      "name": "Territories",
+      "position": [
+        366,
+        766.0
+      ]
+    },
+    {
+      "color": "indigo",
+      "columns": [
+        {
+          "id": "5C5C8E0A-51ED-5ED4-A426-BC605D516C32",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "EmployeeID",
+          "type": "integer"
+        },
+        {
+          "id": "59359691-E7AA-5875-98F3-6A52575B4238",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "LastName",
+          "type": "varchar"
+        },
+        {
+          "id": "86056DB4-BA6A-5BF5-9B43-DEA74E42A773",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "FirstName",
+          "type": "varchar"
+        },
+        {
+          "id": "0D48569D-5072-5E7A-8B24-297D92792934",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Title",
+          "type": "varchar"
+        },
+        {
+          "id": "D45D3E13-AB3A-5AAC-8B89-DFDF9DC17301",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "BirthDate",
+          "type": "date"
+        },
+        {
+          "id": "CFB857DC-DB7F-589B-90DB-ADB3EF455382",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "HireDate",
+          "type": "date"
+        },
+        {
+          "id": "112FCCF3-5511-5B27-AFCC-2D2FB63FBDC7",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "City",
+          "type": "varchar"
+        },
+        {
+          "id": "40CE9CAF-9A7A-5943-929F-8C2C1E50E43A",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Country",
+          "type": "varchar"
+        },
+        {
+          "id": "2C1E084C-348F-5CE0-A270-6C54E418BFEB",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ReportsTo",
+          "type": "integer"
+        }
+      ],
+      "id": "81EA2D5E-CBF3-54AC-903D-C96204DBC5FC",
+      "name": "Employees",
+      "position": [
+        0,
+        356.0
+      ]
+    },
+    {
+      "color": "red",
+      "columns": [
+        {
+          "id": "D6BD171C-F055-582A-A959-E22138533C5D",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "EmployeeID",
+          "type": "integer"
+        },
+        {
+          "id": "D515A3E7-7052-5A07-A670-28EFC0DBA9F1",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "TerritoryID",
+          "type": "varchar"
+        }
+      ],
+      "id": "67C08792-57A0-5E01-9AAD-DBC6A7E26DD2",
+      "name": "EmployeeTerritories",
+      "position": [
+        732,
+        578.0
+      ]
+    },
+    {
+      "color": "yellow",
+      "columns": [
+        {
+          "id": "498D783B-E783-5154-8847-37E5703F8DB7",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "ShipperID",
+          "type": "integer"
+        },
+        {
+          "id": "9ED73E38-9D47-5324-A907-7768A791DCB8",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "CompanyName",
+          "type": "varchar"
+        },
+        {
+          "id": "D8562E30-5F21-5422-8B23-CD7BC7F58674",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Phone",
+          "type": "varchar"
+        }
+      ],
+      "id": "38F46496-EE12-5422-A349-D7EA715E7681",
+      "name": "Shippers",
+      "position": [
+        0,
+        734.0
+      ]
+    },
+    {
+      "color": "mint",
+      "columns": [
+        {
+          "id": "1885C0AA-79F9-50CF-96DC-BBC4F8A311B9",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "OrderID",
+          "type": "integer"
+        },
+        {
+          "id": "BE905119-91B6-5225-95AB-B86C24A264CF",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "CustomerID",
+          "type": "varchar"
+        },
+        {
+          "id": "BADE549E-49C9-55C5-8F52-EF0BAD50A4BE",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "EmployeeID",
+          "type": "integer"
+        },
+        {
+          "id": "A6490BAA-A5E7-5AD0-AC96-3EA0F6C80555",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "OrderDate",
+          "type": "date"
+        },
+        {
+          "id": "CF834252-256D-59AE-AC25-41B5CADAEDFE",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "RequiredDate",
+          "type": "date"
+        },
+        {
+          "id": "D7C4A66E-6339-5847-B37A-AB845F56B81B",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ShippedDate",
+          "type": "date"
+        },
+        {
+          "id": "DE8865F9-F0B5-5C61-A944-27F371C1BBE3",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ShipVia",
+          "type": "integer"
+        },
+        {
+          "id": "97486C1F-316D-51ED-8AAA-385DB9CF887C",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "Freight",
+          "type": "numeric"
+        },
+        {
+          "id": "B9837F14-A182-5D72-9A24-06992044C0C2",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ShipCity",
+          "type": "varchar"
+        },
+        {
+          "id": "509544C3-7C8F-5875-82E7-4279A8D44C3C",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "ShipCountry",
+          "type": "varchar"
+        }
+      ],
+      "id": "488865AF-9B66-5AFC-9F93-3BA2C5A936F6",
+      "name": "Orders",
+      "position": [
+        366,
+        190.0
+      ]
+    },
+    {
+      "color": "cyan",
+      "columns": [
+        {
+          "id": "6B8408F8-3573-54C8-9E77-949852DEA62E",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "OrderID",
+          "type": "integer"
+        },
+        {
+          "id": "A1D282FF-A62C-598F-A20D-B9A60DC9B54A",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "ProductID",
+          "type": "integer"
+        },
+        {
+          "id": "437AB197-E2CC-598E-B2BD-9BE7D54AE13D",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "UnitPrice",
+          "type": "numeric"
+        },
+        {
+          "id": "6ABBB341-0C53-5AAE-9B7A-2CD1DD711E97",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Quantity",
+          "type": "integer"
+        },
+        {
+          "id": "963B120A-0E1A-5675-9EAA-CCF792DEA424",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "Discount",
+          "type": "numeric"
+        }
+      ],
+      "id": "45189660-FD99-5372-8D56-73DD3A8B54DA",
+      "name": "OrderDetails",
+      "position": [
+        732,
+        400.0
+      ]
+    }
+  ],
+  "zipTies": []
+}

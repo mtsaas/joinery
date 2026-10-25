@@ -2,7 +2,17 @@
 
 An infinite canvas for sketching SQL schemas on macOS, in the spirit of Freeform. Tables sit on the canvas. Each column has a socket on both sides, and you drag from one socket to another to add a foreign key. Foreign keys are drawn as springy wires, and you can zip-tie wires together into bundles.
 
-Requires macOS 26 and Xcode 26 or later. Open `Joinery.xcodeproj` and press ⌘R. To try it out, open `Samples/Storefront.joinery`.
+Requires macOS 26 and Xcode 26 or later. Open `Joinery.xcodeproj` and press ⌘R.
+
+## Library
+
+Schemas live in a library shown in the sidebar. Each schema is a plain `.joinery` file (readable JSON) in the app's own storage, and each collection is a folder. File ▸ Show Library in Finder shows where they are.
+
+- **New:** ⌘N makes a schema, in the selected schema's collection. ⇧⌘N makes a collection, which you can name straight away.
+- **Rename, duplicate, move, delete:** right-click a schema or collection. You can also drag schemas onto a collection or onto the Schemas heading. Move to Trash can be undone from the Trash.
+- **Saving and undo:** changes save themselves, half a second after you stop and whenever you switch schemas. Undo (⌘Z) covers the open schema.
+- **Opening and importing:** double-clicking a `.joinery` file in Finder, or File ▸ Import Schema… (⌘O), copies it into the library and opens it.
+- **Examples:** a new library starts with an Examples collection containing Chinook, Northwind, Sakila, the Stack Overflow data dump, and Storefront. File ▸ Add Examples puts back any you've deleted. `scripts/make_examples.py` generates them.
 
 ## Using it
 
@@ -33,11 +43,13 @@ ties and bend points square to them.
 
 ```
 Joinery/
-  App/         App entry, document window, menu commands, debug hooks
-  Document/    Schema model (Codable JSON, .joinery) and its edits
+  App/         App entry, menu commands, debug hooks
+  Library/     The library of files and collections, the sidebar, the editor for an open schema
+  Document/    Schema model (Codable JSON, .joinery), its edits, reading and writing files
+  Examples/    The bundled example schemas
   Canvas/      Canvas view, table cards, routing, wire physics, zip tying
-JoineryTests/  Swift Testing: physics, zip ties and bend points, type parsing, schema repair
-scripts/       build.sh (unsandboxed CLI build), make_icon.swift
+JoineryTests/  Swift Testing: physics, zip ties and bend points, type parsing, schema repair, library file operations
+scripts/       build.sh (unsandboxed CLI build), make_icon.swift, make_examples.py
 ```
 
 The wires work in two steps. `Routing` computes each wire's rest curve: Bézier segments from socket to socket that pass through the wire's zip ties. `WireSimulation` then springs a chain of points toward that curve. The ends of each wire are stiff and the middle is loose, and neighboring points pull on each other, so a wobble travels along the wire. The simulation runs only while something is moving.
@@ -48,8 +60,8 @@ Debug builds have hooks for checking the app from the command line (see `App/Deb
 
 ```sh
 scripts/build.sh /tmp/joinery-dd
-JOINERY_SCRIPT="tie 320 -20 320 140" JOINERY_SNAPSHOT=/tmp/out.png \
-  /tmp/joinery-dd/Build/Products/Debug/Joinery.app/Contents/MacOS/Joinery "$PWD/Samples/Storefront.joinery"
+JOINERY_LIBRARY=/tmp/joinery-library JOINERY_OPEN=Sakila JOINERY_SCRIPT="tie 320 -20 320 140" JOINERY_SNAPSHOT=/tmp/out.png \
+  /tmp/joinery-dd/Build/Products/Debug/Joinery.app/Contents/MacOS/Joinery
 ```
 
 To run the tests, use ⌘U in Xcode, or `xcodebuild -project Joinery.xcodeproj -scheme Joinery test`.

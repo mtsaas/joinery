@@ -2,6 +2,9 @@
 import SwiftUI
 
 /// Lets the app be checked from the command line, without clicking. Set in the environment:
+/// - `JOINERY_LIBRARY=<dir>`: use that folder as the library (see `Library`), so tests never touch the real one.
+/// - `JOINERY_OPEN=<name>`: select the schema with that name. A `.joinery` path passed as an argument is imported and
+///   selected too. `JOINERY_NO_SIDEBAR`: hide the sidebar.
 /// - `JOINERY_SNAPSHOT=out.png`: saves the front window to `out.png` and quits. `JOINERY_SNAPSHOT_FRAMES=n` saves n
 ///   frames 50 ms apart (out-0.png, out-1.png, …) to check an animation; `JOINERY_SNAPSHOT_DELAY` sets the wait.
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
@@ -10,10 +13,14 @@ import SwiftUI
 ///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
 ///   `wait <seconds>`.
 @MainActor
-final class DebugHooks: NSObject, NSApplicationDelegate {
-    private let environment = ProcessInfo.processInfo.environment
+enum DebugHooks {
+    private static let environment = ProcessInfo.processInfo.environment
 
-    func applicationDidFinishLaunching(_ notification: Notification) {
+    static func launched() {
+        if let name = environment["JOINERY_OPEN"] {
+            let library = Library.shared
+            library.selection = (library.schemas + library.collections.flatMap(\.schemas)).first { Library.name(of: $0) == name }
+        }
         if environment["JOINERY_SCRIPT"] != nil {
             NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { note in
                 print("menu opened:", (note.object as? NSMenu)?.items.map(\.title) ?? [])

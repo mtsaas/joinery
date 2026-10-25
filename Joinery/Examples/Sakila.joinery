@@ -1,0 +1,878 @@
+{
+  "relationships": [
+    {
+      "from": "84C71857-66FB-5EDD-A047-8B3DE4FD5E41",
+      "id": "CDAD2ECB-ED99-5DBB-A6C2-5938EC3A1FBE",
+      "to": "9512AFF3-5323-5C25-85C0-93B50B6F107B",
+      "zipTies": []
+    },
+    {
+      "from": "4C0844EF-D181-53D0-9F5F-EFCBC8924AF4",
+      "id": "898B1F41-6607-5FC7-99C1-DB73DA385CF3",
+      "to": "A44E6698-83C7-5ECC-8B87-44E6A609114A",
+      "zipTies": []
+    },
+    {
+      "from": "435761C5-B445-5EFF-A278-11258E34F071",
+      "id": "7AA99040-18BF-55CE-8C75-5625CBFF09E3",
+      "to": "B581883D-53AA-52F6-9EF3-BF93CB559CC2",
+      "zipTies": []
+    },
+    {
+      "from": "4582E770-55E4-5930-889E-61CF3EFB36F4",
+      "id": "A9F7C302-4D24-52A8-B024-7FD4A292B626",
+      "to": "B581883D-53AA-52F6-9EF3-BF93CB559CC2",
+      "zipTies": []
+    },
+    {
+      "from": "2981A2E3-271E-5069-892A-916773F4DD60",
+      "id": "ED36073F-5F29-5684-879C-0E23D2F4C94D",
+      "to": "3D21B621-5314-5A87-8508-86403EB921D4",
+      "zipTies": []
+    },
+    {
+      "from": "80BD3540-369B-56AB-89C9-3C776E71A160",
+      "id": "F687F032-2E9E-5105-A470-4CFA00BF5F4B",
+      "to": "79998AC9-90D5-5D0B-96EA-4A1FF879B6BC",
+      "zipTies": []
+    },
+    {
+      "from": "5F888D6E-C28C-5243-A23E-14B58BDD5262",
+      "id": "938C4FC5-9055-56DB-AAB4-E8D0D6C23738",
+      "to": "79998AC9-90D5-5D0B-96EA-4A1FF879B6BC",
+      "zipTies": []
+    },
+    {
+      "from": "EEA5520A-7A6A-59E5-B04F-369C29DFF7FB",
+      "id": "9B569E1B-B13A-5178-8E99-B71F53A0FBE7",
+      "to": "B27D8F99-BCEC-5A40-9958-5921F0D90761",
+      "zipTies": []
+    },
+    {
+      "from": "F8E2D29F-A687-52C8-B9C3-67EF6FD35300",
+      "id": "97540AE0-EAA2-5367-8B13-1F290E376B1E",
+      "to": "C4AA199E-420B-55DC-86E2-48AAC5ED78CF",
+      "zipTies": []
+    },
+    {
+      "from": "153FCB24-3581-5B2B-AF66-D2B855DF47FB",
+      "id": "C941D99C-E225-5AAD-87BA-AE72EEAA58B1",
+      "to": "AC008736-0711-5C88-9E3D-5C35AE2131E5",
+      "zipTies": []
+    },
+    {
+      "from": "06A00179-3B22-50E6-A4ED-9E20A6DC8CAB",
+      "id": "E7172441-EE06-5858-9579-DC3865324861",
+      "to": "6738229F-1080-506F-B5CD-E97423D18C1B",
+      "zipTies": []
+    },
+    {
+      "from": "A68A5633-0495-5CEF-AA45-8317E2839AD1",
+      "id": "F3A9D045-4523-55FE-850C-24AA42324690",
+      "to": "C4AA199E-420B-55DC-86E2-48AAC5ED78CF",
+      "zipTies": []
+    },
+    {
+      "from": "B7BE0F46-E69A-56B1-8677-09BB1C96ADA1",
+      "id": "12A6C15F-CAB4-5B76-BC1B-A9AB9CE85126",
+      "to": "79998AC9-90D5-5D0B-96EA-4A1FF879B6BC",
+      "zipTies": []
+    },
+    {
+      "from": "8E548037-AA52-510C-AC24-E28965AE7010",
+      "id": "4CCAC35A-B5CB-58A8-A9C5-73B8EA632F09",
+      "to": "AC008736-0711-5C88-9E3D-5C35AE2131E5",
+      "zipTies": []
+    },
+    {
+      "from": "8C4B4AFE-18C8-5DF8-A2F2-B438ECCA8F64",
+      "id": "AF80DAAC-54E9-5A39-8AAF-081847BE149C",
+      "to": "AC008736-0711-5C88-9E3D-5C35AE2131E5",
+      "zipTies": []
+    },
+    {
+      "from": "E8C938AC-5F23-52F5-8566-08F0B8F1D41A",
+      "id": "8ACA91E6-C3B7-50CB-8EC7-66C9D4F79268",
+      "to": "C4AA199E-420B-55DC-86E2-48AAC5ED78CF",
+      "zipTies": []
+    },
+    {
+      "from": "C539B708-0FCD-56A3-99CE-9146E730F47F",
+      "id": "A019EEB6-8A31-5187-9A4F-0B643EF0969B",
+      "to": "57C06083-7FCF-52B5-B3B8-1D9B1DF6D0B1",
+      "zipTies": []
+    },
+    {
+      "from": "C0979185-132D-51B7-AB50-77D9C861691C",
+      "id": "0CEDF782-5B9B-5BCD-8DA9-CE5AAD77352C",
+      "to": "22C4B933-9DC5-5AA2-9B6D-5B26CBC8A287",
+      "zipTies": []
+    },
+    {
+      "from": "1BF98B34-8D7E-5B95-BA0B-05D0A232AF73",
+      "id": "34F6A65A-64D4-5620-BBBF-CAD6CAF1402F",
+      "to": "6738229F-1080-506F-B5CD-E97423D18C1B",
+      "zipTies": []
+    },
+    {
+      "from": "11A60C9C-3801-5EB0-A530-84ACB248ADDB",
+      "id": "DB6024D2-D32D-550A-BD61-F422BF3608D6",
+      "to": "22C4B933-9DC5-5AA2-9B6D-5B26CBC8A287",
+      "zipTies": []
+    },
+    {
+      "from": "55225939-A4FC-5C1D-AF75-139B3D772377",
+      "id": "0BF5366B-90D7-5CFF-9B81-0F13454691F2",
+      "to": "6738229F-1080-506F-B5CD-E97423D18C1B",
+      "zipTies": []
+    },
+    {
+      "from": "85B28B36-4D6C-5446-B78D-AFFE1604EA21",
+      "id": "03449B92-BB94-53CD-982C-EA313F5F91C9",
+      "to": "66C691B5-144F-5481-AA39-3DB9765E3112",
+      "zipTies": []
+    }
+  ],
+  "tables": [
+    {
+      "color": "blue",
+      "columns": [
+        {
+          "id": "9512AFF3-5323-5C25-85C0-93B50B6F107B",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "country_id",
+          "type": "integer"
+        },
+        {
+          "id": "AA681F69-35C8-5FB1-AEE9-E1B93EC881DD",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "country",
+          "type": "varchar"
+        },
+        {
+          "id": "316731C1-0843-56E2-8E79-8ED843801DDE",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "867109BD-9FDC-5E24-9DD7-DC9E268C4D05",
+      "name": "country",
+      "position": [
+        0,
+        355.0
+      ]
+    },
+    {
+      "color": "orange",
+      "columns": [
+        {
+          "id": "A44E6698-83C7-5ECC-8B87-44E6A609114A",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "city_id",
+          "type": "integer"
+        },
+        {
+          "id": "78AE3A92-BFC1-5EBE-8D53-289787B43FC8",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "city",
+          "type": "varchar"
+        },
+        {
+          "id": "84C71857-66FB-5EDD-A047-8B3DE4FD5E41",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "country_id",
+          "type": "integer"
+        },
+        {
+          "id": "3D51AF21-B11E-597F-A29E-28A7C1A7CB5E",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "62C8B788-BCDD-5DB9-834D-B4895E924058",
+      "name": "city",
+      "position": [
+        366,
+        100.0
+      ]
+    },
+    {
+      "color": "green",
+      "columns": [
+        {
+          "id": "C4AA199E-420B-55DC-86E2-48AAC5ED78CF",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "address_id",
+          "type": "integer"
+        },
+        {
+          "id": "1372026B-06E9-5417-9245-1DC3A9FCC3C0",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "address",
+          "type": "varchar"
+        },
+        {
+          "id": "53C3A429-F6F4-5D53-88B1-E75143404EAA",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "address2",
+          "type": "varchar"
+        },
+        {
+          "id": "F195D654-6693-5691-88C7-422C28C7A86D",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "district",
+          "type": "varchar"
+        },
+        {
+          "id": "4C0844EF-D181-53D0-9F5F-EFCBC8924AF4",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "city_id",
+          "type": "integer"
+        },
+        {
+          "id": "1E865CFA-0F47-5C50-9048-31B30F677148",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "postal_code",
+          "type": "varchar"
+        },
+        {
+          "id": "A1A65C49-1432-5C66-9038-6B76604C7F5E",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "phone",
+          "type": "varchar"
+        },
+        {
+          "id": "9A686929-8E25-5687-AE02-E4CC41A65E4F",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "A64FCAF7-DD77-59F3-AB1D-106C124003CC",
+      "name": "address",
+      "position": [
+        732,
+        88.0
+      ]
+    },
+    {
+      "color": "purple",
+      "columns": [
+        {
+          "id": "B581883D-53AA-52F6-9EF3-BF93CB559CC2",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "language_id",
+          "type": "integer"
+        },
+        {
+          "id": "9FBC8802-FABA-5B9B-A3E7-FC97843EB407",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "name",
+          "type": "varchar"
+        },
+        {
+          "id": "1C2ACA9E-96DF-548F-89A2-82E2F4B16A20",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "E18146BE-F551-5780-BE85-3EBBD34ECC2A",
+      "name": "language",
+      "position": [
+        0,
+        489.0
+      ]
+    },
+    {
+      "color": "pink",
+      "columns": [
+        {
+          "id": "B27D8F99-BCEC-5A40-9958-5921F0D90761",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "category_id",
+          "type": "integer"
+        },
+        {
+          "id": "D5D4F51B-6A82-5C40-B64C-BAB2E08C8D17",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "name",
+          "type": "varchar"
+        },
+        {
+          "id": "4BF2B040-6233-51B2-922C-A24026273553",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "8C1D3731-9053-5B58-8C53-DB68547006DF",
+      "name": "category",
+      "position": [
+        0,
+        221.0
+      ]
+    },
+    {
+      "color": "teal",
+      "columns": [
+        {
+          "id": "3D21B621-5314-5A87-8508-86403EB921D4",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "actor_id",
+          "type": "integer"
+        },
+        {
+          "id": "E1F68886-2520-5803-81F0-8319C38DC7C8",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "first_name",
+          "type": "varchar"
+        },
+        {
+          "id": "C8723065-BB94-540E-AE50-FC75377E7C15",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_name",
+          "type": "varchar"
+        },
+        {
+          "id": "39A4961D-9F90-5944-841C-A84A5B46C582",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "9EAAF5FE-3147-5365-85E2-E7FF0E9C4EBE",
+      "name": "actor",
+      "position": [
+        0,
+        65.0
+      ]
+    },
+    {
+      "color": "indigo",
+      "columns": [
+        {
+          "id": "79998AC9-90D5-5D0B-96EA-4A1FF879B6BC",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "film_id",
+          "type": "integer"
+        },
+        {
+          "id": "C0DED19E-3033-5EED-96E1-31DFE090B3E3",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "title",
+          "type": "varchar"
+        },
+        {
+          "id": "61C771E7-B491-5D21-88C6-199F4916C5FC",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "description",
+          "type": "text"
+        },
+        {
+          "id": "1A736CC5-967B-5544-9A5E-20725E24551D",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "release_year",
+          "type": "integer"
+        },
+        {
+          "id": "435761C5-B445-5EFF-A278-11258E34F071",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "language_id",
+          "type": "integer"
+        },
+        {
+          "id": "4582E770-55E4-5930-889E-61CF3EFB36F4",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "original_language_id",
+          "type": "integer"
+        },
+        {
+          "id": "EABFC0C3-3604-57BC-9DA1-C5A520EDE640",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "rental_duration",
+          "type": "integer"
+        },
+        {
+          "id": "3A0D6AB6-4C78-51CF-ADC8-7BB96EB60C61",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "rental_rate",
+          "type": "numeric"
+        },
+        {
+          "id": "C5677FC4-9519-5F24-8B5B-F92296413B37",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "length",
+          "type": "integer"
+        },
+        {
+          "id": "F95806D1-7A58-5621-BE6E-09C3CB84ADC8",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "replacement_cost",
+          "type": "numeric"
+        },
+        {
+          "id": "D0F274C6-53FC-51EB-B2D0-F0581DE11064",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "rating",
+          "type": "varchar"
+        },
+        {
+          "id": "10B2E330-B385-5308-A762-87490834C332",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "0436657B-1A2A-5902-A51B-ED0ECF117342",
+      "name": "film",
+      "position": [
+        366,
+        256.0
+      ]
+    },
+    {
+      "color": "red",
+      "columns": [
+        {
+          "id": "2981A2E3-271E-5069-892A-916773F4DD60",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "actor_id",
+          "type": "integer"
+        },
+        {
+          "id": "80BD3540-369B-56AB-89C9-3C776E71A160",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "film_id",
+          "type": "integer"
+        },
+        {
+          "id": "97AB499B-5A19-5EBD-8F4B-00FCB2C56154",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "BD009159-EE62-5986-9104-AF7568555D23",
+      "name": "film_actor",
+      "position": [
+        732,
+        332.0
+      ]
+    },
+    {
+      "color": "yellow",
+      "columns": [
+        {
+          "id": "5F888D6E-C28C-5243-A23E-14B58BDD5262",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "film_id",
+          "type": "integer"
+        },
+        {
+          "id": "EEA5520A-7A6A-59E5-B04F-369C29DFF7FB",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "category_id",
+          "type": "integer"
+        },
+        {
+          "id": "3AE46848-AD26-5CA6-A0C3-D40C938E980A",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "695DA771-6C7A-5CD1-B491-939845AAE69A",
+      "name": "film_category",
+      "position": [
+        732,
+        466.0
+      ]
+    },
+    {
+      "color": "mint",
+      "columns": [
+        {
+          "id": "6738229F-1080-506F-B5CD-E97423D18C1B",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "staff_id",
+          "type": "integer"
+        },
+        {
+          "id": "8D7CDB06-B6B0-577F-9372-726AFEDC72AA",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "first_name",
+          "type": "varchar"
+        },
+        {
+          "id": "83EBE4A0-DDB7-51C5-B577-71B72C567677",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_name",
+          "type": "varchar"
+        },
+        {
+          "id": "F8E2D29F-A687-52C8-B9C3-67EF6FD35300",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "address_id",
+          "type": "integer"
+        },
+        {
+          "id": "4C7F253E-7604-562F-882A-20D1CE1BF49D",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "email",
+          "type": "varchar"
+        },
+        {
+          "id": "153FCB24-3581-5B2B-AF66-D2B855DF47FB",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "store_id",
+          "type": "integer"
+        },
+        {
+          "id": "2C7A8A3B-49C4-599F-B4A6-FFC72F1F9185",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "active",
+          "type": "boolean"
+        },
+        {
+          "id": "5477EE4D-8403-59FB-A431-E134A07EC66A",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "username",
+          "type": "varchar"
+        },
+        {
+          "id": "C741B915-C926-598D-B987-38C17012C046",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "6D4BDB50-9575-5E54-AC49-E4D12B9DC4A3",
+      "name": "staff",
+      "position": [
+        1464,
+        266.0
+      ]
+    },
+    {
+      "color": "cyan",
+      "columns": [
+        {
+          "id": "AC008736-0711-5C88-9E3D-5C35AE2131E5",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "store_id",
+          "type": "integer"
+        },
+        {
+          "id": "06A00179-3B22-50E6-A4ED-9E20A6DC8CAB",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "manager_staff_id",
+          "type": "integer"
+        },
+        {
+          "id": "A68A5633-0495-5CEF-AA45-8317E2839AD1",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "address_id",
+          "type": "integer"
+        },
+        {
+          "id": "174146D4-FFEF-5254-ABED-7522333E2E05",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "581A69A4-6201-5637-B862-6859684FD46E",
+      "name": "store",
+      "position": [
+        1098,
+        266.0
+      ]
+    },
+    {
+      "color": "brown",
+      "columns": [
+        {
+          "id": "57C06083-7FCF-52B5-B3B8-1D9B1DF6D0B1",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "inventory_id",
+          "type": "integer"
+        },
+        {
+          "id": "B7BE0F46-E69A-56B1-8677-09BB1C96ADA1",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "film_id",
+          "type": "integer"
+        },
+        {
+          "id": "8E548037-AA52-510C-AC24-E28965AE7010",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "store_id",
+          "type": "integer"
+        },
+        {
+          "id": "10566BEC-FC03-545C-9B99-7470DFB2147F",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "21B4866E-1ABA-5241-8114-F748B03A4FF3",
+      "name": "inventory",
+      "position": [
+        1464,
+        532.0
+      ]
+    },
+    {
+      "color": "blue",
+      "columns": [
+        {
+          "id": "22C4B933-9DC5-5AA2-9B6D-5B26CBC8A287",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "customer_id",
+          "type": "integer"
+        },
+        {
+          "id": "8C4B4AFE-18C8-5DF8-A2F2-B438ECCA8F64",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "store_id",
+          "type": "integer"
+        },
+        {
+          "id": "EA8AD77D-C3A4-5218-9038-0016EB0FC580",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "first_name",
+          "type": "varchar"
+        },
+        {
+          "id": "FB07BEDA-BF5A-5431-A257-F1396E82A8B5",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_name",
+          "type": "varchar"
+        },
+        {
+          "id": "FCA1451F-B9D5-5BAF-AF06-6CA8314916D2",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "email",
+          "type": "varchar"
+        },
+        {
+          "id": "E8C938AC-5F23-52F5-8566-08F0B8F1D41A",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "address_id",
+          "type": "integer"
+        },
+        {
+          "id": "32138BF8-A9C4-539B-A6B7-92A69FBAA875",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "active",
+          "type": "boolean"
+        },
+        {
+          "id": "C35B43B0-98ED-5C7A-A061-D246491BDB20",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "create_date",
+          "type": "date"
+        },
+        {
+          "id": "7E0F8FFE-8E8C-53BE-8780-CCCFAF910B64",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "2C652EC2-12EA-5CC8-9BEC-D2D5803EA763",
+      "name": "customer",
+      "position": [
+        1464,
+        0.0
+      ]
+    },
+    {
+      "color": "orange",
+      "columns": [
+        {
+          "id": "66C691B5-144F-5481-AA39-3DB9765E3112",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "rental_id",
+          "type": "integer"
+        },
+        {
+          "id": "25E0F452-993F-5287-99F8-67FC21E4F143",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "rental_date",
+          "type": "timestamp"
+        },
+        {
+          "id": "C539B708-0FCD-56A3-99CE-9146E730F47F",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "inventory_id",
+          "type": "integer"
+        },
+        {
+          "id": "C0979185-132D-51B7-AB50-77D9C861691C",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "customer_id",
+          "type": "integer"
+        },
+        {
+          "id": "6ABD64E6-7B6B-5B26-AF67-C87329264425",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "return_date",
+          "type": "timestamp"
+        },
+        {
+          "id": "1BF98B34-8D7E-5B95-BA0B-05D0A232AF73",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "staff_id",
+          "type": "integer"
+        },
+        {
+          "id": "9CDF70DE-7FF4-5342-8C7A-65A2E0AC3E60",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "last_update",
+          "type": "timestamp"
+        }
+      ],
+      "id": "D8C0C0C5-F57B-5C13-88D2-A05B596EBFB0",
+      "name": "rental",
+      "position": [
+        1830,
+        233.0
+      ]
+    },
+    {
+      "color": "green",
+      "columns": [
+        {
+          "id": "A57B2EEF-DFEB-5715-9D90-19644AC23910",
+          "isNullable": false,
+          "isPrimaryKey": true,
+          "name": "payment_id",
+          "type": "integer"
+        },
+        {
+          "id": "11A60C9C-3801-5EB0-A530-84ACB248ADDB",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "customer_id",
+          "type": "integer"
+        },
+        {
+          "id": "55225939-A4FC-5C1D-AF75-139B3D772377",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "staff_id",
+          "type": "integer"
+        },
+        {
+          "id": "85B28B36-4D6C-5446-B78D-AFFE1604EA21",
+          "isNullable": true,
+          "isPrimaryKey": false,
+          "name": "rental_id",
+          "type": "integer"
+        },
+        {
+          "id": "AF307215-BBEC-552A-A3BA-522E9633EED8",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "amount",
+          "type": "numeric"
+        },
+        {
+          "id": "5D72696F-188C-53F5-93CA-A549A8084B6A",
+          "isNullable": false,
+          "isPrimaryKey": false,
+          "name": "payment_date",
+          "type": "timestamp"
+        }
+      ],
+      "id": "31E2FA88-7689-5732-BD94-B0767F8C7D79",
+      "name": "payment",
+      "position": [
+        2196,
+        244.0
+      ]
+    }
+  ],
+  "zipTies": []
+}

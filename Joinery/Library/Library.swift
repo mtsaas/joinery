@@ -1,0 +1,273 @@
+import AppKit
+import Foundation
+
+/// The schemas on disk: `.joinery` files in a folder, whose subfolders are collections. Plain files, so nothing is
+/// kept in a database and Finder sees exactly what the sidebar does.
+@MainActor @Observable
+final class Library {
+    struct Collection: Identifiable, Hashable {
+        let url: URL
+        var schemas: [URL]
+        var id: URL { url }
+        var name: String { url.lastPathComponent }
+    }
+
+    static let shared = Library(root: defaultRoot)
+    static let examplesName = "Examples"
+
+    /// In the app's own storage. A debug build can be pointed elsewhere with `JOINERY_LIBRARY`, so test runs never
+    /// touch the real library.
+    private static var defaultRoot: URL {
+        #if DEBUG
+        if let path = ProcessInfo.processInfo.environment["JOINERY_LIBRARY"] { return URL(filePath: path, directoryHint: .isDirectory) }
+        #endif
+        return URL.applicationSupportDirectory.appending(path: "Joinery/Schemas", directoryHint: .isDirectory)
+    }
+
+    let root: URL
+    /// Schemas not in any collection.
+    private(set) var schemas: [URL] = []
+    private(set) var collections: [Collection] = []
+    /// The schema being edited.
+    private(set) var open: OpenSchema?
+    var selection: URL? {
+        didSet { if selection != oldValue { openSelection() } }
+    }
+    /// What last went wrong, to tell the person.
+    var failure: String?
+
+    private let files = FileManager.default
+
+    init(root: URL) {
+        self.root = root
+        let isNew = !files.fileExists(atPath: root.path)
+        do {
+            try files.createDirectory(at: root, withIntermediateDirectories: true)
+            // A new library starts with the examples; deleting them later doesn't bring them back.
+            if isNew { try addExamples() }
+        } catch {
+            failure = "Couldn't set up the library: \(error.localizedDescription)"
+        }
+        reload()
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.open?.saveNow() }
+        }
+    }
+
+    static func name(of url: URL) -> String {
+        url.pathExtension == "joinery" ? url.deletingPathExtension().lastPathComponent : url.lastPathComponent
+    }
+
+    /// The collection a schema is in, or nil if it's at the top.
+    func collection(of url: URL) -> URL? {
+        let folder = url.deletingLastPathComponent()
+        return folder.standardizedFileURL == root.standardizedFileURL ? nil : folder
+    }
+
+    func reload() {
+        let byName = { (a: URL, b: URL) in Self.name(of: a).localizedStandardCompare(Self.name(of: b)) == .orderedAscending }
+        // Rebuilt from the folder and each name, the way every other URL here is made, so they compare equal: the
+        // ones the file system hands back can differ in spelling (a resolved symlink, a trailing slash).
+        func contents(of folder: URL) -> [URL] {
+            let items = (try? files.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey],
+                                                        options: .skipsHiddenFiles)) ?? []
+            return items.map { item in
+                folder.appending(path: item.lastPathComponent, directoryHint: item.hasDirectoryPath ? .isDirectory : .notDirectory)
+            }
+        }
+        let top = contents(of: root)
+        schemas = top.filter { $0.pathExtension == "joinery" }.sorted(by: byName)
+        collections = top.filter { $0.hasDirectoryPath }.sorted(by: byName).map { folder in
+            Collection(url: folder, schemas: contents(of: folder).filter { $0.pathExtension == "joinery" }.sorted(by: byName))
+        }
+    }
+
+    // MARK: Changes
+
+    /// Starts an empty schema, in `collection` or at the top, and selects it.
+    func newSchema(in collection: URL? = nil) {
+        attempt("make a schema") {
+            let url = unique("Untitled Schema", extension: "joinery", in: collection ?? root)
+            try Schema().write(to: url)
+            reload()
+            selection = url
+        }
+    }
+
+    /// Makes an empty collection and returns it, to be named.
+    @discardableResult
+    func newCollection() -> URL? {
+        attempt("make a collection") {
+            let url = unique("New Collection", extension: nil, in: root)
+            try files.createDirectory(at: url, withIntermediateDirectories: false)
+            reload()
+            return url
+        }
+    }
+
+    /// Renames a schema or collection. The name can't be empty or contain "/" or ":".
+    func rename(_ url: URL, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name != Self.name(of: url) else { return }
+        guard !name.isEmpty, !name.contains("/"), !name.contains(":") else {
+            failure = "“\(name)” can't be used as a name."
+            return
+        }
+        let destination = url.deletingLastPathComponent()
+            .appending(path: url.hasDirectoryPath ? name : name + ".joinery", directoryHint: url.hasDirectoryPath ? .isDirectory : .notDirectory)
+        guard !files.fileExists(atPath: destination.path) else {
+            failure = "There's already something called “\(name)” there."
+            return
+        }
+        relocate(url, to: destination, doing: "rename it")
+    }
+
+    /// Moves a schema into a collection, or to the top with nil.
+    func move(_ url: URL, to collection: URL?) {
+        let folder = collection ?? root
+        guard url.pathExtension == "joinery", url.deletingLastPathComponent().standardizedFileURL != folder.standardizedFileURL else { return }
+        relocate(url, to: unique(Self.name(of: url), extension: "joinery", in: folder), doing: "move it")
+    }
+
+    func duplicate(_ url: URL) {
+        attempt("duplicate it") {
+            open?.saveNow()
+            let copy = unique(Self.name(of: url) + " copy", extension: "joinery", in: url.deletingLastPathComponent())
+            try files.copyItem(at: url, to: copy)
+            reload()
+            selection = copy
+        }
+    }
+
+    /// Moves a schema or collection to the Trash, where it can be put back from.
+    func trash(_ url: URL) {
+        attempt("move it to the Trash") {
+            if let selection, selection.path.hasPrefix(url.path) { self.selection = nil }
+            try files.trashItem(at: url, resultingItemURL: nil)
+            reload()
+        }
+    }
+
+    /// Opens a `.joinery` file from elsewhere by copying it in; one already in the library is just selected.
+    func importSchema(from url: URL) {
+        if url.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path) {
+            selection = url
+            return
+        }
+        attempt("open “\(url.lastPathComponent)”") {
+            _ = try Schema(contentsOf: url)
+            let copy = unique(Self.name(of: url), extension: "joinery", in: root)
+            try files.copyItem(at: url, to: copy)
+            reload()
+            selection = copy
+        }
+    }
+
+    /// Copies the bundled examples into an Examples collection, alongside any already there.
+    func addExamples() throws {
+        let folder = root.appending(path: Self.examplesName, directoryHint: .isDirectory)
+        try files.createDirectory(at: folder, withIntermediateDirectories: true)
+        for example in Bundle.main.urls(forResourcesWithExtension: "joinery", subdirectory: nil) ?? [] {
+            let destination = folder.appending(path: example.lastPathComponent)
+            if !files.fileExists(atPath: destination.path) { try files.copyItem(at: example, to: destination) }
+        }
+        reload()
+    }
+
+    func showInFinder(_ url: URL) {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    // MARK: Helpers
+
+    private func openSelection() {
+        open?.saveNow()
+        open = nil
+        guard let selection else { return }
+        do {
+            open = try OpenSchema(url: selection)
+        } catch {
+            failure = "Couldn't open “\(Self.name(of: selection))”: \(error.localizedDescription)"
+        }
+    }
+
+    /// Moves `url` (a schema or collection), keeping the selection on whatever moved.
+    private func relocate(_ url: URL, to destination: URL, doing description: String) {
+        attempt(description) {
+            open?.saveNow()
+            let selected = selection
+            if let selected, selected.path.hasPrefix(url.path) { selection = nil }
+            try files.moveItem(at: url, to: destination)
+            reload()
+            if let selected, selected.path.hasPrefix(url.path) {
+                selection = URL(filePath: destination.path + selected.path.dropFirst(url.path.count))
+            }
+        }
+    }
+
+    /// `name`, or `name 2`, `name 3`… whichever isn't taken in `folder`.
+    private func unique(_ name: String, extension pathExtension: String?, in folder: URL) -> URL {
+        var number = 1
+        while true {
+            let candidate = number == 1 ? name : "\(name) \(number)"
+            let url = pathExtension.map { folder.appending(path: "\(candidate).\($0)", directoryHint: .notDirectory) }
+                ?? folder.appending(path: candidate, directoryHint: .isDirectory)
+            if !files.fileExists(atPath: url.path) { return url }
+            number += 1
+        }
+    }
+
+    @discardableResult
+    private func attempt<T>(_ description: String, _ body: () throws -> T) -> T? {
+        do {
+            return try body()
+        } catch {
+            failure = "Couldn't \(description): \(error.localizedDescription)"
+            reload()
+            return nil
+        }
+    }
+}
+
+/// A schema file being edited: changes save themselves shortly after, and can be undone.
+@MainActor @Observable
+final class OpenSchema {
+    let url: URL
+    private(set) var schema: Schema
+    /// The window's, set by the editor, for registering changes.
+    @ObservationIgnored weak var undoManager: UndoManager?
+    @ObservationIgnored private var pendingSave: Task<Void, Never>?
+
+    init(url: URL) throws {
+        self.url = url
+        schema = try Schema(contentsOf: url)
+    }
+
+    var name: String { Library.name(of: url) }
+
+    func change(to new: Schema) {
+        guard new != schema else { return }
+        let old = schema
+        schema = new
+        undoManager?.registerUndo(withTarget: self) { target in
+            MainActor.assumeIsolated { target.change(to: old) }
+        }
+        pendingSave?.cancel()
+        pendingSave = Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            if !Task.isCancelled { saveNow() }
+        }
+    }
+
+    /// Writes it out now, unless the file has gone (moved or trashed), so a late save can't bring it back.
+    func saveNow() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            try schema.write(to: url)
+        } catch {
+            Library.shared.failure = "Couldn't save “\(name)”: \(error.localizedDescription)"
+        }
+    }
+}
