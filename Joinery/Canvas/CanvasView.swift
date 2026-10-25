@@ -675,7 +675,6 @@ struct CanvasView: View {
                 let reach = max(abs(connection.end.x - connection.start.x) * 0.45, 36)
                 var path = Path()
                 path.move(to: connection.start)
-                path.addLine(to: connection.start + way * Metrics.wireLead)
                 path.addCurve(to: connection.end, control1: connection.start + way * reach, control2: connection.end - way * reach)
                 context.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round))
                 let dot = Metrics.socketDiameter

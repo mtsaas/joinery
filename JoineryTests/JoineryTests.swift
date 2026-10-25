@@ -66,7 +66,7 @@ struct JoineryTests {
         let simulation = WireSimulation()
         var time = settle(simulation, on: Routing(schema: schema))
         let socket = Metrics.socket(row: 0, side: .trailing, in: Metrics.frame(of: schema.tables[0]))
-        let x = socket.x + Metrics.wireLead * 2
+        let x = socket.x + 28
         let tied = schema.zipTie(simulation, from: CGPoint(x: x, y: -200), to: CGPoint(x: x, y: 300))
         try #require(tied != nil)
 

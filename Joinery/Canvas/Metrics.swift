@@ -9,8 +9,6 @@ enum Metrics {
     static let typeColumnWidth: CGFloat = 86
     static let headerHeight: CGFloat = 24
     static let rowHeight: CGFloat = 22
-    /// Below the last row, so it doesn't sit on the card's rounded bottom edge.
-    static let bottomPadding: CGFloat = 4
     /// From a cell's edges to its text, the same on both sides.
     static let cellInset: CGFloat = 8
     static let cornerRadius: CGFloat = 10
@@ -32,8 +30,6 @@ enum Metrics {
     static let wireWidth: CGFloat = 2.25
     /// The glow around a selected wire.
     static let selectedWireWidth: CGFloat = 7
-    /// How far a wire runs straight out of its socket before curving.
-    static let wireLead: CGFloat = 14
     /// Between neighboring wires in a zip tie. Each wire is drawn over a halo this wide, so a bundle reads as separate
     /// strands and crossings show which wire is on top.
     static let tieSpacing: CGFloat = 4
@@ -50,7 +46,7 @@ enum Metrics {
     }
 
     static func size(of table: Table) -> CGSize {
-        CGSize(width: tableWidth, height: headerHeight + CGFloat(table.columns.count) * rowHeight + bottomPadding)
+        CGSize(width: tableWidth, height: headerHeight + CGFloat(table.columns.count) * rowHeight)
     }
 
     static func frame(of table: Table) -> CGRect {

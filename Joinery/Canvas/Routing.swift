@@ -11,6 +11,8 @@ struct Routing {
         var points: [CGPoint]
         /// How hard each point pulls its wire toward it; infinite at sockets, which wires are pinned to.
         var stiffness: [Double]
+        /// How free each point is to be pushed aside, from 0 at sockets and ties to nearly 1 well away from them.
+        var flexibility: [Double]
     }
 
     struct Tie {
@@ -139,68 +141,64 @@ struct Routing {
         }
     }
 
-    /// How far a table's push on wires reaches; wires settle around a table at roughly half this.
-    static let avoidanceReach: CGFloat = 44
-    /// The least a wire keeps from a table it avoids. Less than `Metrics.wireLead`, so a wire's own pinned lead out of
-    /// its socket is already clear of its table.
-    static let minimumClearance: CGFloat = 8
-    static let avoidancePasses = 30
+    /// How far a table's push on wires reaches; it fades smoothly to nothing there.
+    static let avoidanceReach: CGFloat = 64
+    static let avoidancePasses = 40
 
     /// Tables closer than this side by side are treated as stacked.
     private static let sideGap: CGFloat = 24
     /// Within this of a socket, a tie turns toward the socket's own direction; at the socket, all the way.
     private static let socketReach: CGFloat = 160
 
-    /// A cubic Bézier between each pair of waypoints, leaving and arriving along their tangents.
+    /// A cubic Bézier between each pair of waypoints, leaving and arriving along their tangents. The wire is rigid
+    /// where it meets a socket or tie and loosens with distance from it, so it arrives square however it swings.
     private static func route(through waypoints: [Waypoint]) -> Route {
-        var points: [CGPoint] = [], stiffness: [Double] = []
-        let count = samplesPerSegment
+        var points: [CGPoint] = [], isTieSlot: [Bool] = []
         for (a, b) in zip(waypoints, waypoints.dropFirst()) {
-            // At a socket the wire runs straight out for `Metrics.wireLead` before it curves, and both points of that
-            // lead are pinned, so it always leaves square to the table's side however the rest of it swings.
-            let start = a.isTie ? a.point : a.point + a.tangent * Metrics.wireLead
-            let end = b.isTie ? b.point : b.point - b.tangent * Metrics.wireLead
-            // Handles never longer than half the gap, or a short hop (a tie near a socket) overshoots and hooks.
-            let gap = start.distance(to: end)
-            let reach = min(max(gap * 0.45, min(36, gap / 2)), 220)
+            // Handles never longer than half the gap, or a short hop (a tie near a socket) overshoots and hooks; and
+            // not so long that the wire runs straight for a stretch before it bends.
+            let gap = a.point.distance(to: b.point)
+            let reach = min(max(gap * 0.2, min(20, gap / 2)), 60)
             // Reach further when the other end is behind, so the wire swings around instead of folding back.
-            let control1 = start + a.tangent * (reach + max(0, (end - start).dot(-a.tangent)) / 2)
-            let control2 = end - b.tangent * (reach + max(0, (start - end).dot(b.tangent)) / 2)
-            // Which samples the curve spans: after the lead at a socket start, up to the lead at a socket end.
-            let first = a.isTie ? 0 : 1, last = b.isTie ? count : count - 1
-            for sample in 0..<count {
-                if sample == 0, !a.isTie {
-                    points.append(a.point)
-                    stiffness.append(.infinity)
-                    continue
-                }
-                let t = CGFloat(sample - first) / CGFloat(last - first), u = 1 - t
-                let near = start * (u * u * u) + control1 * (3 * u * u * t)
-                let far = control2 * (3 * u * t * t) + end * (t * t * t)
+            let control1 = a.point + a.tangent * (reach + max(0, (b.point - a.point).dot(-a.tangent)) / 2)
+            let control2 = b.point - b.tangent * (reach + max(0, (a.point - b.point).dot(b.tangent)) / 2)
+            for sample in 0..<samplesPerSegment {
+                let t = CGFloat(sample) / CGFloat(samplesPerSegment), u = 1 - t
+                let near = a.point * (u * u * u) + control1 * (3 * u * u * t)
+                let far = control2 * (3 * u * t * t) + b.point * (t * t * t)
                 points.append(near + far)
-                // Firm near the ends, loose in the middle, so a wire swings like a cable rather than moving rigidly.
-                let looseness = sin(.pi * Double(t))
-                stiffness.append(sample == first && !a.isTie || sample == last
-                    ? .infinity
-                    : sample == 0 ? Spring.tie : Spring.ends + (Spring.middle - Spring.ends) * looseness)
+                isTieSlot.append(sample == 0 && a.isTie)
             }
         }
         points.append(waypoints[waypoints.count - 1].point)
-        stiffness.append(.infinity)
-        return Route(points: points, stiffness: stiffness)
+        isTieSlot.append(false)
+
+        // How far along the wire each point is from the nearest socket or tie.
+        let isAnchor = points.indices.map { $0 == 0 || $0 == points.count - 1 || isTieSlot[$0] }
+        var distance = points.indices.map { isAnchor[$0] ? 0 : CGFloat.infinity }
+        for i in points.indices.dropFirst() where !isAnchor[i] {
+            distance[i] = distance[i - 1] + points[i].distance(to: points[i - 1])
+        }
+        for i in points.indices.dropLast().reversed() where !isAnchor[i] {
+            distance[i] = min(distance[i], distance[i + 1] + points[i].distance(to: points[i + 1]))
+        }
+        let flexibility = distance.map { 1 - exp(-Double($0) / Spring.rigidLength) }
+        let stiffness = points.indices.map { i -> Double in
+            if i == 0 || i == points.count - 1 { return .infinity }
+            return isTieSlot[i] ? Spring.tie : Spring.loose + Spring.rigid * (1 - flexibility[i])
+        }
+        return Route(points: points, stiffness: stiffness, flexibility: flexibility)
     }
 }
 
 extension Routing.Route {
-    /// Bends the wire's free stretches around `obstacles`, like a hose pushed aside: each table pushes nearby points
-    /// away, harder the closer they are, while the wire's tension smooths it, until the two balance in an easy arc.
-    /// A stretch that starts out under a table is first lifted out on one side (the nearer, across its way of travel),
-    /// so it goes around rather than through, and a last pass makes sure nothing ends up under a table.
+    /// Bends the wire around `obstacles` as if each table repelled it: a push that's strongest at the table and fades
+    /// smoothly to nothing at `Routing.avoidanceReach`, against the wire's wish to keep its own shape. It's the wire's
+    /// displacement that's smoothed, not its points, so it bulges around tables in easy curves and relaxes back to its
+    /// natural route where nothing pushes; and points near a socket or tie barely move, so it still arrives square.
     // ponytail: wires × points × tables × passes per redraw; spatial bucketing if schemas reach hundreds of tables.
-    /// - Parameter own: The wire's own tables, which it's only kept out from under.
+    /// - Parameter own: The wire's own tables. They don't push it, but it's lifted out from under them.
     mutating func avoid(_ obstacles: [CGRect], staying own: [CGRect] = []) {
-        // Sockets, their leads and zip-tie slots stay put; the rest may move.
-        let isFree = stiffness.map { $0 < Spring.tie }
         let reach = Routing.avoidanceReach
         let xs = points.map(\.x), ys = points.map(\.y)
         let bounds = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
@@ -208,45 +206,48 @@ extension Routing.Route {
         let own = own.filter { $0.intersects(bounds) }
         guard !obstacles.isEmpty || !own.isEmpty else { return }
 
-        /// Moves each run of free points inside `rect` out past the side its run is nearer.
-        func liftOut(of rect: CGRect, to margin: CGFloat) {
-            let rect = rect.insetBy(dx: -margin, dy: -margin)
+        let base = points
+        var offset = [CGPoint](repeating: .zero, count: points.count)
+
+        // A stretch under a table goes around it on one side (the nearer, across its way of travel), not through.
+        for rect in obstacles + own {
             var index = 1
             while index < points.count - 1 {
-                guard isFree[index], rect.contains(points[index]) else { index += 1; continue }
+                guard flexibility[index] > 0, rect.contains(base[index]) else { index += 1; continue }
                 var end = index
-                while end + 1 < points.count - 1, isFree[end + 1], rect.contains(points[end + 1]) { end += 1 }
-                let run = index...end
-                let travel = points[end + 1] - points[index - 1]
-                let middle = run.map { points[$0] }.reduce(.zero, +) / CGFloat(run.count)
-                for i in run {
-                    if abs(travel.x) >= abs(travel.y) {
-                        points[i].y = middle.y < rect.midY ? rect.minY : rect.maxY
-                    } else {
-                        points[i].x = middle.x < rect.midX ? rect.minX : rect.maxX
-                    }
+                while end + 1 < points.count - 1, rect.contains(base[end + 1]) { end += 1 }
+                let travel = base[end + 1] - base[index - 1]
+                let middle = (index...end).map { base[$0] }.reduce(.zero, +) / CGFloat(end - index + 1)
+                for i in index...end {
+                    let target = abs(travel.x) >= abs(travel.y)
+                        ? CGPoint(x: base[i].x, y: middle.y < rect.midY ? rect.minY - reach / 2 : rect.maxY + reach / 2)
+                        : CGPoint(x: middle.x < rect.midX ? rect.minX - reach / 2 : rect.maxX + reach / 2, y: base[i].y)
+                    offset[i] = (target - base[i]) * flexibility[i]
                 }
                 index = end + 1
             }
         }
 
-        for rect in obstacles + own { liftOut(of: rect, to: Routing.minimumClearance) }
         for _ in 0..<Routing.avoidancePasses {
-            // Push: each point away from the nearest spot on each table, by how far inside the reach it is.
-            for i in points.indices where isFree[i] {
+            // Push: away from the nearest spot on each table, fading as (1 - d/reach)², which eases to nothing.
+            for i in points.indices where flexibility[i] > 0 {
+                let point = base[i] + offset[i]
                 for rect in obstacles {
-                    let nearest = CGPoint(x: min(max(points[i].x, rect.minX), rect.maxX), y: min(max(points[i].y, rect.minY), rect.maxY))
-                    let away = points[i] - nearest, distance = away.length
-                    guard distance < reach, let direction = away.normalized else { continue }
-                    points[i] += direction * ((reach - distance) * 0.5)
+                    let nearest = CGPoint(x: min(max(point.x, rect.minX), rect.maxX), y: min(max(point.y, rect.minY), rect.maxY))
+                    let away = point - nearest, distance = away.length
+                    guard distance < reach else { continue }
+                    // Inside, push out the nearer way across the wire.
+                    let direction = away.normalized ?? (point.y < rect.midY ? CGPoint(x: 0, y: -1) : CGPoint(x: 0, y: 1))
+                    let falloff = 1 - distance / reach
+                    offset[i] += direction * (reach * falloff * falloff * 0.25 * CGFloat(flexibility[i]))
                 }
             }
-            // Tension: each point toward the middle of its neighbors.
-            let before = points
-            for i in points.indices.dropFirst().dropLast() where isFree[i] {
-                points[i] = before[i] + ((before[i - 1] + before[i + 1]) / 2 - before[i]) * 0.5
+            // Tension: smooth the displacement along the wire; anchors stay put.
+            let before = offset
+            for i in points.indices.dropFirst().dropLast() where flexibility[i] > 0 {
+                offset[i] = before[i] + ((before[i - 1] + before[i + 1]) / 2 - before[i]) * 0.5
             }
         }
-        for rect in obstacles + own { liftOut(of: rect, to: Routing.minimumClearance) }
+        for i in points.indices { points[i] = base[i] + offset[i] }
     }
 }

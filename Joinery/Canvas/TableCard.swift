@@ -35,15 +35,15 @@ struct TableCard: View {
         }
         .frame(width: size.width * zoom, height: size.height * zoom, alignment: .top)
         .background(Theme.card)
-        .clipShape(.rect(cornerRadius: Metrics.cornerRadius * zoom))
+        .clipShape(.rect(cornerRadius: Metrics.cornerRadius * zoom, style: .circular))
         .overlay {
-            RoundedRectangle(cornerRadius: Metrics.cornerRadius * zoom).strokeBorder(Theme.cardBorder, lineWidth: hairline)
+            RoundedRectangle(cornerRadius: Metrics.cornerRadius * zoom, style: .circular)
+                .strokeBorder(Theme.cardBorder, lineWidth: hairline)
         }
         .overlay(alignment: .top) {
-            // The header's edge, over the card's: the same corners, drawn inside them, so the two stay concentric.
-            let radius = Metrics.cornerRadius * zoom
-            UnevenRoundedRectangle(topLeadingRadius: radius, topTrailingRadius: radius)
-                .strokeBorder(table.color.headerBorder(in: colorScheme), lineWidth: max(Metrics.headerBorderWidth * zoom, hairline))
+            let width = max(Metrics.headerBorderWidth * zoom, hairline)
+            HeaderEdge(cornerRadius: Metrics.cornerRadius * zoom, inset: width / 2)
+                .stroke(table.color.headerBorder(in: colorScheme), lineWidth: width)
                 .frame(height: Metrics.headerHeight * zoom)
         }
         .shadow(color: .black.opacity(0.07), radius: 1.5 * zoom, y: 0.5 * zoom)
@@ -53,12 +53,12 @@ struct TableCard: View {
                 // strokeBorder draws inside its shape, so the ring's inner edge sits `selectionGap` out from the card,
                 // at the concentric radius.
                 let outset = Metrics.selectionGap + Metrics.selectionWidth
-                RoundedRectangle(cornerRadius: (Metrics.cornerRadius + outset) * zoom)
+                RoundedRectangle(cornerRadius: (Metrics.cornerRadius + outset) * zoom, style: .circular)
                     .strokeBorder(Color.accentColor, lineWidth: Metrics.selectionWidth * zoom)
                     .padding(-outset * zoom)
             }
         }
-        .contentShape(.rect(cornerRadius: Metrics.cornerRadius * zoom))
+        .contentShape(.rect(cornerRadius: Metrics.cornerRadius * zoom, style: .circular))
         .accessibilityElement(children: isEditing ? .contain : .combine)
         .accessibilityLabel("Table \(table.name), \(table.columns.count) columns")
     }
@@ -203,6 +203,24 @@ private struct TypeField: View {
             column.isNullable = parsed.isNullable
         }
         text = column.typeLabel
+    }
+}
+
+/// The header's left, top and right edges, open at the bottom: stroked `inset` inside the card, along a radius that much
+/// smaller, so it's concentric with the card's corners.
+private struct HeaderEdge: Shape {
+    let cornerRadius: CGFloat
+    let inset: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let left = rect.minX + inset, right = rect.maxX - inset, top = rect.minY + inset
+        let radius = cornerRadius - inset
+        var path = Path()
+        path.move(to: CGPoint(x: left, y: rect.maxY))
+        path.addArc(tangent1End: CGPoint(x: left, y: top), tangent2End: CGPoint(x: right, y: top), radius: radius)
+        path.addArc(tangent1End: CGPoint(x: right, y: top), tangent2End: CGPoint(x: right, y: rect.maxY), radius: radius)
+        path.addLine(to: CGPoint(x: right, y: rect.maxY))
+        return path
     }
 }
 

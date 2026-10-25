@@ -15,9 +15,9 @@ extension TableColor {
     /// The header's background: a wash of the color.
     var headerFill: Color { color.opacity(0.13) }
 
-    /// The header's edge: a deeper shade of its fill.
+    /// The header's edge: a darker shade of its fill, in either appearance.
     func headerBorder(in scheme: ColorScheme) -> Color {
-        scheme == .dark ? color.mix(with: .black, by: 0.35).opacity(0.75) : color.mix(with: .black, by: 0.15).opacity(0.5)
+        scheme == .dark ? color.mix(with: .black, by: 0.78) : color.mix(with: .black, by: 0.15).opacity(0.5)
     }
 
     var color: Color {
