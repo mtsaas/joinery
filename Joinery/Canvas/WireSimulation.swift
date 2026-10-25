@@ -7,9 +7,9 @@ import Foundation
 enum Spring {
     /// Away from sockets and ties.
     static let loose = 1100.0
-    /// Added at a socket or tie, fading over `rigidLength` points along the wire: what makes it arrive square.
+    /// Added at a socket or tie, fading to nothing `Routing.squareReach` along the wire: it keeps the stretch that
+    /// arrives square from being swung off it while things move.
     static let rigid = 9000.0
-    static let rigidLength = 22.0
     static let tie = 3000.0
     /// How much each point follows its neighbors' displacement, which sends a wobble travelling along the wire.
     static let tension = 1500.0

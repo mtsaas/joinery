@@ -144,6 +144,9 @@ struct Routing {
         }
     }
 
+    /// How far out of a socket or tie the wire is held: completely at the anchor, easing to not at all here. It's
+    /// stiffer there while things move, and avoidance can't push it, so it leaves square and bends progressively.
+    static let squareReach: CGFloat = 72
     /// How far a table's push on wires reaches; it fades smoothly to nothing there.
     static let avoidanceReach: CGFloat = 64
     static let avoidancePasses = 40
@@ -158,15 +161,17 @@ struct Routing {
     private static func route(through waypoints: [Waypoint]) -> Route {
         var points: [CGPoint] = [], isTieSlot: [Bool] = []
         for (a, b) in zip(waypoints, waypoints.dropFirst()) {
-            // Handles never longer than half the gap, or a short hop (a tie near a socket) overshoots and hooks; and
-            // not so long that the wire runs straight for a stretch before it bends.
+            // The handles set how far the wire stays square: it leaves along them and turns over about their length.
+            // Never longer than half the gap, or a short hop (a tie near a socket) overshoots and hooks.
             let gap = a.point.distance(to: b.point)
-            let reach = min(max(gap * 0.2, min(20, gap / 2)), 60)
+            let reach = min(max(gap * 0.4, min(Routing.squareReach / 2, gap / 2)), Routing.squareReach * 1.25)
             // Reach further when the other end is behind, so the wire swings around instead of folding back.
             let control1 = a.point + a.tangent * (reach + max(0, (b.point - a.point).dot(-a.tangent)) / 2)
             let control2 = b.point - b.tangent * (reach + max(0, (a.point - b.point).dot(b.tangent)) / 2)
             for sample in 0..<samplesPerSegment {
-                let t = CGFloat(sample) / CGFloat(samplesPerSegment), u = 1 - t
+                // Closer together near the ends, where the wire is held square and bends most; farther apart mid-span.
+                let even = CGFloat(sample) / CGFloat(samplesPerSegment)
+                let t = (1 - cos(.pi * even)) / 2, u = 1 - t
                 let near = a.point * (u * u * u) + control1 * (3 * u * u * t)
                 let far = control2 * (3 * u * t * t) + b.point * (t * t * t)
                 points.append(near + far)
@@ -185,7 +190,11 @@ struct Routing {
         for i in points.indices.dropLast().reversed() where !isAnchor[i] {
             distance[i] = min(distance[i], distance[i + 1] + points[i].distance(to: points[i + 1]))
         }
-        let flexibility = distance.map { 1 - exp(-Double($0) / Spring.rigidLength) }
+        // Held completely at the anchor, easing (smoothstep) to free at `squareReach`.
+        let flexibility = distance.map { d -> Double in
+            let x = Double(min(d / squareReach, 1))
+            return x * x * (3 - 2 * x)
+        }
         let stiffness = points.indices.map { i -> Double in
             if i == 0 || i == points.count - 1 { return .infinity }
             return isTieSlot[i] ? Spring.tie : Spring.loose + Spring.rigid * (1 - flexibility[i])
@@ -198,7 +207,8 @@ extension Routing.Route {
     /// Bends the wire around `obstacles` as if each table repelled it: a push that's strongest at the table and fades
     /// smoothly to nothing at `Routing.avoidanceReach`, against the wire's wish to keep its own shape. It's the wire's
     /// displacement that's smoothed, not its points, so it bulges around tables in easy curves and relaxes back to its
-    /// natural route where nothing pushes; and points near a socket or tie barely move, so it still arrives square.
+    /// natural route where nothing pushes. The finished displacement is then faded out toward each socket and tie by
+    /// `flexibility` (squared), which starts flat, so the wire still leaves them square.
     // ponytail: wires × points × tables × passes per redraw; spatial bucketing if schemas reach hundreds of tables.
     /// - Parameter own: The wire's own tables. They don't push it, but it's lifted out from under them.
     mutating func avoid(_ obstacles: [CGRect], staying own: [CGRect] = []) {
@@ -226,7 +236,7 @@ extension Routing.Route {
                     let target = abs(travel.x) >= abs(travel.y)
                         ? CGPoint(x: base[i].x, y: middle.y < rect.midY ? rect.minY - reach / 2 : rect.maxY + reach / 2)
                         : CGPoint(x: middle.x < rect.midX ? rect.minX - reach / 2 : rect.maxX + reach / 2, y: base[i].y)
-                    offset[i] = (target - base[i]) * flexibility[i]
+                    offset[i] = target - base[i]
                 }
                 index = end + 1
             }
@@ -243,15 +253,17 @@ extension Routing.Route {
                     // Inside, push out the nearer way across the wire.
                     let direction = away.normalized ?? (point.y < rect.midY ? CGPoint(x: 0, y: -1) : CGPoint(x: 0, y: 1))
                     let falloff = 1 - distance / reach
-                    offset[i] += direction * (reach * falloff * falloff * 0.25 * CGFloat(flexibility[i]))
+                    offset[i] += direction * (reach * falloff * falloff * 0.25)
                 }
             }
-            // Tension: smooth the displacement along the wire; anchors stay put.
+            // Tension: smooth the displacement along the wire; sockets and ties stay put.
             let before = offset
             for i in points.indices.dropFirst().dropLast() where flexibility[i] > 0 {
                 offset[i] = before[i] + ((before[i - 1] + before[i + 1]) / 2 - before[i]) * 0.5
             }
         }
-        for i in points.indices { points[i] = base[i] + offset[i] }
+        // Squared: a table can push a wire a long way, and close to a socket even a sliver of that would bend it.
+        for i in points.indices { points[i] = base[i] + offset[i] * CGFloat(flexibility[i] * flexibility[i]) }
     }
 }
+
