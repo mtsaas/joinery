@@ -13,6 +13,9 @@ struct Routing {
         var stiffness: [Double]
         /// How free each point is to be pushed aside, from 0 at sockets and ties to nearly 1 well away from them.
         var flexibility: [Double]
+        /// Where the wire passes through a zip tie (or bend point). The wire on either side is its own cable, held
+        /// there as at a socket; nothing on one side reaches the other.
+        var isTieSlot: [Bool]
     }
 
     struct Tie {
@@ -187,7 +190,7 @@ struct Routing {
             if i == 0 || i == points.count - 1 { return .infinity }
             return isTieSlot[i] ? Spring.tie : Spring.loose + Spring.rigid * (1 - flexibility[i])
         }
-        return Route(points: points, stiffness: stiffness, flexibility: flexibility)
+        return Route(points: points, stiffness: stiffness, flexibility: flexibility, isTieSlot: isTieSlot)
     }
 }
 
@@ -214,8 +217,9 @@ extension Routing.Route {
             var index = 1
             while index < points.count - 1 {
                 guard flexibility[index] > 0, rect.contains(base[index]) else { index += 1; continue }
+                // A run stops at a tie: the stretch on each side picks its own way around.
                 var end = index
-                while end + 1 < points.count - 1, rect.contains(base[end + 1]) { end += 1 }
+                while end + 1 < points.count - 1, flexibility[end + 1] > 0, rect.contains(base[end + 1]) { end += 1 }
                 let travel = base[end + 1] - base[index - 1]
                 let middle = (index...end).map { base[$0] }.reduce(.zero, +) / CGFloat(end - index + 1)
                 for i in index...end {

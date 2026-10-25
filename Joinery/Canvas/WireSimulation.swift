@@ -128,9 +128,13 @@ private extension WireSimulation.Wire {
         for index in points.indices.dropFirst().dropLast() where route.stiffness[index].isFinite {
             let k = route.stiffness[index]
             let offset = points[index] - route.points[index]
-            let neighbors = (points[index - 1] - route.points[index - 1] + points[index + 1] - route.points[index + 1]) / 2
-            let acceleration = offset * -k - velocities[index] * (2 * Spring.damping * k.squareRoot())
-                + (neighbors - offset) * Spring.tension
+            var acceleration = offset * -k - velocities[index] * (2 * Spring.damping * k.squareRoot())
+            // A tie slot moves only toward where the tie is, like a socket that can drift: the wires on either side
+            // follow it, but nothing pulls it, so no force passes through the tie from one side to the other.
+            if !route.isTieSlot[index] {
+                let neighbors = (points[index - 1] - route.points[index - 1] + points[index + 1] - route.points[index + 1]) / 2
+                acceleration += (neighbors - offset) * Spring.tension
+            }
             velocities[index] += acceleration * dt
         }
         for index in points.indices { points[index] += velocities[index] * dt }

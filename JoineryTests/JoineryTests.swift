@@ -109,6 +109,30 @@ struct JoineryTests {
         #expect(avoiding.points.last == straight.points.last)
     }
 
+    /// Each side of a tie is its own cable: shaking one side reaches the tie, not past it.
+    @Test func forcesDoNotCrossAZipTie() throws {
+        var schema = storefront()
+        let simulation = WireSimulation()
+        var time = settle(simulation, on: Routing(schema: schema))
+        let tied = schema.zipTie(simulation, from: CGPoint(x: 374, y: -200), to: CGPoint(x: 374, y: 300))
+        try #require(tied != nil)
+        time += settle(simulation, on: Routing(schema: schema))
+
+        // Yank the stretch between the foreign key's socket and the tie; leave the tie and beyond where they are.
+        var routes = Routing(schema: schema).routes
+        let wire = schema.relationships[0].id, n = Routing.samplesPerSegment
+        for i in 1..<n { routes[wire]?.points[i].y += 40 }
+        let rest = try #require(routes[wire]?.points)
+        var moved = 0.0
+        repeat {
+            time += 1.0 / 60
+            let points = try #require(simulation.wires[wire]?.points)
+            for i in n..<points.count { moved = max(moved, Double(points[i].distance(to: rest[i]))) }
+        } while simulation.advance(toward: routes, to: time)
+
+        #expect(moved < 0.01, "the tie and the cable past it moved \(moved) pt")
+    }
+
     @Test func strokeAcrossOneWireTiesNothing() {
         var schema = storefront()
         let simulation = WireSimulation()
