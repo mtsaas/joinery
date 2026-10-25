@@ -75,6 +75,8 @@ final class DebugHooks: NSObject, NSApplicationDelegate {
                                                           "down": (125, "\u{F701}"), "up": (126, "\u{F700}")]
                 if let (code, characters) = codes[words[1]] {
                     await press(characters, keyCode: code)
+                } else if words[1] == "cmd+delete" {
+                    await press("\u{7f}", keyCode: 51, modifiers: .command)
                 } else if words[1].hasPrefix("cmd+"), let letter = words[1].last {
                     await press(String(letter), keyCode: ["k": 40, "a": 0][String(letter)] ?? 0, modifiers: .command)
                 }

@@ -130,14 +130,21 @@ struct Routing {
         }
 
         if avoidingTables {
-            let obstacles = frames.values.map { $0.insetBy(dx: -Self.clearance, dy: -Self.clearance) }
-            for id in routes.keys { routes[id]?.avoid(obstacles) }
+            for relationship in schema.relationships {
+                // A wire isn't pushed off the tables it plugs into, only kept from running under them.
+                let own = [relationship.from, relationship.to].compactMap { rows[$0].flatMap { frames[$0.table] } }
+                let others = frames.values.filter { !own.contains($0) }
+                routes[relationship.id]?.avoid(others, staying: own)
+            }
         }
     }
 
-    /// How far wires keep from tables they avoid. Less than `Metrics.wireLead`, so a wire's own pinned lead out of
+    /// How far a table's push on wires reaches; wires settle around a table at roughly half this.
+    static let avoidanceReach: CGFloat = 44
+    /// The least a wire keeps from a table it avoids. Less than `Metrics.wireLead`, so a wire's own pinned lead out of
     /// its socket is already clear of its table.
-    static let clearance: CGFloat = 12
+    static let minimumClearance: CGFloat = 8
+    static let avoidancePasses = 30
 
     /// Tables closer than this side by side are treated as stacked.
     private static let sideGap: CGFloat = 24
@@ -185,47 +192,61 @@ struct Routing {
 }
 
 extension Routing.Route {
-    /// Bends the wire's free stretches out of `obstacles`. Each stretch inside one goes around it on a single side (the
-    /// one nearer where it already runs, across its direction of travel), then the wire is smoothed, a few times over,
-    /// so it settles on a smooth path around rather than a jagged one.
-    // ponytail: wires × points × tables per redraw; spatial bucketing if schemas reach hundreds of tables.
-    mutating func avoid(_ obstacles: [CGRect]) {
+    /// Bends the wire's free stretches around `obstacles`, like a hose pushed aside: each table pushes nearby points
+    /// away, harder the closer they are, while the wire's tension smooths it, until the two balance in an easy arc.
+    /// A stretch that starts out under a table is first lifted out on one side (the nearer, across its way of travel),
+    /// so it goes around rather than through, and a last pass makes sure nothing ends up under a table.
+    // ponytail: wires × points × tables × passes per redraw; spatial bucketing if schemas reach hundreds of tables.
+    /// - Parameter own: The wire's own tables, which it's only kept out from under.
+    mutating func avoid(_ obstacles: [CGRect], staying own: [CGRect] = []) {
         // Sockets, their leads and zip-tie slots stay put; the rest may move.
         let isFree = stiffness.map { $0 < Spring.tie }
+        let reach = Routing.avoidanceReach
         let xs = points.map(\.x), ys = points.map(\.y)
         let bounds = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
-        let obstacles = obstacles.filter { $0.intersects(bounds) }
-        guard !obstacles.isEmpty else { return }
+        let obstacles = obstacles.filter { $0.insetBy(dx: -reach, dy: -reach).intersects(bounds) }
+        let own = own.filter { $0.intersects(bounds) }
+        guard !obstacles.isEmpty || !own.isEmpty else { return }
 
-        func pushOut() {
-            for rect in obstacles {
-                var index = 1
-                while index < points.count - 1 {
-                    guard isFree[index], rect.contains(points[index]) else { index += 1; continue }
-                    var end = index
-                    while end + 1 < points.count - 1, isFree[end + 1], rect.contains(points[end + 1]) { end += 1 }
-                    let run = index...end
-                    let travel = points[end + 1] - points[index - 1]
-                    let middle = run.map { points[$0] }.reduce(.zero, +) / CGFloat(run.count)
-                    for i in run {
-                        if abs(travel.x) >= abs(travel.y) {
-                            points[i].y = middle.y < rect.midY ? rect.minY : rect.maxY
-                        } else {
-                            points[i].x = middle.x < rect.midX ? rect.minX : rect.maxX
-                        }
+        /// Moves each run of free points inside `rect` out past the side its run is nearer.
+        func liftOut(of rect: CGRect, to margin: CGFloat) {
+            let rect = rect.insetBy(dx: -margin, dy: -margin)
+            var index = 1
+            while index < points.count - 1 {
+                guard isFree[index], rect.contains(points[index]) else { index += 1; continue }
+                var end = index
+                while end + 1 < points.count - 1, isFree[end + 1], rect.contains(points[end + 1]) { end += 1 }
+                let run = index...end
+                let travel = points[end + 1] - points[index - 1]
+                let middle = run.map { points[$0] }.reduce(.zero, +) / CGFloat(run.count)
+                for i in run {
+                    if abs(travel.x) >= abs(travel.y) {
+                        points[i].y = middle.y < rect.midY ? rect.minY : rect.maxY
+                    } else {
+                        points[i].x = middle.x < rect.midX ? rect.minX : rect.maxX
                     }
-                    index = end + 1
                 }
+                index = end + 1
             }
         }
 
-        for _ in 0..<8 {
-            pushOut()
+        for rect in obstacles + own { liftOut(of: rect, to: Routing.minimumClearance) }
+        for _ in 0..<Routing.avoidancePasses {
+            // Push: each point away from the nearest spot on each table, by how far inside the reach it is.
+            for i in points.indices where isFree[i] {
+                for rect in obstacles {
+                    let nearest = CGPoint(x: min(max(points[i].x, rect.minX), rect.maxX), y: min(max(points[i].y, rect.minY), rect.maxY))
+                    let away = points[i] - nearest, distance = away.length
+                    guard distance < reach, let direction = away.normalized else { continue }
+                    points[i] += direction * ((reach - distance) * 0.5)
+                }
+            }
+            // Tension: each point toward the middle of its neighbors.
             let before = points
             for i in points.indices.dropFirst().dropLast() where isFree[i] {
                 points[i] = before[i] + ((before[i - 1] + before[i + 1]) / 2 - before[i]) * 0.5
             }
         }
-        pushOut()
+        for rect in obstacles + own { liftOut(of: rect, to: Routing.minimumClearance) }
     }
 }

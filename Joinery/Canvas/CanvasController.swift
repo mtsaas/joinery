@@ -48,10 +48,10 @@ final class CanvasController {
     var showsPalette = false
     /// Which of the palette's matches is highlighted.
     var paletteHighlight = 0
-    /// Tab, Shift-Tab or Escape pressed in a cell, for the view to act on.
+    /// A key pressed in a cell that the table handles, for the view to act on.
     var fieldKey: FieldKey?
 
-    enum FieldKey { case next, previous, done }
+    enum FieldKey { case next, previous, done, deleteColumn, togglePrimaryKey }
 
     /// How far the selected tables and ties have been dragged, not yet saved to the document.
     var dragOffset: CGPoint?

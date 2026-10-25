@@ -23,8 +23,8 @@ struct TableCard: View {
         let size = Metrics.size(of: table)
         VStack(spacing: 0) {
             header
-            ForEach($table.columns) { $column in
-                row($column)
+            ForEach(table.columns) { column in
+                row(binding(for: column.id))
                     .background(column.id == targetColumn ? Color.accentColor.opacity(0.14) : .clear)
                     .overlay(alignment: .top) { Theme.cardBorder.frame(height: hairline) }
             }
@@ -50,6 +50,16 @@ struct TableCard: View {
         .contentShape(.rect(cornerRadius: Metrics.cornerRadius * zoom))
         .accessibilityElement(children: isEditing ? .contain : .combine)
         .accessibilityLabel("Table \(table.name), \(table.columns.count) columns")
+    }
+
+    /// Looks the column up by id on every access, not by position: a cell can outlive its column for a moment (a
+    /// type field saves as it disappears, after the column is deleted), and would otherwise index past the end.
+    private func binding(for id: Column.ID) -> Binding<Column> {
+        Binding {
+            table.columns.first { $0.id == id } ?? Column(id: id, name: "", type: .text)
+        } set: { column in
+            if let index = table.columns.firstIndex(where: { $0.id == id }) { table.columns[index] = column }
+        }
     }
 
     private var header: some View {
@@ -134,7 +144,7 @@ struct TableCard: View {
 }
 
 /// Where a type is typed: "int", "ts", "text?" and so on, read when it's committed (Return, Tab, or leaving the
-/// field), with the matching types suggested along the way.
+/// field). While typing, the rest of the type it'll become shows faded after the text.
 private struct TypeField: View {
     @Binding var column: Column
     var focus: FocusState<CanvasController.Field?>.Binding
@@ -154,13 +164,27 @@ private struct TypeField: View {
                 commit()
                 onSubmit()
             }
-            .textInputSuggestions {
-                let word = text.trimmingCharacters(in: CharacterSet(charactersIn: "? ")).lowercased()
-                ForEach(DataType.allCases.filter { word.isEmpty || $0.rawValue.hasPrefix(word) }) { type in
-                    Text(type.rawValue).textInputCompletion(type.rawValue + (text.hasSuffix("?") ? "?" : ""))
+            // Inline rather than a suggestion list: that list takes the keyboard while it's open, so ⌘⌫ and ⇧⌘K
+            // wouldn't reach the table. The text is monospaced, so the hidden copy lines the rest up exactly.
+            .overlay(alignment: .leading) {
+                if focus.wrappedValue == .columnType(column.id) {
+                    HStack(spacing: 0) {
+                        Text(text).hidden()
+                        Text(completion).foregroundStyle(.tertiary)
+                    }
+                    .allowsHitTesting(false)
                 }
             }
-            .help("A type, or the start of one; end with ? for nullable")
+            .help("A type, or the start of one (int, ts, bool); end with ? for nullable")
+    }
+
+    /// What's left of the type the text so far would become: "mestamp" after "ti".
+    private var completion: String {
+        let word = text.lowercased()
+        guard !word.isEmpty, !word.hasSuffix("?"), let parsed = DataType.parse(word), parsed.type.rawValue.hasPrefix(word) else {
+            return ""
+        }
+        return String(parsed.type.rawValue.dropFirst(word.count))
     }
 
     private func commit() {

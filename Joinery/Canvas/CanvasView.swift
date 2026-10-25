@@ -456,6 +456,8 @@ struct CanvasView: View {
         case .next: field = order[index + 1]
         case .previous: field = order[max(index - 1, 0)]
         case .done: isCanvasFocused = true
+        case .deleteColumn: deleteFocusedColumn()
+        case .togglePrimaryKey: togglePrimaryKey()
         }
     }
 
@@ -696,8 +698,8 @@ struct CanvasView: View {
     }
 }
 
-/// Shortcuts while editing a table, in a capsule at the bottom of the canvas. The ⌘ ones are buttons, so they work
-/// from inside a text field.
+/// Shortcuts while editing a table, in a capsule at the bottom of the canvas. The keys themselves are caught by the
+/// event monitor; the ⌘ ones here are also buttons, for the mouse.
 private struct EditingHints: View {
     let togglePrimaryKey: () -> Void
     let deleteColumn: () -> Void
@@ -707,9 +709,7 @@ private struct EditingHints: View {
             hint("⇥", "Next")
             hint("⏎", "New column")
             Button(action: togglePrimaryKey) { hint("⇧⌘K", "Primary key") }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
             Button(action: deleteColumn) { hint("⌘⌫", "Delete column") }
-                .keyboardShortcut(.delete)
             hint("?", "Nullable")
             hint("⎋", "Done")
         }

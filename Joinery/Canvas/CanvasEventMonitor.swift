@@ -8,7 +8,8 @@ import SwiftUI
 ///   through untouched, so tables and ties still get their context menus; a drag can't start while one is open.
 /// - In the command palette, the arrow keys move through the matches and Escape closes it.
 /// - While a table's cells are being edited, Tab and Shift-Tab step through them in our order (adding a column past
-///   the last), and Escape stops editing; the text field would otherwise move focus anywhere in the window.
+///   the last), Escape stops editing, ⌘⌫ deletes the column and ⇧⌘K toggles its primary key. The text field would
+///   otherwise take these itself (and SwiftUI shortcuts don't reliably reach past it).
 struct CanvasEventMonitor: NSViewRepresentable {
     let canvas: CanvasController
 
@@ -59,7 +60,7 @@ struct CanvasEventMonitor: NSViewRepresentable {
         }
 
         private enum Key {
-            static let tab: UInt16 = 48, space: UInt16 = 49, escape: UInt16 = 53, down: UInt16 = 125, up: UInt16 = 126
+            static let tab: UInt16 = 48, space: UInt16 = 49, delete: UInt16 = 51, escape: UInt16 = 53, down: UInt16 = 125, up: UInt16 = 126
         }
 
         /// - Returns: Whether the event was used.
@@ -76,9 +77,13 @@ struct CanvasEventMonitor: NSViewRepresentable {
                 }
             case .keyDown where isTyping:
                 guard canvas.editingTable != nil else { return false }
+                let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
                 switch event.keyCode {
-                case Key.tab: canvas.fieldKey = event.modifierFlags.contains(.shift) ? .previous : .next
+                case Key.tab: canvas.fieldKey = modifiers.contains(.shift) ? .previous : .next
                 case Key.escape: canvas.fieldKey = .done
+                case Key.delete where modifiers == .command: canvas.fieldKey = .deleteColumn
+                case _ where modifiers == [.command, .shift] && event.charactersIgnoringModifiers?.lowercased() == "k":
+                    canvas.fieldKey = .togglePrimaryKey
                 default: return false
                 }
             case .keyDown, .keyUp:
