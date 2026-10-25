@@ -3,24 +3,26 @@ import CoreGraphics
 /// Sizes on the canvas, in canvas points (multiply by the zoom for the screen). Tables are laid out from these alone,
 /// so sockets can be placed without measuring views.
 enum Metrics {
-    static let tableWidth: CGFloat = 248
-    static let headerHeight: CGFloat = 40
-    static let rowHeight: CGFloat = 28
+    static let tableWidth: CGFloat = 212
+    static let headerHeight: CGFloat = 30
+    static let rowHeight: CGFloat = 22
     /// Below the last row, so it doesn't sit on the card's rounded bottom edge.
-    static let bottomPadding: CGFloat = 6
+    static let bottomPadding: CGFloat = 4
     /// From the card's side edges to its text, the same on both sides.
-    static let contentInset: CGFloat = 16
-    static let cornerRadius: CGFloat = 12
+    static let contentInset: CGFloat = 12
+    static let cornerRadius: CGFloat = 10
     /// Between a selected card and its ring; the ring's inner radius is `cornerRadius + selectionGap`.
     static let selectionGap: CGFloat = 3
     static let selectionWidth: CGFloat = 2
 
     /// Sockets sit centered on the card's side edges.
-    static let socketDiameter: CGFloat = 9
+    static let socketDiameter: CGFloat = 8
     /// How close the pointer has to come to a socket to grab it or drop a wire on it.
-    static let socketHitRadius: CGFloat = 10
+    static let socketHitRadius: CGFloat = 9
 
     static let wireWidth: CGFloat = 2.25
+    /// How far a wire runs straight out of its socket before curving.
+    static let wireLead: CGFloat = 14
     /// Between neighboring wires in a zip tie. Each wire is drawn over a halo this wide, so a bundle reads as separate
     /// strands and crossings show which wire is on top.
     static let tieSpacing: CGFloat = 4

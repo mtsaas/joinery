@@ -123,21 +123,35 @@ struct Routing {
     /// A cubic Bézier between each pair of waypoints, leaving and arriving along their tangents.
     private static func route(through waypoints: [Waypoint]) -> Route {
         var points: [CGPoint] = [], stiffness: [Double] = []
+        let count = samplesPerSegment
         for (a, b) in zip(waypoints, waypoints.dropFirst()) {
-            let reach = min(max(a.point.distance(to: b.point) * 0.45, 36), 220)
+            // At a socket the wire runs straight out for `Metrics.wireLead` before it curves, and both points of that
+            // lead are pinned, so it always leaves square to the table's side however the rest of it swings.
+            let start = a.isTie ? a.point : a.point + a.tangent * Metrics.wireLead
+            let end = b.isTie ? b.point : b.point - b.tangent * Metrics.wireLead
+            // Handles never longer than half the gap, or a short hop (a tie near a socket) overshoots and hooks.
+            let gap = start.distance(to: end)
+            let reach = min(max(gap * 0.45, min(36, gap / 2)), 220)
             // Reach further when the other end is behind, so the wire swings around instead of folding back.
-            let control1 = a.point + a.tangent * (reach + max(0, (b.point - a.point).dot(-a.tangent)) / 2)
-            let control2 = b.point - b.tangent * (reach + max(0, (a.point - b.point).dot(b.tangent)) / 2)
-            for sample in 0..<samplesPerSegment {
-                let t = CGFloat(sample) / CGFloat(samplesPerSegment), u = 1 - t
-                let p1 = a.point * (u * u * u) + control1 * (3 * u * u * t)
-                let p2 = control2 * (3 * u * t * t) + b.point * (t * t * t)
-                points.append(p1 + p2)
+            let control1 = start + a.tangent * (reach + max(0, (end - start).dot(-a.tangent)) / 2)
+            let control2 = end - b.tangent * (reach + max(0, (start - end).dot(b.tangent)) / 2)
+            // Which samples the curve spans: after the lead at a socket start, up to the lead at a socket end.
+            let first = a.isTie ? 0 : 1, last = b.isTie ? count : count - 1
+            for sample in 0..<count {
+                if sample == 0, !a.isTie {
+                    points.append(a.point)
+                    stiffness.append(.infinity)
+                    continue
+                }
+                let t = CGFloat(sample - first) / CGFloat(last - first), u = 1 - t
+                let near = start * (u * u * u) + control1 * (3 * u * u * t)
+                let far = control2 * (3 * u * t * t) + end * (t * t * t)
+                points.append(near + far)
                 // Firm near the ends, loose in the middle, so a wire swings like a cable rather than moving rigidly.
                 let looseness = sin(.pi * Double(t))
-                stiffness.append(sample == 0 && !a.isTie
+                stiffness.append(sample == first && !a.isTie || sample == last
                     ? .infinity
-                    : (sample == 0 ? Spring.tie : Spring.ends + (Spring.middle - Spring.ends) * looseness))
+                    : sample == 0 ? Spring.tie : Spring.ends + (Spring.middle - Spring.ends) * looseness)
             }
         }
         points.append(waypoints[waypoints.count - 1].point)

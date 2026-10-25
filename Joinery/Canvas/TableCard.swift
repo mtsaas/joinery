@@ -14,7 +14,7 @@ struct TableCard: View {
         let size = Metrics.size(of: table)
         VStack(spacing: 0) {
             Text(table.name)
-                .font(.system(size: 13 * zoom, weight: .semibold))
+                .font(.system(size: 12 * zoom, weight: .semibold))
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, Metrics.contentInset * zoom)
@@ -50,18 +50,18 @@ struct TableCard: View {
     }
 
     private func row(_ column: Column) -> some View {
-        HStack(spacing: 6 * zoom) {
+        HStack(spacing: 5 * zoom) {
             Image(systemName: "key.fill")
-                .font(.system(size: 9 * zoom))
+                .font(.system(size: 8 * zoom))
                 .foregroundStyle(.secondary)
-                .frame(width: 12 * zoom)
+                .frame(width: 10 * zoom)
                 .opacity(column.isPrimaryKey ? 1 : 0)
             Text(column.name)
-                .font(.system(size: 12 * zoom, weight: column.isPrimaryKey ? .medium : .regular))
+                .font(.system(size: 11 * zoom, weight: column.isPrimaryKey ? .medium : .regular))
                 .lineLimit(1)
             Spacer(minLength: 8 * zoom)
             Text(column.type.rawValue + (column.isNullable ? "?" : ""))
-                .font(.system(size: 11 * zoom, design: .monospaced))
+                .font(.system(size: 10 * zoom, design: .monospaced))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
         }
