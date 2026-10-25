@@ -16,6 +16,7 @@ struct TableCard: View {
     let submit: (CanvasController.Field) -> Void
 
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.colorScheme) private var colorScheme
 
     private var hairline: CGFloat { 1 / displayScale }
 
@@ -26,7 +27,10 @@ struct TableCard: View {
             ForEach(table.columns) { column in
                 row(binding(for: column.id))
                     .background(column.id == targetColumn ? Color.accentColor.opacity(0.14) : .clear)
-                    .overlay(alignment: .top) { Theme.cardBorder.frame(height: hairline) }
+                    // Between rows; the header's own edge is the line above the first.
+                    .overlay(alignment: .top) {
+                        if column.id != table.columns.first?.id { Theme.cardBorder.frame(height: hairline) }
+                    }
             }
         }
         .frame(width: size.width * zoom, height: size.height * zoom, alignment: .top)
@@ -34,6 +38,13 @@ struct TableCard: View {
         .clipShape(.rect(cornerRadius: Metrics.cornerRadius * zoom))
         .overlay {
             RoundedRectangle(cornerRadius: Metrics.cornerRadius * zoom).strokeBorder(Theme.cardBorder, lineWidth: hairline)
+        }
+        .overlay(alignment: .top) {
+            // The header's edge, over the card's: the same corners, drawn inside them, so the two stay concentric.
+            let radius = Metrics.cornerRadius * zoom
+            UnevenRoundedRectangle(topLeadingRadius: radius, topTrailingRadius: radius)
+                .strokeBorder(table.color.headerBorder(in: colorScheme), lineWidth: max(Metrics.headerBorderWidth * zoom, hairline))
+                .frame(height: Metrics.headerHeight * zoom)
         }
         .shadow(color: .black.opacity(0.07), radius: 1.5 * zoom, y: 0.5 * zoom)
         .shadow(color: .black.opacity(0.09), radius: 14 * zoom, y: 6 * zoom)
@@ -63,8 +74,7 @@ struct TableCard: View {
     }
 
     private var header: some View {
-        // The name lines up with the column names below, past the key column.
-        cell(width: nil, inset: Metrics.keyColumnWidth + Metrics.cellInset) {
+        cell(width: nil) {
             if isEditing {
                 TextField("table_name", text: $table.name)
                     .focused(focus, equals: .tableName(table.id))
@@ -73,9 +83,9 @@ struct TableCard: View {
                 Text(table.name)
             }
         }
-        .font(.system(size: 12 * zoom, weight: .semibold))
+        .font(.system(size: 11.5 * zoom, weight: .semibold))
         .frame(height: Metrics.headerHeight * zoom)
-        .background(table.color.color.opacity(0.13))
+        .background(table.color.headerFill)
     }
 
     private func row(_ column: Binding<Column>) -> some View {

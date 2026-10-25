@@ -7,7 +7,7 @@ enum Metrics {
     /// The grid's key column (PK, FK) and type column; names get the rest.
     static let keyColumnWidth: CGFloat = 30
     static let typeColumnWidth: CGFloat = 86
-    static let headerHeight: CGFloat = 30
+    static let headerHeight: CGFloat = 24
     static let rowHeight: CGFloat = 22
     /// Below the last row, so it doesn't sit on the card's rounded bottom edge.
     static let bottomPadding: CGFloat = 4
@@ -17,6 +17,8 @@ enum Metrics {
     /// Between a selected card and its ring; the ring's inner radius is `cornerRadius + selectionGap`.
     static let selectionGap: CGFloat = 3
     static let selectionWidth: CGFloat = 2
+    /// The header's tinted edge.
+    static let headerBorderWidth: CGFloat = 1
 
     /// Sockets sit centered on the card's side edges.
     static let socketDiameter: CGFloat = 8

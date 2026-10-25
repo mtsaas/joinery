@@ -12,6 +12,14 @@ enum Theme {
 }
 
 extension TableColor {
+    /// The header's background: a wash of the color.
+    var headerFill: Color { color.opacity(0.13) }
+
+    /// The header's edge: a deeper shade of its fill.
+    func headerBorder(in scheme: ColorScheme) -> Color {
+        scheme == .dark ? color.mix(with: .black, by: 0.35).opacity(0.75) : color.mix(with: .black, by: 0.15).opacity(0.5)
+    }
+
     var color: Color {
         switch self {
         case .blue: .blue
