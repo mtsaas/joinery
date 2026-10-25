@@ -4,6 +4,7 @@ import SwiftUI
 struct CanvasCommands: Commands {
     @FocusedValue(\.canvasController) private var canvas
     @FocusedBinding(\.schema) private var schema
+    @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
 
     var body: some Commands {
         CommandMenu("Insert") {
@@ -16,6 +17,11 @@ struct CanvasCommands: Commands {
             .disabled(canvas == nil)
         }
         CommandGroup(after: .toolbar) {
+            Button("Command Palette…") { canvas?.togglePalette() }
+                .keyboardShortcut("k")
+                .disabled(canvas == nil)
+            Toggle("Wires Avoid Tables", isOn: $wiresAvoidTables)
+            Divider()
             Button("Zoom In") { canvas?.zoom(by: 1.25) }
                 .keyboardShortcut("+")
             Button("Zoom Out") { canvas?.zoom(by: 0.8) }

@@ -48,6 +48,9 @@ final class CanvasController {
     /// A field to focus as soon as the view can, set by things outside the view such as menu commands.
     var requestedFocus: Field?
     var isSpaceHeld = false
+    var showsPalette = false
+    /// Which of the palette's matches is highlighted.
+    var paletteHighlight = 0
     /// Tab, Shift-Tab or Escape pressed in a cell, for the view to act on.
     var fieldKey: FieldKey?
 
@@ -115,6 +118,17 @@ final class CanvasController {
         offset = anchor - (anchor - offset) * (newZoom / zoom)
         zoom = newZoom
         isFitted = false
+    }
+
+    /// Pans so `rect` is in the middle of the view, at the current zoom.
+    func center(on rect: CGRect) {
+        offset = CGPoint(x: viewSize.width / 2, y: viewSize.height / 2) - CGPoint(x: rect.midX, y: rect.midY) * zoom
+        isFitted = false
+    }
+
+    func togglePalette() {
+        paletteHighlight = 0
+        showsPalette.toggle()
     }
 
     func zoomToFit(_ bounds: CGRect?) {

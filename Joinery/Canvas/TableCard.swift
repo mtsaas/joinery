@@ -115,7 +115,7 @@ struct TableCard: View {
         if isEditing {
             Button { column.wrappedValue.isPrimaryKey.toggle() } label: { label.contentShape(.rect) }
                 .buttonStyle(.plain)
-                .help("Primary key (⌘K)")
+                .help("Primary key (⇧⌘K)")
         } else {
             label
         }

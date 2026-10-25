@@ -85,6 +85,25 @@ struct JoineryTests {
         #expect(sharpest < 45, "a wire bent \(Int(sharpest))° while settling")
     }
 
+    @Test func wiresCanBendAroundTablesInTheirWay() throws {
+        var schema = storefront()
+        // A table squarely across the wire from orders to users, with room around it.
+        schema.tables[1].position.x = 700
+        let blockerID = schema.addTable(at: CGPoint(x: 350, y: -60))
+        let blocker = try #require(schema.table(blockerID))
+        schema.tables[schema.tables.count - 1].columns += (1...4).map { Column(name: "c\($0)", type: .text) }
+        let wire = schema.relationships[0].id
+        let frame = Metrics.frame(of: try #require(schema.table(blocker.id)))
+
+        let straight = try #require(Routing(schema: schema).routes[wire])
+        #expect(straight.points.contains { frame.contains($0) }, "the setup should put the table in the wire's way")
+
+        let avoiding = try #require(Routing(schema: schema, avoidingTables: true).routes[wire])
+        #expect(!avoiding.points.contains { frame.contains($0) })
+        #expect(avoiding.points.first == straight.points.first)
+        #expect(avoiding.points.last == straight.points.last)
+    }
+
     @Test func strokeAcrossOneWireTiesNothing() {
         var schema = storefront()
         let simulation = WireSimulation()
@@ -135,6 +154,19 @@ struct JoineryTests {
         let parsed = try #require(DataType.parse(input))
         #expect(parsed.type == type)
         #expect(parsed.isNullable == isNullable)
+    }
+
+    @Test func paletteMatchesLettersInOrderAndRanksWordStarts() throws {
+        #expect(PaletteCommand.score("nt", in: "New Table") != nil)
+        #expect(PaletteCommand.score("tn", in: "New Table") == nil)
+        let titles = ["New Table", "Zoom In", "orders", "order_items", "Wires Avoid Tables"]
+        let ranked = titles.compactMap { title in PaletteCommand.score("ord", in: title).map { (title, $0) } }
+            .sorted { $0.1 > $1.1 }.map(\.0)
+        #expect(ranked.prefix(2).sorted() == ["order_items", "orders"])
+        let tables = try #require(PaletteCommand.score("nt", in: "New Table"))
+        // Both match, but "New Table" has both letters starting words.
+        let rename = try #require(PaletteCommand.score("nt", in: "Rename Table"))
+        #expect(tables > rename)
     }
 
     @Test func typingNonsenseKeepsNothing() {

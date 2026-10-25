@@ -8,13 +8,15 @@ Requires macOS 26 and Xcode 26 or later. Open `Joinery.xcodeproj` and press ⌘R
 
 | Action | How |
 | --- | --- |
+| Command palette | ⌘K: every command, plus each table to jump to; arrows, Return, Escape |
 | Add a table | **T**, the toolbar table button, or Insert ▸ Table (⌥⌘T); type its name straight away |
 | Edit cells | Double-click a cell, or press Return with a table selected |
 | Move between cells | Tab / Shift-Tab; Return goes name → type → new column; Tab past the last cell adds a column |
 | Set a type | Type it or its start: `int`, `ts`, `bool`, `jsonb`; end with `?` for nullable |
-| Primary key / delete column | ⌘K / ⌘⌫ while editing, or double-click the key cell to toggle PK |
+| Primary key / delete column | ⇧⌘K / ⌘⌫ while editing, or double-click the key cell to toggle PK |
 | Finish editing | Escape (a first Escape closes the type suggestions) |
 | Add a foreign key | Drag from a column's socket onto another column (the referenced one) |
+| Wires avoid tables | View ▸ Wires Avoid Tables, or from the palette: wires bend around tables in their way |
 | Reroute a wire | Click it to add a bend point there, or drag it to add one and move it; double-click a bend point to remove it |
 | Zip-tie wires | Option-drag a line across two or more wires, or turn on the Zip Tie tool and drag |
 | Select | Click; Shift-click to add; drag on empty canvas for a box; ⌘A for everything; Option-click a wire |

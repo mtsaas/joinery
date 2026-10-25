@@ -4,6 +4,7 @@ import SwiftUI
 /// Input SwiftUI has no gesture or key handler for, watched in the window over the canvas's frame:
 /// - Two-finger scrolling or the mouse wheel pans; pinching or ⌘-scrolling zooms, around the pointer.
 /// - Holding Space turns dragging anywhere into panning.
+/// - In the command palette, the arrow keys move through the matches and Escape closes it.
 /// - While a table's cells are being edited, Tab and Shift-Tab step through them in our order (adding a column past
 ///   the last), and Escape stops editing; the text field would otherwise move focus anywhere in the window.
 struct CanvasEventMonitor: NSViewRepresentable {
@@ -40,7 +41,7 @@ struct CanvasEventMonitor: NSViewRepresentable {
         }
 
         private enum Key {
-            static let tab: UInt16 = 48, space: UInt16 = 49, escape: UInt16 = 53
+            static let tab: UInt16 = 48, space: UInt16 = 49, escape: UInt16 = 53, down: UInt16 = 125, up: UInt16 = 126
         }
 
         /// - Returns: Whether the event was used.
@@ -48,6 +49,13 @@ struct CanvasEventMonitor: NSViewRepresentable {
             guard let canvas, let window, event.window === window else { return false }
             let isTyping = window.firstResponder is NSTextView
             switch event.type {
+            case .keyDown where isTyping && canvas.showsPalette:
+                switch event.keyCode {
+                case Key.down: canvas.paletteHighlight += 1
+                case Key.up: canvas.paletteHighlight = max(canvas.paletteHighlight - 1, 0)
+                case Key.escape: canvas.showsPalette = false
+                default: return false
+                }
             case .keyDown where isTyping:
                 guard canvas.editingTable != nil else { return false }
                 switch event.keyCode {

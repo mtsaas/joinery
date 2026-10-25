@@ -19,9 +19,11 @@ struct CanvasView: View {
     @State private var lastClick: (item: CanvasController.Item, time: TimeInterval)?
     @FocusState private var isCanvasFocused: Bool
     @FocusState private var field: CanvasController.Field?
+    @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
 
     var body: some View {
-        let routing = Routing(schema: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets)
+        let routing = Routing(schema: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
+                              avoidingTables: wiresAvoidTables)
         let colors = wireColors
         let foreignKeys = Dictionary(schema.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
                                      uniquingKeysWith: { first, _ in first })
@@ -60,7 +62,23 @@ struct CanvasView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .overlay(alignment: .top) {
+            if canvas.showsPalette {
+                // Clicking anywhere else closes it.
+                Color.black.opacity(0.001)
+                    .onTapGesture { canvas.showsPalette = false }
+                    .overlay(alignment: .top) {
+                        CommandPalette(commands: paletteCommands, highlight: $canvas.paletteHighlight) {
+                            canvas.showsPalette = false
+                        }
+                        .padding(.top, 96)
+                    }
+                    .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+            }
+        }
         .animation(.smooth(duration: 0.2), value: canvas.editingTable != nil)
+        .animation(.smooth(duration: 0.15), value: canvas.showsPalette)
+        .onChange(of: canvas.showsPalette) { if !canvas.showsPalette { isCanvasFocused = true } }
         .focusable()
         .focused($isCanvasFocused)
         .focusEffectDisabled()
@@ -116,6 +134,54 @@ struct CanvasView: View {
             if note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint { click(at: point) }
         }
         #endif
+    }
+
+    // MARK: Command palette
+
+    /// New Table first, then what applies to the selection, tools and view, then every table to jump to.
+    private var paletteCommands: [PaletteCommand] {
+        var commands = [PaletteCommand(id: "new-table", title: "New Table", symbol: "plus.rectangle", shortcut: "T") {
+            canvas.addTable(to: &schema)
+        }]
+        if canvas.selection.count == 1, case .table(let id)? = canvas.selection.first, let table = schema.table(id) {
+            commands += [
+                PaletteCommand(id: "add-column", title: "Add Column", subtitle: table.name, symbol: "plus") {
+                    addColumn(to: id, after: table.columns.last?.id)
+                },
+                PaletteCommand(id: "rename", title: "Rename Table", subtitle: table.name, symbol: "pencil", shortcut: "⏎") {
+                    canvas.edit(.tableName(id))
+                },
+            ]
+        }
+        if !canvas.selection.isEmpty {
+            commands.append(PaletteCommand(id: "delete", title: "Delete Selection", symbol: "trash", shortcut: "⌫") {
+                canvas.deleteSelection(in: &schema)
+            })
+        }
+        commands += [
+            PaletteCommand(id: "avoid", title: "Wires Avoid Tables", subtitle: wiresAvoidTables ? "On" : "Off",
+                           symbol: "point.topleft.down.to.point.bottomright.curvepath") { wiresAvoidTables.toggle() },
+            PaletteCommand(id: "zip-tool", title: "Zip Tie Tool", subtitle: canvas.tool == .zipTie ? "On" : "Off",
+                           symbol: "arrow.triangle.merge") { canvas.tool = canvas.tool == .zipTie ? .select : .zipTie },
+            PaletteCommand(id: "select-all", title: "Select All", symbol: "checkmark.rectangle.stack", shortcut: "⌘A") {
+                canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })
+            },
+            PaletteCommand(id: "fit", title: "Zoom to Fit", symbol: "arrow.up.left.and.arrow.down.right", shortcut: "⌘1") {
+                canvas.zoomToFit(schema.bounds)
+            },
+            PaletteCommand(id: "zoom-in", title: "Zoom In", symbol: "plus.magnifyingglass", shortcut: "⌘+") { canvas.zoom(by: 1.25) },
+            PaletteCommand(id: "zoom-out", title: "Zoom Out", symbol: "minus.magnifyingglass", shortcut: "⌘−") { canvas.zoom(by: 0.8) },
+            PaletteCommand(id: "actual-size", title: "Actual Size", symbol: "1.magnifyingglass", shortcut: "⌘0") {
+                canvas.zoom(by: 1 / canvas.zoom)
+            },
+        ]
+        commands += schema.tables.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map { table in
+            PaletteCommand(id: "table-\(table.id)", title: table.name, subtitle: "\(table.columns.count) columns", symbol: "tablecells") {
+                canvas.selection = [.table(table.id)]
+                canvas.center(on: Metrics.frame(of: table))
+            }
+        }
+        return commands
     }
 
     /// Whether keys are for the canvas itself rather than a cell being edited.
@@ -594,8 +660,8 @@ private struct EditingHints: View {
         HStack(spacing: 16) {
             hint("⇥", "Next")
             hint("⏎", "New column")
-            Button(action: togglePrimaryKey) { hint("⌘K", "Primary key") }
-                .keyboardShortcut("k")
+            Button(action: togglePrimaryKey) { hint("⇧⌘K", "Primary key") }
+                .keyboardShortcut("k", modifiers: [.command, .shift])
             Button(action: deleteColumn) { hint("⌘⌫", "Delete column") }
                 .keyboardShortcut(.delete)
             hint("?", "Nullable")

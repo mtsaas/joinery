@@ -44,7 +44,9 @@ struct Routing {
     /// - Parameters:
     ///   - tableOffsets: How far tables being dragged have moved, not yet saved to `schema`.
     ///   - tieOffsets: The same for zip ties.
-    init(schema: Schema, tableOffsets: [Table.ID: CGPoint] = [:], tieOffsets: [ZipTie.ID: CGPoint] = [:]) {
+    ///   - avoidingTables: Whether wires bend around tables in their way rather than running under them.
+    init(schema: Schema, tableOffsets: [Table.ID: CGPoint] = [:], tieOffsets: [ZipTie.ID: CGPoint] = [:],
+         avoidingTables: Bool = false) {
         var frames: [Table.ID: CGRect] = [:]
         var rows: [Column.ID: (table: Table.ID, row: Int)] = [:]
         for table in schema.tables {
@@ -126,7 +128,16 @@ struct Routing {
             waypoints.append(end)
             routes[relationship.id] = Self.route(through: waypoints)
         }
+
+        if avoidingTables {
+            let obstacles = frames.values.map { $0.insetBy(dx: -Self.clearance, dy: -Self.clearance) }
+            for id in routes.keys { routes[id]?.avoid(obstacles) }
+        }
     }
+
+    /// How far wires keep from tables they avoid. Less than `Metrics.wireLead`, so a wire's own pinned lead out of
+    /// its socket is already clear of its table.
+    static let clearance: CGFloat = 12
 
     /// Tables closer than this side by side are treated as stacked.
     private static let sideGap: CGFloat = 24
@@ -170,5 +181,51 @@ struct Routing {
         points.append(waypoints[waypoints.count - 1].point)
         stiffness.append(.infinity)
         return Route(points: points, stiffness: stiffness)
+    }
+}
+
+extension Routing.Route {
+    /// Bends the wire's free stretches out of `obstacles`. Each stretch inside one goes around it on a single side (the
+    /// one nearer where it already runs, across its direction of travel), then the wire is smoothed, a few times over,
+    /// so it settles on a smooth path around rather than a jagged one.
+    // ponytail: wires × points × tables per redraw; spatial bucketing if schemas reach hundreds of tables.
+    mutating func avoid(_ obstacles: [CGRect]) {
+        // Sockets, their leads and zip-tie slots stay put; the rest may move.
+        let isFree = stiffness.map { $0 < Spring.tie }
+        let xs = points.map(\.x), ys = points.map(\.y)
+        let bounds = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+        let obstacles = obstacles.filter { $0.intersects(bounds) }
+        guard !obstacles.isEmpty else { return }
+
+        func pushOut() {
+            for rect in obstacles {
+                var index = 1
+                while index < points.count - 1 {
+                    guard isFree[index], rect.contains(points[index]) else { index += 1; continue }
+                    var end = index
+                    while end + 1 < points.count - 1, isFree[end + 1], rect.contains(points[end + 1]) { end += 1 }
+                    let run = index...end
+                    let travel = points[end + 1] - points[index - 1]
+                    let middle = run.map { points[$0] }.reduce(.zero, +) / CGFloat(run.count)
+                    for i in run {
+                        if abs(travel.x) >= abs(travel.y) {
+                            points[i].y = middle.y < rect.midY ? rect.minY : rect.maxY
+                        } else {
+                            points[i].x = middle.x < rect.midX ? rect.minX : rect.maxX
+                        }
+                    }
+                    index = end + 1
+                }
+            }
+        }
+
+        for _ in 0..<8 {
+            pushOut()
+            let before = points
+            for i in points.indices.dropFirst().dropLast() where isFree[i] {
+                points[i] = before[i] + ((before[i - 1] + before[i + 1]) / 2 - before[i]) * 0.5
+            }
+        }
+        pushOut()
     }
 }

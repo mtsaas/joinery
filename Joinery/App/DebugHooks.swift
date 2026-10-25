@@ -7,7 +7,7 @@ import SwiftUI
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
 ///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection),
-///   `type <text>` and `key tab|return|escape` (real key events), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
+///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>` (real key events), `selection`, `open-palette`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
 ///   `wait <seconds>`.
 @MainActor
 final class DebugHooks: NSObject, NSApplicationDelegate {
@@ -42,6 +42,10 @@ final class DebugHooks: NSObject, NSApplicationDelegate {
     static func script(_ document: Binding<Schema>, canvas: CanvasController) async {
         guard let script = ProcessInfo.processInfo.environment["JOINERY_SCRIPT"] else { return }
         try? await Task.sleep(for: .seconds(1))
+        // Menu shortcuts only reach the active app, and a launch from a shell starts in the background.
+        NSApp.activate()
+        NSApp.windows.first(where: \.isVisible)?.makeKeyAndOrderFront(nil)
+        try? await Task.sleep(for: .seconds(0.3))
         for step in script.split(separator: ";") {
             let words = step.split(separator: " ").map(String.init)
             let numbers = words.dropFirst().compactMap(Double.init).map { CGFloat($0) }
@@ -60,8 +64,22 @@ final class DebugHooks: NSObject, NSApplicationDelegate {
             case "type" where words.count > 1:
                 for character in step.drop(while: { $0 == " " }).dropFirst(5) { await press(String(character)) }
             case "key" where words.count == 2:
-                let codes: [String: (UInt16, String)] = ["tab": (48, "\t"), "return": (36, "\r"), "escape": (53, "\u{1b}")]
-                if let (code, characters) = codes[words[1]] { await press(characters, keyCode: code) }
+                // A named key, or ⌘ plus a letter as "cmd+k".
+                let codes: [String: (UInt16, String)] = ["tab": (48, "\t"), "return": (36, "\r"), "escape": (53, "\u{1b}"),
+                                                          "down": (125, "\u{F701}"), "up": (126, "\u{F700}")]
+                if let (code, characters) = codes[words[1]] {
+                    await press(characters, keyCode: code)
+                } else if words[1].hasPrefix("cmd+"), let letter = words[1].last {
+                    await press(String(letter), keyCode: ["k": 40, "a": 0][String(letter)] ?? 0, modifiers: .command)
+                }
+            case "open-palette":
+                canvas.togglePalette()
+            case "palette":
+                print("palette open:", canvas.showsPalette, "highlight:", canvas.paletteHighlight)
+            case "selection":
+                print("selected", canvas.selection.compactMap { item in
+                    if case .table(let id) = item { document.wrappedValue.table(id)?.name } else { nil }
+                })
             case "dump":
                 for table in document.wrappedValue.tables {
                     print(table.name, table.columns.map { "\($0.name):\($0.typeLabel)" }.joined(separator: " "))
@@ -90,10 +108,10 @@ final class DebugHooks: NSObject, NSApplicationDelegate {
 extension DebugHooks {
     /// Presses a key through the window like a keyboard would; text fields and key monitors see it as real.
     @MainActor
-    private static func press(_ characters: String, keyCode: UInt16 = 0) async {
+    private static func press(_ characters: String, keyCode: UInt16 = 0, modifiers: NSEvent.ModifierFlags = []) async {
         guard let window = NSApp.keyWindow ?? NSApp.windows.first(where: \.isVisible) else { return }
         for type in [NSEvent.EventType.keyDown, .keyUp] {
-            guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            guard let event = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: modifiers, timestamp: ProcessInfo.processInfo.systemUptime,
                                                windowNumber: window.windowNumber, context: nil, characters: characters,
                                                charactersIgnoringModifiers: characters, isARepeat: false, keyCode: keyCode) else { continue }
             NSApp.postEvent(event, atStart: false)
