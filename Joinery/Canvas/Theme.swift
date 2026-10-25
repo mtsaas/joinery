@@ -8,17 +8,18 @@ enum Theme {
     static let tie = Color(light: NSColor(white: 0.56, alpha: 1), dark: NSColor(white: 0.64, alpha: 1))
     static let tieHovered = Color(light: NSColor(white: 0.36, alpha: 1), dark: NSColor(white: 0.86, alpha: 1))
     static let stroke = Color.red
+    /// How much darker a header's edge is than the header.
+    static let headerEdgeDarkening = 0.07
     static let socket = Color(light: NSColor(white: 0, alpha: 0.28), dark: NSColor(white: 1, alpha: 0.3))
 }
 
 extension TableColor {
-    /// The header's background: a wash of the color.
-    var headerFill: Color { color.opacity(0.13) }
+    /// The header's background: the card with a wash of the color.
+    var headerFill: Color { Theme.card.mix(with: color, by: 0.13) }
 
-    /// The header's edge: a darker shade of its fill, in either appearance.
-    func headerBorder(in scheme: ColorScheme) -> Color {
-        scheme == .dark ? color.mix(with: .black, by: 0.78) : color.mix(with: .black, by: 0.15).opacity(0.5)
-    }
+    /// The header's edge: its fill, `Theme.headerEdgeDarkening` darker. Opaque, so the card's own edge doesn't show
+    /// through it.
+    var headerBorder: Color { headerFill.mix(with: .black, by: Theme.headerEdgeDarkening) }
 
     var color: Color {
         switch self {

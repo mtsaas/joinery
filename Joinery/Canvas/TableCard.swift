@@ -16,7 +16,6 @@ struct TableCard: View {
     let submit: (CanvasController.Field) -> Void
 
     @Environment(\.displayScale) private var displayScale
-    @Environment(\.colorScheme) private var colorScheme
 
     private var hairline: CGFloat { 1 / displayScale }
 
@@ -43,7 +42,7 @@ struct TableCard: View {
         .overlay(alignment: .top) {
             let width = max(Metrics.headerBorderWidth * zoom, hairline)
             HeaderEdge(cornerRadius: Metrics.cornerRadius * zoom, inset: width / 2)
-                .stroke(table.color.headerBorder(in: colorScheme), lineWidth: width)
+                .stroke(table.color.headerBorder, lineWidth: width)
                 .frame(height: Metrics.headerHeight * zoom)
         }
         .shadow(color: .black.opacity(0.07), radius: 1.5 * zoom, y: 0.5 * zoom)
