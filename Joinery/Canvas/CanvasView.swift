@@ -234,7 +234,7 @@ struct CanvasView: View {
                     let color = tieCrossings.contains(relationship.id) ? Color.primary : colors[relationship.id] ?? .gray
                     context.stroke(path, with: .color(Theme.canvas), style: StrokeStyle(lineWidth: Metrics.tieSpacing, lineCap: .round))
                     if selectedWires.contains(relationship.id) {
-                        context.stroke(path, with: .color(Color.accentColor.opacity(0.45)),
+                        context.stroke(path, with: .color(color.mix(with: .black, by: Theme.selectedWireDarkening)),
                                        style: StrokeStyle(lineWidth: Metrics.selectedWireWidth, lineCap: .round))
                     }
                     context.stroke(path, with: .color(color.opacity(isDimmed ? 0.28 : 1)),

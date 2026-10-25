@@ -8,6 +8,8 @@ enum Theme {
     static let tie = Color(light: NSColor(white: 0.56, alpha: 1), dark: NSColor(white: 0.64, alpha: 1))
     static let tieHovered = Color(light: NSColor(white: 0.36, alpha: 1), dark: NSColor(white: 0.86, alpha: 1))
     static let stroke = Color.red
+    /// How much darker a selected wire's outline is than the wire.
+    static let selectedWireDarkening = 0.2
     /// How much darker a header's edge is than the header.
     static let headerEdgeDarkening = 0.07
     static let socket = Color(light: NSColor(white: 0, alpha: 0.28), dark: NSColor(white: 1, alpha: 0.3))

@@ -28,8 +28,8 @@ enum Metrics {
     static let minimumTarget: CGFloat = 24
 
     static let wireWidth: CGFloat = 2.25
-    /// The glow around a selected wire.
-    static let selectedWireWidth: CGFloat = 7
+    /// The outline around a selected wire: a point and a half each side of it.
+    static let selectedWireWidth: CGFloat = wireWidth + 3
     /// Between neighboring wires in a zip tie. Each wire is drawn over a halo this wide, so a bundle reads as separate
     /// strands and crossings show which wire is on top.
     static let tieSpacing: CGFloat = 4
