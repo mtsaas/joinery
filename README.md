@@ -9,17 +9,19 @@ Requires macOS 26 and Xcode 26 or later. Open `Joinery.xcodeproj` and press ⌘R
 | Action | How |
 | --- | --- |
 | Command palette | ⌘K: every command, plus each table to jump to; arrows, Return, Escape |
+| Align / distribute | With tables selected, ⌘K then Align Left Edges, Align Centers, … Distribute Horizontally |
 | Add a table | **T**, the toolbar table button, or Insert ▸ Table (⌥⌘T); type its name straight away |
 | Edit cells | Double-click a cell, or press Return with a table selected |
 | Move between cells | Tab / Shift-Tab; Return goes name → type → new column; Tab past the last cell adds a column |
 | Set a type | Type it or its start: `int`, `ts`, `bool`, `jsonb`; end with `?` for nullable |
 | Primary key / delete column | ⇧⌘K / ⌘⌫ while editing, or double-click the key cell to toggle PK |
 | Finish editing | Escape (a first Escape closes the type suggestions) |
-| Add a foreign key | Drag from a column's socket onto another column (the referenced one) |
+| Add a foreign key | Drag from a socket onto another column; if one end is a primary key, it's the one referenced |
+| Add a column for a key | Drag from a socket onto a table's header: it gets a column named for yours (`users.id` gives `user_id`), of its type, referencing it |
 | Wires avoid tables | View ▸ Wires Avoid Tables, or from the palette: wires bend around tables in their way |
-| Reroute a wire | Click it to add a bend point there, or drag it to add one and move it; double-click a bend point to remove it |
+| Reroute a wire | Double-click it to add a bend point there, then drag the point; double-click a bend point to remove it |
 | Zip-tie wires | Option-drag a line across two or more wires, or turn on the Zip Tie tool and drag |
-| Select | Click; Shift-click to add; drag on empty canvas for a box; ⌘A for everything; Option-click a wire |
+| Select | Click tables, wires, ties; Shift-click to add; drag a box over tables and wires; ⌘A for everything |
 | Move | Drag anything selected to move the whole selection; arrow keys nudge (Shift for 10 points) |
 | Delete | Delete removes the selection; right-click tables, ties and bend points for more |
 | Pan / zoom | Scroll, or hold Space and drag / pinch, ⌘-scroll, ⌘+ ⌘- ⌘0, Zoom to Fit ⌘1 |

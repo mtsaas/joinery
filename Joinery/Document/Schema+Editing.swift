@@ -25,17 +25,104 @@ extension Schema {
         tables.map(Metrics.frame).reduce(nil) { $0?.union($1) ?? $1 }
     }
 
-    /// The column under `point`. Anywhere on a table counts, so a wire can be dropped on a row rather than its
-    /// socket; the header stands for the primary key.
-    func column(at point: CGPoint) -> Column.ID? {
+    /// Where a wire dragged out of a socket would land.
+    enum DropTarget: Hashable {
+        /// A row: connect to that column.
+        case column(Column.ID)
+        /// The table's header or empty space: give it a new column to connect.
+        case table(Table.ID)
+    }
+
+    func dropTarget(at point: CGPoint) -> DropTarget? {
         for table in tables.reversed() {
             let frame = Metrics.frame(of: table).insetBy(dx: -Metrics.socketHitRadius, dy: 0)
             guard frame.contains(point) else { continue }
             let row = Int(((point.y - frame.minY - Metrics.headerHeight) / Metrics.rowHeight).rounded(.down))
-            if table.columns.indices.contains(row) { return table.columns[row].id }
-            return (table.columns.first(where: \.isPrimaryKey) ?? table.columns.first)?.id
+            return point.y >= frame.minY + Metrics.headerHeight && table.columns.indices.contains(row)
+                ? .column(table.columns[row].id) : .table(table.id)
         }
         return nil
+    }
+
+    /// What to call a new column in `table` that references `column`: its name, but `<table>_id` for an `id` column
+    /// ("users.id" gives "user_id"), made unique in `table`.
+    func newColumnName(referencing column: Column.ID, in table: Table.ID) -> String? {
+        guard let (source, row) = columnLocations[column], let target = self.table(table) else { return nil }
+        let name = source.columns[row].name
+        let base = name.lowercased() == "id" ? Self.singular(source.name) + "_id" : name
+        var candidate = base, number = 2
+        while target.columns.contains(where: { $0.name == candidate }) {
+            candidate = "\(base)_\(number)"
+            number += 1
+        }
+        return candidate
+    }
+
+    /// A table name made singular, by the common English endings: categories → category, addresses → address.
+    static func singular(_ name: String) -> String {
+        for (plural, single) in [("ies", "y"), ("sses", "ss"), ("ches", "ch"), ("shes", "sh"), ("xes", "x"), ("uses", "us")]
+        where name.hasSuffix(plural) {
+            return name.dropLast(plural.count) + single
+        }
+        return name.hasSuffix("s") && !name.hasSuffix("ss") ? String(name.dropLast()) : name
+    }
+
+    /// Connects a wire dragged from `column` and dropped on `target`.
+    ///
+    /// On a column, whichever end alone is a primary key is the one referenced, so it doesn't matter which way the
+    /// wire was dragged; otherwise the dragged column is the foreign key. On a table, a new column is added there,
+    /// named for `column` and of its type, referencing it.
+    @discardableResult
+    mutating func connect(dragging column: Column.ID, onto target: DropTarget) -> Relationship.ID? {
+        switch target {
+        case .column(let other):
+            let locations = columnLocations
+            guard let dragged = locations[column], let dropped = locations[other] else { return nil }
+            let draggedIsKey = dragged.table.columns[dragged.row].isPrimaryKey
+            let droppedIsKey = dropped.table.columns[dropped.row].isPrimaryKey
+            return draggedIsKey && !droppedIsKey ? connect(other, to: column) : connect(column, to: other)
+        case .table(let id):
+            guard let name = newColumnName(referencing: column, in: id), let (source, row) = columnLocations[column],
+                  let index = tables.firstIndex(where: { $0.id == id }) else { return nil }
+            let new = Column(name: name, type: source.columns[row].type)
+            tables[index].columns.append(new)
+            return connect(new.id, to: column)
+        }
+    }
+
+    enum Alignment { case left, center, right, top, middle, bottom }
+
+    /// Lines tables up along an edge or center of the box around them all.
+    mutating func align(_ ids: Set<Table.ID>, _ alignment: Alignment) {
+        let indices = tables.indices.filter { ids.contains(tables[$0].id) }
+        guard let bounds = indices.map({ Metrics.frame(of: tables[$0]) }).reduce(nil, { $0?.union($1) ?? $1 }) else { return }
+        for index in indices {
+            let size = Metrics.size(of: tables[index])
+            switch alignment {
+            case .left: tables[index].position.x = bounds.minX
+            case .center: tables[index].position.x = bounds.midX - size.width / 2
+            case .right: tables[index].position.x = bounds.maxX - size.width
+            case .top: tables[index].position.y = bounds.minY
+            case .middle: tables[index].position.y = bounds.midY - size.height / 2
+            case .bottom: tables[index].position.y = bounds.maxY - size.height
+            }
+        }
+    }
+
+    /// Spaces tables evenly between the outermost two, which stay put.
+    mutating func distribute(_ ids: Set<Table.ID>, horizontally: Bool) {
+        let indices = tables.indices.filter { ids.contains(tables[$0].id) }
+            .sorted { horizontally ? tables[$0].position.x < tables[$1].position.x : tables[$0].position.y < tables[$1].position.y }
+        guard indices.count > 2 else { return }
+        let lengths = indices.map { horizontally ? Metrics.size(of: tables[$0]).width : Metrics.size(of: tables[$0]).height }
+        let starts = indices.map { horizontally ? tables[$0].position.x : tables[$0].position.y }
+        let start = starts[0], end = starts[starts.count - 1] + lengths[lengths.count - 1]
+        let gap = (end - start - lengths.reduce(0, +)) / CGFloat(indices.count - 1)
+        var cursor = start
+        for (index, length) in zip(indices, lengths) {
+            if horizontally { tables[index].position.x = cursor } else { tables[index].position.y = cursor }
+            cursor += length + gap
+        }
     }
 
     @discardableResult

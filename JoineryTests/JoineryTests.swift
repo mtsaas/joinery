@@ -169,6 +169,52 @@ struct JoineryTests {
         #expect(tables > rename)
     }
 
+    @Test func droppingOnATableAddsAColumnForTheForeignKey() throws {
+        var schema = storefront()
+        let users = schema.tables[0], orders = schema.tables[1]
+        let connected = schema.connect(dragging: users.columns[0].id, onto: .table(orders.id))
+        let id = try #require(connected)
+
+        let added = try #require(schema.table(orders.id)?.columns.last)
+        #expect(added.name == "user_id_2", "orders already has a user_id")
+        #expect(added.type == .uuid)
+        let relationship = try #require(schema.relationships.first { $0.id == id })
+        #expect(relationship.from == added.id)
+        #expect(relationship.to == users.columns[0].id)
+    }
+
+    @Test func aForeignKeyPointsAtThePrimaryKeyWhicheverWayItsDragged() throws {
+        var schema = storefront()
+        schema.relationships = []
+        let usersID = schema.tables[0].columns[0].id, userID = schema.tables[1].columns[1].id
+        let connected = schema.connect(dragging: usersID, onto: .column(userID))
+        let id = try #require(connected)
+        let relationship = try #require(schema.relationships.first { $0.id == id })
+        #expect(relationship.from == userID)
+        #expect(relationship.to == usersID)
+    }
+
+    @Test(arguments: [("users", "user"), ("categories", "category"), ("addresses", "address"), ("statuses", "status"),
+                      ("boxes", "box"), ("batches", "batch"), ("order_items", "order_item"), ("access", "access")])
+    func tableNamesMadeSingular(plural: String, singular: String) {
+        #expect(Schema.singular(plural) == singular)
+    }
+
+    @Test func aligningAndDistributingTables() throws {
+        var schema = Schema()
+        let ids = [CGPoint(x: 0, y: 10), CGPoint(x: 400, y: 90), CGPoint(x: 1000, y: 40)].map { schema.addTable(at: $0) }
+        schema.align(Set(ids), .top)
+        #expect(schema.tables.allSatisfy { $0.position.y == 10 })
+
+        schema.distribute(Set(ids), horizontally: true)
+        let xs = schema.tables.map(\.position.x)
+        #expect(xs[0] == 0 && xs[2] == 1000, "the outermost stay put")
+        #expect(abs((xs[1] - xs[0]) - (xs[2] - xs[1])) < 0.001)
+
+        schema.align(Set(ids), .right)
+        #expect(schema.tables.allSatisfy { $0.position.x == 1000 })
+    }
+
     @Test func typingNonsenseKeepsNothing() {
         #expect(DataType.parse("zzz") == nil)
         #expect(DataType.parse("?") == nil)

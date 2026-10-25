@@ -24,7 +24,7 @@ final class CanvasController {
         var from: Column.ID
         var start: CGPoint
         var end: CGPoint
-        var target: Column.ID?
+        var target: Schema.DropTarget?
     }
 
     /// A line being drawn across wires to tie them, in canvas points.
@@ -71,8 +71,6 @@ final class CanvasController {
         case stroke
         /// Dragging out a selection rectangle, adding to `base` if Shift was held.
         case marquee(base: Set<Item>)
-        /// Moving the selection: a bend point just made on the wire under the pointer.
-        case move
     }
     var panOrigin: CGPoint?
 

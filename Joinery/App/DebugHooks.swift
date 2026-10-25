@@ -7,7 +7,7 @@ import SwiftUI
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
 ///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection),
-///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>` (real key events), `selection`, `open-palette`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
+///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>` (real key events), `selection`, `counts`, `drop-preview <table.column> <x> <y>`, `open-palette`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
 ///   `wait <seconds>`.
 @MainActor
 final class DebugHooks: NSObject, NSApplicationDelegate {
@@ -66,6 +66,7 @@ final class DebugHooks: NSObject, NSApplicationDelegate {
             case "key" where words.count == 2:
                 // A named key, or ⌘ plus a letter as "cmd+k".
                 let codes: [String: (UInt16, String)] = ["tab": (48, "\t"), "return": (36, "\r"), "escape": (53, "\u{1b}"),
+                                                          "delete": (51, "\u{7f}"),
                                                           "down": (125, "\u{F701}"), "up": (126, "\u{F700}")]
                 if let (code, characters) = codes[words[1]] {
                     await press(characters, keyCode: code)
@@ -74,6 +75,21 @@ final class DebugHooks: NSObject, NSApplicationDelegate {
                 }
             case "open-palette":
                 canvas.togglePalette()
+            case "counts":
+                let schema = document.wrappedValue
+                print("tables \(schema.tables.count), foreign keys \(schema.relationships.count), ties \(schema.zipTies.count),",
+                      "selected wires \(canvas.selection.filter { if case .relationship = $0 { true } else { false } }.count)")
+            case "drop-preview" where words.count == 4 && numbers.count == 2:
+                // Shows a wire dragged from table.column to a point, as if mid-drag.
+                let parts = words[1].split(separator: ".").map(String.init)
+                let schema = document.wrappedValue
+                if let table = schema.tables.first(where: { $0.name == parts.first }),
+                   let row = table.columns.firstIndex(where: { $0.name == parts.last }) {
+                    let end = CGPoint(x: numbers[0], y: numbers[1])
+                    canvas.connection = .init(from: table.columns[row].id,
+                                              start: Metrics.socket(row: row, side: .trailing, in: Metrics.frame(of: table)),
+                                              end: end, target: schema.dropTarget(at: end))
+                }
             case "palette":
                 print("palette open:", canvas.showsPalette, "highlight:", canvas.paletteHighlight)
             case "selection":
