@@ -122,6 +122,15 @@ enum ModelTools {
             "inputSchema": ["type": "object", "properties": ["schema": ["type": "string"]], "required": ["schema"]],
         ],
         [
+            "name": "arrange",
+            "description": "Lays every table out afresh: orthogonal_groups packs each schema (and each set of joined tables) as a compact block, as DataGrip does; hierarchical puts referenced tables left of those referencing them. Good after making many tables.",
+            "inputSchema": [
+                "type": "object",
+                "properties": ["layout": ["type": "string", "enum": ["orthogonal_groups", "hierarchical"]]],
+                "required": ["layout"],
+            ],
+        ],
+        [
             "name": "add_foreign_key",
             "description": "Makes a column a foreign key to another: from \"orders.user_id\" to \"users.id\", or to \"users\" for its primary key.",
             "inputSchema": [
@@ -156,6 +165,12 @@ enum ModelTools {
         case "alter_table": result = try alterTable(arguments, in: &draft)
         case "drop_tables": result = try dropTables(arguments, in: &draft)
         case "set_schema": result = try setSchema(arguments, in: &draft)
+        case "arrange":
+            let name = try string("layout", in: arguments)
+            guard let layout = DataModel.Layout.allCases.first(where: { $0.rawValue == name.replacingOccurrences(of: "_g", with: "G") })
+            else { throw Failure("Unknown layout “\(name)”: use orthogonal_groups or hierarchical.") }
+            draft.arrange(layout)
+            result = "Laid out \(draft.tables.count) tables, \(layout.title.lowercased())."
         case "drop_schema":
             let name = try string("schema", in: arguments)
             draft.ungroup(try group(named: name, in: draft).id)

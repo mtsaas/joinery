@@ -74,6 +74,15 @@ struct ModelEditor: View {
                 ToolbarItemGroup(placement: .principal) {
                     Button("Table", systemImage: "tablecells") { canvas.addTable(to: &model.wrappedValue) }
                         .help("Add a table (T)")
+                    Menu("Layout", systemImage: "rectangle.3.group") {
+                        ForEach(DataModel.Layout.allCases) { layout in
+                            Button(layout.title, systemImage: layout.symbol) {
+                                model.wrappedValue.arrange(layout)
+                                canvas.zoomToFit(model.wrappedValue.bounds)
+                            }
+                        }
+                    }
+                    .help("Lay every table out afresh; ⌘Z puts them back")
                     Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)
                         .help("Zip-tie tool: drag across wires to tie them (Z)")
                     Toggle("Focus", systemImage: "scope", isOn: Bindable(canvas).isFocusing)

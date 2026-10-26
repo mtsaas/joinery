@@ -526,4 +526,24 @@ struct JoineryTests {
         #expect(model.groups.map(\.name) == ["commerce"])
         #expect(model.tables.first { $0.name == "users" }?.group == nil)
     }
+
+    @Test func layoutsLeaveNoTablesOverlappingAndKeepGroupsTogether() {
+        var model = DataModel.synthetic(tables: 60, foreignKeys: 90, groups: 4)
+        // Everything piled up, as an import might leave it.
+        for index in model.tables.indices { model.tables[index].position = CGPoint(x: CGFloat(index), y: 0) }
+        for layout in DataModel.Layout.allCases {
+            var arranged = model
+            arranged.arrange(layout)
+            let frames = arranged.tables.map(Metrics.frame)
+            for (i, a) in frames.enumerated() {
+                for b in frames[(i + 1)...] { #expect(!a.intersects(b), "\(layout.title)") }
+            }
+            guard layout == .orthogonalGroups else { continue }
+            // Groups' boundaries don't overlap either.
+            let boundaries = arranged.groups.compactMap { arranged.frame(of: $0.id) }
+            for (i, a) in boundaries.enumerated() {
+                for b in boundaries[(i + 1)...] { #expect(!a.intersects(b)) }
+            }
+        }
+    }
 }

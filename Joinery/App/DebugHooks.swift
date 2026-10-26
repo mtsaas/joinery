@@ -199,6 +199,11 @@ enum DebugHooks {
                 for group in model.groups {
                     print("group \(group.name): \(model.members(of: group.id).map(\.name).sorted().joined(separator: ", "))")
                 }
+            case "arrange" where words.count == 2:
+                if let layout = DataModel.Layout(rawValue: words[1]) {
+                    document.wrappedValue.arrange(layout)
+                    canvas.zoomToFit(document.wrappedValue.bounds)
+                }
             case "routings":
                 print("routings built: \(Routing.built)")
             case "clock":
