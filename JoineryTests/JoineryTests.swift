@@ -450,4 +450,10 @@ struct JoineryTests {
         // Apart, one layer; on top of another, the next one up.
         #expect(TableLayer.layered(tables).map { $0.map(\.frame) } == [[frames[0], frames[1]], [frames[2]], [frames[3]]])
     }
+
+    @Test func shiftHoldsAMoveToOneAxis() {
+        #expect(CanvasController.moveOffset(CGPoint(x: 40, y: -12), isAxisLocked: true) == CGPoint(x: 40, y: 0))
+        #expect(CanvasController.moveOffset(CGPoint(x: -5, y: 30), isAxisLocked: true) == CGPoint(x: 0, y: 30))
+        #expect(CanvasController.moveOffset(CGPoint(x: 7, y: 9), isAxisLocked: false) == CGPoint(x: 7, y: 9))
+    }
 }

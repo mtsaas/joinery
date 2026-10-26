@@ -105,6 +105,13 @@ final class CanvasController {
 
     /// How far the selected tables and ties have been dragged, not yet saved to the document.
     var dragOffset: CGPoint?
+
+    /// How far a drag moves things: as far as the pointer, or with the axis locked (Shift), only along whichever of
+    /// horizontal and vertical it's gone further.
+    static func moveOffset(_ translation: CGPoint, isAxisLocked: Bool) -> CGPoint {
+        guard isAxisLocked else { return translation }
+        return abs(translation.x) >= abs(translation.y) ? CGPoint(x: translation.x, y: 0) : CGPoint(x: 0, y: translation.y)
+    }
     var hoveredTie: ZipTie.ID?
     var connection: Connection?
     var stroke: Stroke?

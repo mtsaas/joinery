@@ -17,6 +17,8 @@ struct CanvasView: View {
     @State private var isAnimating = false
     /// The last click, to tell a double-click from two clicks.
     @State private var lastClick: (item: CanvasController.Item, time: TimeInterval)?
+    /// A selected item Shift-pressed: taken out of the selection if the press turns out to be a click, not a drag.
+    @State private var deselectOnClick: CanvasController.Item?
     @FocusState private var isCanvasFocused: Bool
     @State private var routingCache = RoutingCache()
     @State private var textLayouts = TextLayouts()
@@ -637,23 +639,31 @@ struct CanvasView: View {
             .onEnded { dropItem(item, at: $0.location, translation: $0.translation, click: nil, doubleClick: doubleClick) }
     }
 
-    /// Pressing selects the item (Shift adds it); dragging moves the selection.
+    /// Pressing selects the item; dragging moves the selection, held to one axis while Shift is down. Shift-pressing
+    /// adds an item to the selection at once, but takes a selected one out only on a click (see `dropItem`), so a
+    /// Shift-drag doesn't drop what it's moving.
     private func dragItem(_ item: CanvasController.Item, by translation: CGSize) {
+        let isShifted = NSEvent.modifierFlags.contains(.shift)
         if canvas.dragOffset == nil {
             isCanvasFocused = true
-            canvas.click(item, extending: NSEvent.modifierFlags.contains(.shift))
+            if isShifted && canvas.selection.contains(item) { deselectOnClick = item } else { canvas.click(item, extending: isShifted) }
         }
-        canvas.dragOffset = CGPoint(translation) / canvas.zoom
+        canvas.dragOffset = CanvasController.moveOffset(CGPoint(translation) / canvas.zoom, isAxisLocked: isShifted)
     }
 
     /// Ends a move, or if it hardly moved, a click (or double-click) at `location`, in view points.
     private func dropItem(_ item: CanvasController.Item, at location: CGPoint, translation: CGSize,
                           click: ((CGPoint) -> Void)?, doubleClick: (CGPoint) -> Void) {
         canvas.dragOffset = nil
-        let delta = CGPoint(translation) / canvas.zoom
-        if delta.length * canvas.zoom > 2 {
+        defer { deselectOnClick = nil }
+        let delta = CanvasController.moveOffset(CGPoint(translation) / canvas.zoom, isAxisLocked: NSEvent.modifierFlags.contains(.shift))
+        if CGPoint(translation).length > 2 {
             schema.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
             lastClick = nil
+            return
+        }
+        if deselectOnClick == item {
+            canvas.selection.remove(item)
             return
         }
         click?(canvas.canvasPoint(location))
