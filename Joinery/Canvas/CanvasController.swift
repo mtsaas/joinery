@@ -106,6 +106,65 @@ final class CanvasController {
     /// How far the selected tables and ties have been dragged, not yet saved to the document.
     var dragOffset: CGPoint?
 
+    /// A line showing that a dragged table lines up with another: vertical at `position` x, or horizontal at y, from
+    /// `start` to `end` along it, in canvas points.
+    struct Guide: Equatable {
+        var isVertical: Bool
+        var position: CGFloat
+        var start: CGFloat
+        var end: CGFloat
+    }
+
+    /// Shown while dragging tables, for every edge or center that lines up with another table's.
+    var guides: [Guide] = []
+
+    /// Snaps a drag of the `moving` frames by `offset`, so that if an edge or center of one comes within `tolerance` of
+    /// another table's (`others`), across or down, it lines up exactly, as Keynote's guides do. Only along the axes
+    /// allowed: with Shift holding a move to one, the other stays put.
+    /// - Returns: The snapped offset, and a guide for every line-up it leaves.
+    static func snap(_ moving: [CGRect], by offset: CGPoint, to others: [CGRect], tolerance: CGFloat,
+                     across: Bool = true, down: Bool = true) -> (offset: CGPoint, guides: [Guide]) {
+        func lines(_ rect: CGRect, vertical: Bool) -> [CGFloat] {
+            vertical ? [rect.minX, rect.midX, rect.maxX] : [rect.minY, rect.midY, rect.maxY]
+        }
+        var offset = offset
+        for vertical in [true, false] where vertical ? across : down {
+            var nearest: CGFloat?
+            for frame in moving {
+                for line in lines(frame.offsetBy(dx: offset.x, dy: offset.y), vertical: vertical) {
+                    for other in others {
+                        for target in lines(other, vertical: vertical) where abs(target - line) <= min(tolerance, abs(nearest ?? .infinity)) {
+                            nearest = target - line
+                        }
+                    }
+                }
+            }
+            if let nearest { if vertical { offset.x += nearest } else { offset.y += nearest } }
+        }
+
+        // Every line-up there now is, snapped to or not, spanning the tables on it.
+        var guides: [Guide] = []
+        for vertical in [true, false] {
+            var spans: [(position: CGFloat, start: CGFloat, end: CGFloat)] = []
+            for frame in moving.map({ $0.offsetBy(dx: offset.x, dy: offset.y) }) {
+                for line in lines(frame, vertical: vertical) {
+                    for other in others where lines(other, vertical: vertical).contains(where: { abs($0 - line) < 0.5 }) {
+                        let start = vertical ? min(frame.minY, other.minY) : min(frame.minX, other.minX)
+                        let end = vertical ? max(frame.maxY, other.maxY) : max(frame.maxX, other.maxX)
+                        if let index = spans.firstIndex(where: { abs($0.position - line) < 0.5 }) {
+                            spans[index].start = min(spans[index].start, start)
+                            spans[index].end = max(spans[index].end, end)
+                        } else {
+                            spans.append((line, start, end))
+                        }
+                    }
+                }
+            }
+            guides += spans.map { Guide(isVertical: vertical, position: $0.position, start: $0.start, end: $0.end) }
+        }
+        return (offset, guides)
+    }
+
     /// How far a drag moves things: as far as the pointer, or with the axis locked (Shift), only along whichever of
     /// horizontal and vertical it's gone further.
     static func moveOffset(_ translation: CGPoint, isAxisLocked: Bool) -> CGPoint {

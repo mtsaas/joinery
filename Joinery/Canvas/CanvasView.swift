@@ -173,6 +173,11 @@ struct CanvasView: View {
         .onReceive(NotificationCenter.default.publisher(for: .saveFeedback)) { note in
             if note.object as AnyObject? === canvas { saveFeedback() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .holdDrag)) { note in
+            guard note.object as AnyObject? === canvas, let id = note.userInfo?["table"] as? Table.ID,
+                  let translation = note.userInfo?["translation"] as? CGSize else { return }
+            dragItem(.table(id), by: translation)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { note in
             if note.object as AnyObject? === canvas { openSettings() }
         }
@@ -660,15 +665,31 @@ struct CanvasView: View {
             isCanvasFocused = true
             if isShifted && canvas.selection.contains(item) { deselectOnClick = item } else { canvas.click(item, extending: isShifted) }
         }
-        canvas.dragOffset = CanvasController.moveOffset(CGPoint(translation) / canvas.zoom, isAxisLocked: isShifted)
+        (canvas.dragOffset, canvas.guides) = move(by: translation)
+    }
+
+    /// How far a drag of `translation` (view points) moves the selection: held to one axis with Shift, and snapped into
+    /// line with other tables unless ⌘ is down; with the guides that show the line-ups.
+    private func move(by translation: CGSize) -> (offset: CGPoint, guides: [CanvasController.Guide]) {
+        let flags = NSEvent.modifierFlags
+        let offset = CanvasController.moveOffset(CGPoint(translation) / canvas.zoom, isAxisLocked: flags.contains(.shift))
+        let selected = canvas.selectedTables
+        guard !selected.isEmpty, !flags.contains(.command) else { return (offset, []) }
+        let moving = schema.tables.filter { selected.contains($0.id) }.map(Metrics.frame)
+        let others = schema.tables.filter { !selected.contains($0.id) }.map(Metrics.frame)
+        // With Shift, only along the way it's moving.
+        let isLocked = flags.contains(.shift)
+        return CanvasController.snap(moving, by: offset, to: others, tolerance: 6 / canvas.zoom,
+                                     across: !isLocked || offset.x != 0, down: !isLocked || offset.y != 0)
     }
 
     /// Ends a move, or if it hardly moved, a click (or double-click) at `location`, in view points.
     private func dropItem(_ item: CanvasController.Item, at location: CGPoint, translation: CGSize,
                           click: ((CGPoint) -> Void)?, doubleClick: (CGPoint) -> Void) {
         canvas.dragOffset = nil
+        canvas.guides = []
         defer { deselectOnClick = nil }
-        let delta = CanvasController.moveOffset(CGPoint(translation) / canvas.zoom, isAxisLocked: NSEvent.modifierFlags.contains(.shift))
+        let delta = move(by: translation).offset
         if CGPoint(translation).length > 2 {
             schema.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
             lastClick = nil
@@ -986,7 +1007,7 @@ struct CanvasView: View {
     /// The wire being dragged out, the tie line and the selection rectangle, above the tables.
     private func gestureOverlay(_ routing: Routing) -> some View {
         let zoom = canvas.zoom, offset = canvas.offset, connection = canvas.connection, stroke = canvas.stroke
-        let marquee = canvas.marquee
+        let marquee = canvas.marquee, guides = canvas.guides
         #if DEBUG
         let feedback = canvas.feedback.map { (routed: routing.routes[$0.relationship]?.points ?? [], expected: $0.expected) }
         #endif
@@ -1005,6 +1026,19 @@ struct CanvasView: View {
             var context = screen
             context.translateBy(x: offset.x, y: offset.y)
             context.scaleBy(x: zoom, y: zoom)
+            // Muted, a point wide on screen, a little past the tables they join.
+            for guide in guides {
+                var line = Path()
+                let overhang = 12 / zoom
+                if guide.isVertical {
+                    line.move(to: CGPoint(x: guide.position, y: guide.start - overhang))
+                    line.addLine(to: CGPoint(x: guide.position, y: guide.end + overhang))
+                } else {
+                    line.move(to: CGPoint(x: guide.start - overhang, y: guide.position))
+                    line.addLine(to: CGPoint(x: guide.end + overhang, y: guide.position))
+                }
+                context.stroke(line, with: .color(Theme.guide), lineWidth: 1 / zoom)
+            }
             if let connection, let newColumn {
                 // A tag by the pointer, at screen size whatever the zoom.
                 let label = screen.resolve(Text("+ \(newColumn)").font(.callout.weight(.medium)).foregroundStyle(.white))

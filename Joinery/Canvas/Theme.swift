@@ -13,6 +13,8 @@ enum Theme {
     /// How much darker a header's edge is than the header.
     static let headerEdgeDarkening = 0.07
     static let socket = Color(light: NSColor(white: 0, alpha: 0.28), dark: NSColor(white: 1, alpha: 0.3))
+    /// Lines showing a dragged table lining up with another: there, but quiet.
+    static let guide = Color.accentColor.opacity(0.45)
 }
 
 extension TableColor {

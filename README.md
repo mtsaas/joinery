@@ -35,7 +35,7 @@ Schemas live in a library you browse as in Freeform. The sidebar has All Schemas
 | Reroute a wire | Double-click it to add a bend point there, then drag the point; double-click a bend point to remove it |
 | Zip-tie wires | Turn on the zip-tie tool (Z, or the toolbar's tie button), then drag a line across two or more wires; it stays on until you press Z or Escape. Option-drag ties without it |
 | Select | Click tables, wires, ties; Shift-click to add; drag a box around tables, ties and wires to select those wholly inside it; ⌘A for everything |
-| Move | Drag anything selected to move the whole selection; hold Shift to keep it horizontal or vertical. Arrow keys nudge (Shift for 10 points) |
+| Move | Drag anything selected to move the whole selection. Tables snap into line with others, edges or centers, and guides show where they line up; hold ⌘ to move freely. Hold Shift to keep a move horizontal or vertical. Arrow keys nudge (Shift for 10 points) |
 | Delete | Delete removes the selection, or from the wheel |
 | Pan / zoom | Scroll, right-drag, or hold Space and drag / pinch, ⌘-scroll, ⌘+ ⌘- ⌘0, Zoom to Fit ⌘1 |
 

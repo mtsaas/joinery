@@ -456,4 +456,20 @@ struct JoineryTests {
         #expect(CanvasController.moveOffset(CGPoint(x: -5, y: 30), isAxisLocked: true) == CGPoint(x: 0, y: 30))
         #expect(CanvasController.moveOffset(CGPoint(x: 7, y: 9), isAxisLocked: false) == CGPoint(x: 7, y: 9))
     }
+
+    @Test func draggedTablesSnapIntoLineAndShowGuides() {
+        let other = CGRect(x: 100, y: 300, width: 236, height: 120)
+        let moving = CGRect(x: 0, y: 0, width: 236, height: 80)
+        // Left edges 4 apart: snaps across, and shows the line from one table to the other.
+        let near = CanvasController.snap([moving], by: CGPoint(x: 96, y: 40), to: [other], tolerance: 6)
+        #expect(near.offset == CGPoint(x: 100, y: 40))
+        #expect(near.guides.contains(CanvasController.Guide(isVertical: true, position: 100, start: 40, end: 420)))
+        // Too far to snap: left alone, no guides.
+        let far = CanvasController.snap([moving], by: CGPoint(x: 80, y: 40), to: [other], tolerance: 6)
+        #expect(far.offset == CGPoint(x: 80, y: 40) && far.guides.isEmpty)
+        // Held to moving down, it doesn't snap across.
+        let locked = CanvasController.snap([moving], by: CGPoint(x: 0, y: 297), to: [CGRect(x: 3, y: 0, width: 50, height: 300)],
+                                           tolerance: 6, across: false)
+        #expect(locked.offset.x == 0 && locked.offset.y == 300, "its top meets the other's bottom")
+    }
 }
