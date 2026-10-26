@@ -84,6 +84,20 @@ struct CanvasView: View {
                 .padding(16)
             }
         }
+        .overlay(alignment: .top) {
+            if let untangling = canvas.untangling {
+                HStack(spacing: 10) {
+                    ProgressView(value: untangling.progress).progressViewStyle(.circular).controlSize(.small)
+                    Text("Untangling: \(untangling.from) crossings → \(untangling.best)").monospacedDigit()
+                    Text("⎋ Stop").foregroundStyle(.secondary)
+                }
+                .font(.callout)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .glassEffect()
+                .padding(.top, 64)
+            }
+        }
         .overlay(alignment: .bottom) {
             if canvas.cell != nil {
                 GridHints { canvas.cellCommand = $0 }
@@ -163,6 +177,7 @@ struct CanvasView: View {
             #if DEBUG
             if canvas.feedback != nil { return canvas.feedback = nil }
             #endif
+            if canvas.isUntangling { return canvas.stopUntangling() }
             if canvas.isTying { return canvas.isTying = false }
             canvas.selection = []
         }
@@ -250,6 +265,10 @@ struct CanvasView: View {
                     model.align(aligned, ties: ties, alignment)
                 }
             }
+        }
+        if !tables.isEmpty || !canvas.selectedGroups.isEmpty {
+            commands.append(PaletteCommand(id: "untangle", title: "Untangle Selection", subtitle: "fewer crossing wires",
+                                           symbol: "point.3.filled.connected.trianglepath.dotted") { canvas.untangleSelection(of: $model) })
         }
         if !tables.isEmpty {
             commands.append(PaletteCommand(id: "group", title: "Group Tables", subtitle: tables.count == 1 ? "1 table" : "\(tables.count) tables",
@@ -379,6 +398,9 @@ struct CanvasView: View {
         let groupSelection = PaletteCommand(id: "group", title: "Group", symbol: "rectangle.dashed", shortcut: "⌘G") {
             canvas.groupSelection(in: &model)
         }
+        let untangle = PaletteCommand(id: "untangle", title: "Untangle", symbol: "point.3.filled.connected.trianglepath.dotted") {
+            canvas.untangleSelection(of: $model)
+        }
         if let (aligned, ties) = canvas.alignable {
             let directions: [DataModel.Alignment: CommandWheel.Direction] = [.left: .west, .right: .east, .top: .north,
                                                                            .bottom: .south, .center: .northWest, .middle: .southWest]
@@ -393,7 +415,7 @@ struct CanvasView: View {
                 slots[.southEast] = PaletteCommand(id: "distribute-v", title: "Distribute Vertically",
                                                    symbol: "distribute.vertical.center") { model.distribute(tables, horizontally: false) }
             }
-            extras = [groupSelection, deleteSelection]
+            extras = [groupSelection, untangle, deleteSelection]
             return (slots, extras, nil)
         }
         switch wheel.target {
@@ -420,7 +442,7 @@ struct CanvasView: View {
             slots[.south] = PaletteCommand(id: "ungroup", title: "Ungroup", symbol: "rectangle.dashed", shortcut: "⇧⌘G") {
                 canvas.ungroupSelection(in: &model)
             }
-            extras = [deleteSelection]
+            extras = [untangle, deleteSelection]
             color = (group.color, { color in
                 if let index = model.groups.firstIndex(where: { $0.id == id }) { model.groups[index].color = color }
             })

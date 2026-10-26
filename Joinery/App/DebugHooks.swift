@@ -238,6 +238,21 @@ enum DebugHooks {
                 }
                 print("menu \(title): active \(NSApp.isActive), key window \(NSApp.keyWindow != nil), responder \(NSApp.keyWindow?.firstResponder.map { "\(type(of: $0))" } ?? "none")")
                 if let menu = NSApp.mainMenu, !choose(in: menu) { print("menu: no item called \(title)") }
+            case "scramble":
+                // Each table swapped with one across the grid, so wires criss-cross.
+                let positions = document.wrappedValue.tables.map(\.position)
+                for index in document.wrappedValue.tables.indices {
+                    document.wrappedValue.tables[index].position = positions[(index * 7) % positions.count]
+                }
+            case "untangle":
+                canvas.selectAll(in: document.wrappedValue)
+                canvas.untangleSelection(of: document)
+                let started = ProcessInfo.processInfo.systemUptime
+                while canvas.isUntangling {
+                    if let state = canvas.untangling { print(String(format: "untangling %.0f%%: %d → %d", state.progress * 100, state.from, state.best)) }
+                    try? await Task.sleep(for: .seconds(0.5))
+                }
+                print(String(format: "untangled in %.1f s", ProcessInfo.processInfo.systemUptime - started))
             case "routings":
                 print("routings built: \(Routing.built)")
             case "clock":

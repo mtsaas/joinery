@@ -81,6 +81,11 @@ struct ModelEditor: View {
                                 canvas.zoomToFit(model.wrappedValue.bounds)
                             }
                         }
+                        Divider()
+                        Button("Untangle Selection", systemImage: "point.3.filled.connected.trianglepath.dotted") {
+                            canvas.untangleSelection(of: model)
+                        }
+                        .disabled(canvas.selectedTablesAndMembers(in: model.wrappedValue).isEmpty)
                     }
                     .help("Lay every table out afresh; ⌘Z puts them back")
                     Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)

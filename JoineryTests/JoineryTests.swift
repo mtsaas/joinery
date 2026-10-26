@@ -575,4 +575,24 @@ struct JoineryTests {
         #expect(other.relationships.isEmpty && other.zipTies.isEmpty)
         #expect(other.groups.map(\.name) == ["sales"])
     }
+
+    @Test func untanglingCrossesFewerWiresTheSameWayEveryTime() {
+        var model = DataModel.synthetic(tables: 24, foreignKeys: 36)
+        // Scrambled: each table swapped with one across the grid, so wires criss-cross.
+        let positions = model.tables.map(\.position)
+        for index in model.tables.indices { model.tables[index].position = positions[(index * 7) % positions.count] }
+        let moving = Set(model.tables.map(\.id))
+        func run() -> Untangler {
+            var untangler = Untangler(model: model, moving: moving)
+            while !untangler.isDone { untangler.step() }
+            return untangler
+        }
+        let first = run(), second = run()
+        #expect(first.best.crossings < first.startingCrossings, "from \(first.startingCrossings) to \(first.best.crossings)")
+        #expect(first.bestOffsets == second.bestOffsets, "nothing random")
+        var untangled = model
+        for index in untangled.tables.indices { untangled.tables[index].position += first.bestOffsets[untangled.tables[index].id] ?? .zero }
+        let frames = untangled.tables.map(Metrics.frame)
+        for (i, a) in frames.enumerated() { for b in frames[(i + 1)...] { #expect(!a.intersects(b)) } }
+    }
 }

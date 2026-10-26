@@ -304,7 +304,62 @@ final class CanvasController {
     var selectedTies: Set<ZipTie.ID> { Set(selection.compactMap { if case .zipTie(let id) = $0 { id } else { nil } }) }
 
     /// Where dragged items are drawn until the drag ends.
-    var tableOffsets: [Table.ID: CGPoint] { dragOffset.map { offset in Dictionary(uniqueKeysWithValues: selectedTables.map { ($0, offset) }) } ?? [:] }
+    /// While untangling, where the moving tables have got to: shown, wires and all, but not saved till it's done.
+    var previewOffsets: [Table.ID: CGPoint] = [:]
+    /// An untangling in progress: the crossings it started with, the fewest it's found, and how far along it is.
+    var untangling: (from: Int, best: Int, progress: Double)?
+    @ObservationIgnored private var untangleTask: Task<Void, Never>?
+
+    /// Moves the selected tables (and selected groups'), step by step, toward where fewer wires cross, showing it as it
+    /// goes; then saves where it got to as one change, without the zip ties on their wires or selected, which the move
+    /// leaves in the wrong places. One undo puts it all back. If it finds nothing better, nothing changes.
+    func untangleSelection(of model: Binding<DataModel>) {
+        let moving = selectedTablesAndMembers(in: model.wrappedValue)
+        guard !moving.isEmpty, untangleTask == nil else { return }
+        let selectedTies = selectedTies
+        let start = model.wrappedValue
+        untangleTask = Task {
+            var untangler = Untangler(model: start, moving: moving)
+            untangling = (untangler.startingCrossings, untangler.startingCrossings, 0)
+            while !untangler.isDone && !Task.isCancelled {
+                // As many steps as fit in a frame, then show them.
+                let began = ProcessInfo.processInfo.systemUptime
+                repeat { untangler.step() } while !untangler.isDone && ProcessInfo.processInfo.systemUptime - began < 0.008
+                previewOffsets = untangler.offsets
+                untangling = (untangler.startingCrossings, untangler.best.crossings, untangler.progress)
+                try? await Task.sleep(for: .milliseconds(4))
+            }
+            let isFinished = !Task.isCancelled
+            previewOffsets = [:]
+            untangling = nil
+            untangleTask = nil
+            guard isFinished, untangler.best.crossings < untangler.startingCrossings else { return }
+            var untangled = model.wrappedValue
+            let offsets = untangler.bestOffsets
+            for index in untangled.tables.indices {
+                if let offset = offsets[untangled.tables[index].id] { untangled.tables[index].position += offset }
+            }
+            // Ties on the moved tables' wires, and any selected.
+            let columns = Set(untangled.tables.filter { moving.contains($0.id) }.flatMap(\.columns).map(\.id))
+            let wires = Set(untangled.relationships.filter { columns.contains($0.from) || columns.contains($0.to) }.map(\.id))
+            for tie in untangled.zipTies where selectedTies.contains(tie.id) || tie.relationships.contains(where: wires.contains) {
+                untangled.removeZipTie(tie.id)
+            }
+            model.wrappedValue = untangled
+        }
+    }
+
+    /// Stops untangling, leaving everything as it was.
+    func stopUntangling() {
+        untangleTask?.cancel()
+    }
+
+    var isUntangling: Bool { untangleTask != nil }
+
+    var tableOffsets: [Table.ID: CGPoint] {
+        guard let dragOffset else { return previewOffsets }
+        return Dictionary(uniqueKeysWithValues: selectedTables.map { ($0, dragOffset) })
+    }
     var tieOffsets: [ZipTie.ID: CGPoint] { dragOffset.map { offset in Dictionary(uniqueKeysWithValues: selectedTies.map { ($0, offset) }) } ?? [:] }
 
     /// What a selection rectangle selects, given everything it touches. With tables, everything; without, ties take
