@@ -1397,24 +1397,34 @@ private struct GridLayer: View {
     let offset: CGPoint
 
     var body: some View {
+        // One dot on a tile, repeated across the view by the GPU, rather than a shape per dot: on a big display at a close
+        // zoom there are tens of thousands, and drawing each one cost more the bigger the window.
         Canvas { context, size in
             var spacing = 24 * zoom
             while spacing < 12 { spacing *= 4 }
-            let dot: CGFloat = 1.6
-            var dots = Path()
-            var x = offset.x.truncatingRemainder(dividingBy: spacing) - spacing
-            while x < size.width + spacing {
-                var y = offset.y.truncatingRemainder(dividingBy: spacing) - spacing
-                while y < size.height + spacing {
-                    dots.addEllipse(in: CGRect(x: x - dot / 2, y: y - dot / 2, width: dot, height: dot))
-                    y += spacing
-                }
-                x += spacing
-            }
-            context.fill(dots, with: .color(Theme.gridDot))
+            let scale = context.environment.displayScale
+            let pixels = max(Int((spacing * scale).rounded()), 2)
+            guard let tile = Self.tile(pixels: pixels, dot: 1.6 * scale,
+                                       color: Theme.gridDot.resolve(in: context.environment).cgColor) else { return }
+            // The tile's dot is at its middle, and the dots sit on multiples of the spacing from the offset.
+            let origin = CGPoint(x: offset.x - spacing / 2, y: offset.y - spacing / 2)
+            context.fill(Path(CGRect(origin: .zero, size: size)),
+                         with: .tiledImage(Image(decorative: tile, scale: scale), origin: origin,
+                                           scale: spacing * scale / CGFloat(pixels)))
         }
         .background(Theme.canvas)
         .allowsHitTesting(false)
+    }
+
+    /// A square of `pixels` with a dot of `dot` pixels across in the middle.
+    private static func tile(pixels: Int, dot: CGFloat, color: CGColor) -> CGImage? {
+        guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+              let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let middle = CGFloat(pixels) / 2
+        context.setFillColor(color)
+        context.fillEllipse(in: CGRect(x: middle - dot / 2, y: middle - dot / 2, width: dot, height: dot))
+        return context.makeImage()
     }
 }
 

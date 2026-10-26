@@ -5,7 +5,8 @@ import SwiftUI
 /// - `JOINERY_LIBRARY=<dir>`: use that folder as the library (see `Library`), so tests never touch the real one.
 /// - `JOINERY_OPEN=<name>`: select the model with that name. A `.joinery` path passed as an argument is imported and
 ///   selected too.
-/// - `JOINERY_APPEARANCE=light|dark`: whatever the system's set to.
+/// - `JOINERY_APPEARANCE=light|dark`: whatever the system's set to. `JOINERY_WINDOW_SIZE=2560x1080`: the window's size,
+///   in points, on the widest screen.
 /// - `JOINERY_SNAPSHOT=out.png`: saves the front window to `out.png` and quits. `JOINERY_SNAPSHOT_FRAMES=n` saves n
 ///   frames 50 ms apart (out-0.png, out-1.png, …) to check an animation; `JOINERY_SNAPSHOT_DELAY` sets the wait.
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
@@ -58,6 +59,14 @@ enum DebugHooks {
     static func script(_ document: Binding<DataModel>, canvas: CanvasController) async {
         guard let script = ProcessInfo.processInfo.environment["JOINERY_SCRIPT"] else { return }
         try? await Task.sleep(for: .seconds(1))
+        if let size = environment["JOINERY_WINDOW_SIZE"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2,
+           let window = NSApp.windows.first(where: \.isVisible) {
+            // On the largest screen, as an ultra-wide display would have it.
+            let screen = NSScreen.screens.max { $0.frame.width < $1.frame.width } ?? window.screen
+            let origin = screen.map { CGPoint(x: $0.visibleFrame.minX, y: $0.visibleFrame.maxY - size[1]) } ?? .zero
+            window.setFrame(CGRect(origin: origin, size: CGSize(width: size[0], height: size[1])), display: true)
+            try? await Task.sleep(for: .seconds(0.5))
+        }
         // Menu shortcuts only reach the active app, and a launch from a shell starts in the background.
         NSApp.activate()
         NSApp.windows.first(where: \.isVisible)?.makeKeyAndOrderFront(nil)
@@ -127,7 +136,7 @@ enum DebugHooks {
                 }
                 _ = FrameMeter.shared.report(over: 1)
                 let start = ProcessInfo.processInfo.systemUptime
-                var layouts: [Double] = []
+                var layouts: [Double] = [], displays: [Double] = []
                 let window = NSApp.windows.first(where: \.isVisible)
                 while ProcessInfo.processInfo.systemUptime - start < numbers[0] {
                     let t = ProcessInfo.processInfo.systemUptime - start
@@ -136,9 +145,12 @@ enum DebugHooks {
                         canvas.dragOffset = CGPoint(x: 120 * sin(t * 12), y: 60 * sin(t * 7))
                         window?.contentView?.layoutSubtreeIfNeeded()
                     }
-                    window?.displayIfNeeded()
-                    CATransaction.flush()
+                    let (_, display) = FrameMeter.time {
+                        window?.displayIfNeeded()
+                        CATransaction.flush()
+                    }
                     layouts.append(layout)
+                    displays.append(display)
                     try? await Task.sleep(for: .seconds(1.0 / 240))
                 }
                 canvas.dragOffset = nil
@@ -146,7 +158,8 @@ enum DebugHooks {
                 // fast enough mostly waits for the screen.
                 layouts.sort()
                 print("shake:", FrameMeter.shared.report(over: numbers[0]),
-                      String(format: "| update %.1f ms median, %.1f ms worst", layouts[layouts.count / 2], layouts.last ?? 0))
+                      String(format: "| update %.1f ms median, %.1f ms worst", layouts[layouts.count / 2], layouts.last ?? 0),
+                      String(format: "| display %.1f ms median", displays.sorted()[displays.count / 2]))
             case "select-ties":
                 canvas.selection = Set(document.wrappedValue.zipTies.map { .zipTie($0.id) })
             case "ties":
