@@ -224,13 +224,14 @@ struct Routing {
     static let squareReach: CGFloat = 72
     /// Names this version of the routing in saved feedback, with `parameters`. Change it when the method changes, so
     /// feedback can be told apart by what produced the line it corrects.
-    static let version = "2026-10-25 fixed handles"
+    static let version = "2026-10-26 fixed handles, fenced"
 
     /// The tuning constants, for saved feedback.
     static var parameters: [String: Double] {
         ["samplesPerSegment": Double(samplesPerSegment), "squareReach": squareReach, "avoidanceReach": avoidanceReach,
          "avoidancePasses": Double(avoidancePasses), "avoidanceSettlingPasses": Double(avoidanceSettlingPasses),
-         "pushRunway": pushRunway, "socketReach": socketReach]
+         "pushRunway": pushRunway, "socketReach": socketReach, "avoidanceClearance": avoidanceClearance,
+         "fencePasses": Double(fencePasses)]
     }
 
     /// How far a table's push on wires reaches; it fades smoothly to nothing there.
@@ -239,6 +240,10 @@ struct Routing {
     static let avoidanceSettlingPasses = 12
     /// Points of wire, out from a socket or tie, over which each point of avoidance push is faded in.
     static let pushRunway: CGFloat = 2.5
+    /// How far a wire keeps from a table it goes around, at the least.
+    static let avoidanceClearance: CGFloat = 12
+    /// Rounds of keeping wires out from under tables and relaxing them, after the push.
+    static let fencePasses = 12
 
     /// Tables closer than this side by side are treated as stacked.
     private static let sideGap: CGFloat = 24
@@ -362,11 +367,46 @@ extension Routing.Route {
         }
         // Faded in from each socket and tie (smoothstep, squared, so the wire leaves square), over at least
         // `squareReach` and longer for a bigger push: fading a big push in quickly would itself bend the wire hard.
+        var hold = [CGFloat](repeating: 0, count: points.count)
         for i in points.indices {
             let reach = max(Routing.squareReach, offset[i].length * Routing.pushRunway)
-            let x = min(anchorDistance[i] / reach, 1), hold = x * x * (3 - 2 * x)
-            points[i] = base[i] + offset[i] * (hold * hold)
+            let x = min(anchorDistance[i] / reach, 1), smooth = x * x * (3 - 2 * x)
+            hold[i] = smooth * smooth
+            points[i] = base[i] + offset[i] * hold[i]
         }
+
+        // Last, the field gives way to a rule: no wire runs under a table. Where the fade-in near a socket (or the
+        // wire's own tension) has left it under one, it's put out at the table's nearest edge, a little clear and round
+        // the corners, and the wire relaxed between, a few times over: it stretches to wrap the table rather than
+        // cutting under it. The relaxing is held near sockets and ties as the push was, so they're still left square.
+        let clearance = Routing.avoidanceClearance
+        let fences = obstacles.map { $0.insetBy(dx: -clearance, dy: -clearance) }
+        let isFree = points.indices.map { $0 > 0 && $0 < points.count - 1 && !isTieSlot[$0] }
+        func fenceOut() {
+            for i in points.indices where isFree[i] {
+                for fence in fences { points[i] = fence.pushingOut(points[i], cornerRadius: clearance + Metrics.cornerRadius) }
+                // Its own tables only so far as not to run under them, away from the socket it leaves.
+                if anchorDistance[i] > clearance { for rect in own { points[i] = rect.pushingOut(points[i], cornerRadius: Metrics.cornerRadius) } }
+            }
+            // The stretches between, too, where points are far apart: one cutting a corner moves out, both ends.
+            for i in points.indices.dropLast() where isFree[i] || isFree[i + 1] {
+                let middle = (points[i] + points[i + 1]) / 2
+                for fence in fences {
+                    let out = fence.pushingOut(middle, cornerRadius: clearance + Metrics.cornerRadius) - middle
+                    guard out != .zero else { continue }
+                    if isFree[i] { points[i] += out }
+                    if isFree[i + 1] { points[i + 1] += out }
+                }
+            }
+        }
+        for _ in 0..<Routing.fencePasses {
+            fenceOut()
+            let before = points
+            for i in points.indices.dropFirst().dropLast() where !isTieSlot[i] {
+                points[i] = before[i] + ((before[i - 1] + before[i + 1]) / 2 - before[i]) * (0.5 * hold[i])
+            }
+        }
+        fenceOut()
     }
 }
 

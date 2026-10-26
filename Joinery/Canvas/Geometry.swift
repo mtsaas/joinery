@@ -21,6 +21,29 @@ extension CGPoint {
 
 /// How far along `a`→`b` it crosses `c`→`d`, from 0 to 1, or nil if the segments don't cross.
 extension CGRect {
+    /// `point`, or if it's inside this rectangle with its corners rounded to `cornerRadius`, the nearest point on that
+    /// rounded edge.
+    func pushingOut(_ point: CGPoint, cornerRadius radius: CGFloat) -> CGPoint {
+        guard contains(point) else { return point }
+        let radius = min(radius, width / 2, height / 2)
+        // The corners' centers bound an inner rectangle; outside it, a point is in a corner's reach.
+        let inner = insetBy(dx: radius, dy: radius)
+        let center = CGPoint(x: min(max(point.x, inner.minX), inner.maxX), y: min(max(point.y, inner.minY), inner.maxY))
+        let away = point - center
+        if away.x != 0 && away.y != 0 {
+            // In a corner: out along the radius, if it's inside the rounding.
+            return away.length < radius ? center + (away.normalized ?? .zero) * radius : point
+        }
+        // Along a side: straight out through the nearest one.
+        let distances = [point.x - minX, maxX - point.x, point.y - minY, maxY - point.y]
+        switch distances.indices.min(by: { distances[$0] < distances[$1] })! {
+        case 0: return CGPoint(x: minX, y: point.y)
+        case 1: return CGPoint(x: maxX, y: point.y)
+        case 2: return CGPoint(x: point.x, y: minY)
+        default: return CGPoint(x: point.x, y: maxY)
+        }
+    }
+
     /// How far `point` is from the rectangle; 0 inside it.
     func distance(to point: CGPoint) -> CGFloat {
         CGPoint(x: max(minX - point.x, 0, point.x - maxX), y: max(minY - point.y, 0, point.y - maxY)).length

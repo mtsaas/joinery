@@ -110,6 +110,31 @@ struct JoineryTests {
         #expect(avoiding.points.last == straight.points.last)
     }
 
+    /// A table close to the socket a wire leaves once stayed under it there: the push fades in near sockets, so the
+    /// wire was only lifted in the middle, to a peak.
+    @Test func wiresWrapTablesCloseToTheirSockets() throws {
+        var schema = Schema()
+        let products = schema.addTable(at: .zero), reviews = schema.addTable(at: CGPoint(x: 370, y: -20))
+        let orders = schema.addTable(at: CGPoint(x: 760, y: 40))
+        for (id, count) in [(products, 4), (reviews, 5), (orders, 3)] {
+            let index = schema.tables.firstIndex { $0.id == id }!
+            schema.tables[index].columns += (1...count).map { Column(name: "c\($0)", type: .uuid) }
+        }
+        let key = try #require(schema.table(products)?.columns[0].id), foreign = try #require(schema.table(orders)?.columns[2].id)
+        let connected = schema.connect(foreign, to: key)
+        let wire = try #require(connected)
+        let frame = Metrics.frame(of: try #require(schema.table(reviews)))
+
+        let straight = try #require(Routing(schema: schema).routes[wire])
+        #expect(straight.points.contains { frame.contains($0) }, "the setup should put the table in the wire's way")
+        let route = try #require(Routing(schema: schema, avoidingTables: true).routes[wire])
+        // Clear of it all along, points and the stretches between, with room to spare.
+        let clear = frame.insetBy(dx: -Routing.avoidanceClearance / 2, dy: -Routing.avoidanceClearance / 2)
+        for (a, b) in zip(route.points, route.points.dropFirst()) {
+            #expect(!clear.contains(a) && !clear.contains((a + b) / 2))
+        }
+    }
+
     /// Each side of a tie is its own cable: shaking one side reaches the tie, not past it.
     @Test func forcesDoNotCrossAZipTie() throws {
         var schema = storefront()
