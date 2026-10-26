@@ -49,6 +49,11 @@ enum Metrics {
     static let portWidth: CGFloat = 96
     static let portHeight: CGFloat = 20
 
+    /// About how big a port's pill is, for its label (drawn, it's measured exactly).
+    static func portSize(label: String) -> CGSize {
+        CGSize(width: max(CGFloat(label.count) * 6.6 + 20, portHeight * 2), height: portHeight)
+    }
+
     /// Which grid column a point on a table falls in, by its distance from the table's left edge.
     enum GridColumn { case key, name, type }
 

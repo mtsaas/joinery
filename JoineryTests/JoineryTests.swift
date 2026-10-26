@@ -649,6 +649,19 @@ struct JoineryTests {
         #expect(model.relationships.first { $0.id == wire }?.to == usersID)
         #expect(model.portPlacements()[id]?.wires.count == 3)
 
+        // Dragged near the group's bottom edge, it goes there, and stays as far along it however the group grows;
+        // put back, it faces its column again.
+        let spot = try #require(model.portSpot(nearest: CGPoint(x: frame.midX, y: frame.maxY + 30), on: group))
+        #expect(spot.side == .bottom && abs(spot.along - 0.5) < 0.01)
+        model.movePort(id, to: spot)
+        let moved = try #require(model.portPlacements()[id])
+        #expect(moved.normal == CGPoint(x: 0, y: 1) && moved.point == CGPoint(x: frame.midX, y: frame.maxY))
+        #expect(Routing(model: model).routes[wires[0]]?.points.last == moved.point, "the wires follow it")
+        let saved = try JSONDecoder().decode(DataModel.self, from: model.fileData)
+        #expect(saved.portPlacements()[id] == moved, "and it's kept where it was put")
+        model.movePort(id, to: nil)
+        #expect(model.portPlacements()[id]?.normal == CGPoint(x: -1, y: 0))
+
         // Once users joins the group, there's nothing outside to stand for.
         model.tables[0].group = group
         model.repair()

@@ -249,6 +249,8 @@ final class CanvasController {
     }
     var hoveredTie: ZipTie.ID?
     var connection: Connection?
+    /// A group's port being dragged along its edge, and where it's got to; saved when let go.
+    var portDrag: (port: GroupPort.ID, side: Side4, along: CGFloat)?
     var stroke: Stroke?
     /// The zip-tie tool: while it's on, every drag on the canvas draws a line that ties the wires it crosses.
     var isTying = false

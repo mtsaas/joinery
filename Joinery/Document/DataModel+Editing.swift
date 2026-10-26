@@ -63,11 +63,7 @@ extension DataModel {
             return point.y >= frame.minY + Metrics.headerHeight && table.columns.indices.contains(row)
                 ? .column(table.columns[row].id) : .table(table.id)
         }
-        for (id, port) in portPlacements() {
-            let pill = CGRect(x: port.point.x - Metrics.portWidth / 2, y: port.point.y - Metrics.portHeight / 2,
-                              width: Metrics.portWidth, height: Metrics.portHeight)
-            if pill.contains(point) { return .port(id) }
-        }
+        if let port = port(at: point) { return .port(port) }
         return groups.reversed().first { frame(of: $0.id)?.contains(point) == true }.map { .group($0.id) }
     }
 

@@ -18,6 +18,7 @@ struct CanvasView: View {
     @State private var isAnimating = false
     /// The last click, to tell a double-click from two clicks.
     @State private var lastClick: (item: CanvasController.Item, time: TimeInterval)?
+    @State private var lastPortClick: (port: GroupPort.ID, time: TimeInterval)?
     /// A selected item Shift-pressed: taken out of the selection if the press turns out to be a click, not a drag.
     @State private var deselectOnClick: CanvasController.Item?
     @FocusState private var isCanvasFocused: Bool
@@ -27,12 +28,13 @@ struct CanvasView: View {
     /// What the press on the canvas in progress landed on.
     @State private var press: Press?
     @State private var hoveredSocket: Routing.Socket?
+    @State private var isHoveringPort = false
     @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
     @AppStorage("showsMinimap") private var showsMinimap = true
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        let routing = routingCache.routing(for: model, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
+        let routing = routingCache.routing(for: routedModel, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
                                            avoidingTables: wiresAvoidTables)
         let colors = routingCache.wireColors(for: model)
         let foreignKeys = Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
@@ -354,7 +356,7 @@ struct CanvasView: View {
     private func openWheel(at viewPoint: CGPoint) {
         isCanvasFocused = true
         let point = canvas.canvasPoint(viewPoint)
-        let routing = routingCache.routing(for: model, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
+        let routing = routingCache.routing(for: routedModel, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
                                            avoidingTables: wiresAvoidTables)
         let reach = Metrics.wireHitRadius / canvas.zoom
         let target: CanvasController.Wheel.Target
@@ -696,18 +698,35 @@ struct CanvasView: View {
             .contentShape(.rect)
             .gesture(surfaceGesture)
             .onContinuousHover { phase in
-                var socket: Routing.Socket?
-                if case .active(let location) = phase { socket = self.socket(at: canvas.canvasPoint(location))?.socket }
+                var socket: Routing.Socket?, isOverPort = false
+                if case .active(let location) = phase {
+                    let point = canvas.canvasPoint(location)
+                    socket = self.socket(at: point)?.socket
+                    isOverPort = socket == nil && model.port(at: point, offsets: canvas.tableOffsets) != nil
+                }
                 if socket != hoveredSocket { hoveredSocket = socket }
+                if isOverPort != isHoveringPort { isHoveringPort = isOverPort }
             }
-            .pointerStyle(canvas.isTying ? .rectSelection : hoveredSocket == nil ? nil : .link)
-            .help(hoveredSocket == nil ? "" : "Drag to another column to add a foreign key")
+            .pointerStyle(canvas.isTying ? .rectSelection : hoveredSocket != nil ? .link
+                          : canvas.portDrag != nil ? .grabActive : isHoveringPort ? .grabIdle : nil)
+            .help(hoveredSocket != nil ? "Drag to another column to add a foreign key"
+                  : isHoveringPort ? "Drag along the group's edge to move it; double-click to put it back facing its column" : "")
+    }
+
+    /// The model the wires are routed for: with a port being dragged where it's got to.
+    private var routedModel: DataModel {
+        guard let drag = canvas.portDrag else { return model }
+        var routed = model
+        routed.movePort(drag.port, to: (drag.side, drag.along))
+        return routed
     }
 
     /// What a press on the canvas is for, from where it started.
     enum Press {
         /// Drawing a foreign key out of a column's socket.
         case socket(Column, at: CGPoint)
+        /// On a group's port: sliding it along the group's edge.
+        case port(GroupPort.ID)
         case table(Table)
         /// On a group's name: selecting and moving the group.
         case group(TableGroup.ID)
@@ -716,9 +735,24 @@ struct CanvasView: View {
 
     private func press(at point: CGPoint) -> Press {
         if let (column, socket, _) = socket(at: point) { return .socket(column, at: socket) }
+        if let port = model.port(at: point, offsets: canvas.tableOffsets) { return .port(port) }
         if let table = model.tables.last(where: { Metrics.frame(of: $0).contains(point) }) { return .table(table) }
         if let group = group(at: point) { return .group(group) }
         return .background
+    }
+
+    /// A click on a port selects the wires it bundles; a double-click puts it back facing its column.
+    private func clickPort(_ id: GroupPort.ID) {
+        isCanvasFocused = true
+        let now = ProcessInfo.processInfo.systemUptime
+        if let last = lastPortClick, last.port == id, now - last.time < NSEvent.doubleClickInterval {
+            lastPortClick = nil
+            model.movePort(id, to: nil)
+            return
+        }
+        lastPortClick = (id, now)
+        let wires = routingCache.current?.ports[id]?.wires ?? []
+        canvas.selection = Set(wires.map { .relationship($0) })
     }
 
     /// The group whose name band is under `point`, in canvas points; the last drawn, if they overlap.
@@ -758,6 +792,12 @@ struct CanvasView: View {
                     // A short way first, so a click on a socket doesn't start a wire.
                     guard canvas.connection != nil || CGPoint(value.translation).length >= 2 else { return }
                     dragConnection(from: column, at: socket, to: canvas.canvasPoint(value.location))
+                case .port(let id):
+                    // Along the edge, to the spot nearest the pointer, around corners and all.
+                    guard canvas.portDrag != nil || CGPoint(value.translation).length >= 2,
+                          let group = model.group(ofPort: id),
+                          let spot = model.portSpot(nearest: canvas.canvasPoint(value.location), on: group) else { return }
+                    canvas.portDrag = (id, spot.side, spot.along)
                 case .table(let table):
                     dragItem(.table(table.id), by: value.translation)
                 case .group(let id):
@@ -772,6 +812,13 @@ struct CanvasView: View {
                 switch press {
                 case .socket:
                     finishConnection()
+                case .port(let id):
+                    if let drag = canvas.portDrag {
+                        canvas.portDrag = nil
+                        model.movePort(id, to: (drag.side, drag.along))
+                    } else {
+                        clickPort(id)
+                    }
                 case .table(let table):
                     dropItem(.table(table.id), at: value.location, translation: value.translation,
                              click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) }

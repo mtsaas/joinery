@@ -204,6 +204,10 @@ enum DebugHooks {
                 let json = words.dropFirst(2).joined(separator: " ")
                 let arguments = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
                 do { print("mcp:", try ModelTools.call(words[1], arguments, on: &document.wrappedValue)) } catch { print("mcp failed:", error.localizedDescription) }
+            case "port" where words.count >= 2:
+                // The first port put on a side ("port bottom 0.3"), or back facing its column ("port auto").
+                guard let id = document.wrappedValue.groups.lazy.flatMap(\.ports).first?.id else { break }
+                document.wrappedValue.movePort(id, to: Side4(rawValue: words[1]).map { ($0, numbers.first ?? 0.5) })
             case "bundle":
                 // Every group's shared wires bundled into ports.
                 var model = document.wrappedValue

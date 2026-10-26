@@ -45,10 +45,14 @@ extension TableGroup {
 
 /// A socket on a group's edge standing for a column outside it, such as a much-referenced `entity.id`: every wire
 /// between that column and the group's tables runs to the port instead, and one cable, a bus, from the port to the
-/// column. It sits on the edge facing the column, wherever that is.
+/// column. It sits on the edge facing the column, wherever that is, unless it's been put somewhere on the edge.
 struct GroupPort: Codable, Identifiable, Equatable {
     var id = UUID()
     var column: Column.ID
+    /// Where it's been put: on which side, and how far along it, from 0 at the top or left end to 1 at the other.
+    /// Nil, it faces its column.
+    var side: Side4?
+    var along: CGFloat?
 }
 
 struct Table: Codable, Identifiable, Equatable {
