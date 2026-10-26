@@ -230,15 +230,9 @@ enum DebugHooks {
                       let column = document.wrappedValue.tables.first(where: { $0.name == parts.first })?.columns.first(where: { $0.name == parts.last })
                 else { break }
                 document.wrappedValue.plug(port, into: column.id)
-            case "move" where numbers.count == 2:
-                // A real mouse-moved event at a canvas point, sent to the window.
-                guard let window = NSApp.windows.first(where: \.isVisible), let content = window.contentView else { break }
-                let view = canvas.viewPoint(CGPoint(x: numbers[0], y: numbers[1]))
-                let location = content.convert(CGPoint(x: view.x, y: content.isFlipped ? view.y : content.bounds.height - view.y), to: nil)
-                for event in [NSEvent.mouseEvent(with: .mouseMoved, location: location, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
-                                                 windowNumber: window.windowNumber, context: nil, eventNumber: 0, clickCount: 0, pressure: 0)] {
-                    if let event { window.sendEvent(event) }
-                }
+            case "press" where numbers.count == 2:
+                // A click at a canvas point, through the canvas's own press handling.
+                NotificationCenter.default.post(name: .pressAt, object: canvas, userInfo: ["point": CGPoint(x: numbers[0], y: numbers[1])])
             case "hover" where numbers.count == 2:
                 // The pointer over a canvas point, for what hovering shows there.
                 NotificationCenter.default.post(name: .hover, object: canvas, userInfo: ["point": CGPoint(x: numbers[0], y: numbers[1])])
@@ -456,6 +450,7 @@ extension Notification.Name {
     static let pickFromWheel = Notification.Name("JoineryPickFromWheel")
     static let openSettings = Notification.Name("JoineryOpenSettings")
     static let hover = Notification.Name("JoineryHover")
+    static let pressAt = Notification.Name("JoineryPressAt")
     static let holdDrag = Notification.Name("JoineryHoldDrag")
 }
 #endif

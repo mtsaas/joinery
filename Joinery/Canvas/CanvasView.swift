@@ -229,6 +229,13 @@ struct CanvasView: View {
                   let translation = note.userInfo?["translation"] as? CGSize else { return }
             dragItem(.table(id), by: translation)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .pressAt)) { note in
+            // A click at a canvas point, through the same press and its end as a real one.
+            guard note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint else { return }
+            let press = press(at: point)
+            print("press \(Int(point.x)), \(Int(point.y)):", press)
+            endPress(press, at: canvas.viewPoint(point), translation: .zero)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .hover)) { note in
             // As if the pointer were at a canvas point: what the + would show.
             guard note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint else { return }
@@ -820,14 +827,14 @@ struct CanvasView: View {
     }
 
     private func press(at point: CGPoint) -> Press {
-        if let hint = canvas.portHint, hint.point.distance(to: point) <= Metrics.portHintRadius / canvas.zoom {
-            return .newPort(hint.group, side: hint.spot.side, along: hint.spot.along)
-        }
         if let (column, socket, _) = socket(at: point) { return .socket(column, at: socket) }
         if let socket = model.portSocket(at: point, within: Metrics.socketReach(zoom: canvas.zoom), offsets: canvas.tableOffsets) {
             return .portSocket(socket.port, isOutside: socket.isOutside, at: socket.center)
         }
         if let port = model.port(at: point, offsets: canvas.tableOffsets) { return .port(port) }
+        // By a group's edge, where the + follows the pointer: worked out here from where the press is, as the hover
+        // does, not taken from the hover, which may have ended as the button went down, or never come.
+        if let hint = portHint(near: point) { return .newPort(hint.group, side: hint.spot.side, along: hint.spot.along) }
         if let table = model.tables.last(where: { Metrics.frame(of: $0).contains(point) }) { return .table(table) }
         if let group = group(at: point) { return .group(group) }
         return .background
@@ -857,6 +864,8 @@ struct CanvasView: View {
             guard let frame = model.frame(of: group.id, offsets: canvas.tableOffsets),
                   frame.insetBy(dx: -reach, dy: -reach).contains(point), !frame.insetBy(dx: reach, dy: reach).contains(point),
                   let spot = model.portSpot(nearest: point, on: group.id, offsets: canvas.tableOffsets),
+                  // Not from inside along the top, where the group's name is, to grab it by.
+                  spot.side != .top || point.y <= frame.minY + 2 / canvas.zoom,
                   let at = model.edgePoint(of: group.id, at: spot, offsets: canvas.tableOffsets),
                   !ports.contains(where: { $0.group == group.id && $0.point.distance(to: at) < Metrics.portWidth / 2 }) else { continue }
             return (group.id, spot, at)
@@ -914,7 +923,11 @@ struct CanvasView: View {
                     canvas.portHint = nil
                     dragConnection(fromPort: id, isOutside: isOutside, at: socket, to: canvas.canvasPoint(value.location))
                 case .newPort:
-                    break
+                    // Moved, it wasn't for a port: it's a drag on the canvas, a selection rectangle say.
+                    guard CGPoint(value.translation).length >= 3 else { break }
+                    self.press = .background
+                    canvas.portHint = nil
+                    dragBackground(from: value.startLocation, to: value.location)
                 case .port(let id):
                     // Along the edge, to the spot nearest the pointer, around corners and all.
                     guard canvas.portDrag != nil || CGPoint(value.translation).length >= 2,
@@ -933,6 +946,12 @@ struct CanvasView: View {
                 let press = self.press ?? .background
                 self.press = nil
                 pressStart = nil
+                endPress(press, at: value.location, translation: value.translation)
+            }
+    }
+
+    /// What letting go does, after a press that started on `press`, at `location`, `translation` from where it began.
+    private func endPress(_ press: Press, at location: CGPoint, translation: CGSize) {
                 switch press {
                 case .socket, .portSocket:
                     finishConnection()
@@ -950,15 +969,14 @@ struct CanvasView: View {
                         clickPort(id)
                     }
                 case .table(let table):
-                    dropItem(.table(table.id), at: value.location, translation: value.translation,
+                    dropItem(.table(table.id), at: location, translation: translation,
                              click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) }
                 case .group(let id):
                     // A double-click on its name renames it.
-                    dropItem(.group(id), at: value.location, translation: value.translation, click: nil) { _ in canvas.renamingGroup = id }
+                    dropItem(.group(id), at: location, translation: translation, click: nil) { _ in canvas.renamingGroup = id }
                 case .background:
-                    if canvas.backgroundDrag == nil { click(at: canvas.canvasPoint(value.location)) } else { finishBackgroundDrag() }
+                    if canvas.backgroundDrag == nil { click(at: canvas.canvasPoint(location)) } else { finishBackgroundDrag() }
                 }
-            }
     }
 
     /// A group's name being edited, in place of its label: Return or clicking away keeps it, Escape doesn't.
