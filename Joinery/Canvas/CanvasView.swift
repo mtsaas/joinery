@@ -25,6 +25,7 @@ struct CanvasView: View {
     @State private var press: Press?
     @State private var hoveredSocket: Routing.Socket?
     @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         let routing = routingCache.routing(for: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
@@ -161,6 +162,9 @@ struct CanvasView: View {
         .onReceive(NotificationCenter.default.publisher(for: .saveFeedback)) { note in
             if note.object as AnyObject? === canvas { saveFeedback() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { note in
+            if note.object as AnyObject? === canvas { openSettings() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .pickFromWheel)) { note in
             guard note.object as AnyObject? === canvas, let wheel = canvas.wheel,
                   let direction = note.userInfo?["direction"] as? CommandWheel.Direction else { return }
@@ -217,10 +221,8 @@ struct CanvasView: View {
         commands += [
             PaletteCommand(id: "avoid", title: "Wires Avoid Tables", subtitle: wiresAvoidTables ? "On" : "Off",
                            symbol: "point.topleft.down.to.point.bottomright.curvepath") { wiresAvoidTables.toggle() },
-            PaletteCommand(id: "mcp", title: "Connect an AI Assistant", subtitle: "Copies the setup command",
-                           symbol: "sparkles") {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(MCPServer.setupCommand, forType: .string)
+            PaletteCommand(id: "mcp", title: "Connect an AI Assistant", subtitle: "Settings", symbol: "sparkles") {
+                openSettings()
             },
             PaletteCommand(id: "select-all", title: "Select All", symbol: "checkmark.rectangle.stack", shortcut: "⌘A") {
                 canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })

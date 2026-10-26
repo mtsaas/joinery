@@ -164,6 +164,14 @@ enum DebugHooks {
             case "library":
                 let library = Library.shared
                 print("library open: \(library.open?.name ?? "none"), recents: \(library.recents.map(Library.name(of:)).prefix(3))")
+            case "settings":
+                // Settings, alone on screen, for a snapshot to show.
+                NotificationCenter.default.post(name: .openSettings, object: canvas)
+                try? await Task.sleep(for: .seconds(0.8))
+                for window in NSApp.windows where window.isVisible && window.identifier?.rawValue.contains("Settings") != true {
+                    window.orderOut(nil)
+                }
+                print("windows:", NSApp.windows.filter(\.isVisible).map { "\($0.identifier?.rawValue ?? "?") \($0.title)" })
             case "routings":
                 print("routings built: \(Routing.built)")
             case "clock":
@@ -274,5 +282,6 @@ extension Notification.Name {
     /// Clicks the empty canvas or a wire at `userInfo["point"]`, in canvas points.
     static let click = Notification.Name("JoineryClick")
     static let pickFromWheel = Notification.Name("JoineryPickFromWheel")
+    static let openSettings = Notification.Name("JoineryOpenSettings")
 }
 #endif

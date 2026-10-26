@@ -46,7 +46,7 @@ ties and bend points square to them.
 
 While Joinery is open it runs an MCP server at `http://127.0.0.1:8723/mcp`, reachable only from this Mac. An assistant connected to it can read and edit the schema open in the window. Changes show up as they're made, save themselves, and undo with ⌘Z.
 
-To connect Claude Code, run this (also copied by "Connect an AI Assistant" in the ⌘K palette):
+Joinery ▸ Settings (⌘,) ▸ AI Assistants shows whether the server is running, has copyable setup for each kind of assistant, and can turn the server off. "Connect an AI Assistant" in the ⌘K palette opens it. To connect Claude Code, run:
 
 ```bash
 claude mcp add --transport http joinery http://127.0.0.1:8723/mcp

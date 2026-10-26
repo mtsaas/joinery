@@ -7,28 +7,85 @@ import Network
 ///
 /// Stateless and answered with plain JSON: every request is a POST of JSON-RPC, so there are no sessions or event
 /// streams to keep.
-@MainActor
+@MainActor @Observable
 final class MCPServer {
     static let shared = MCPServer()
     static let port: UInt16 = 8723
     static let url = "http://127.0.0.1:\(port)/mcp"
     /// For Claude Code; other assistants take `url` in their own settings.
     static let setupCommand = "claude mcp add --transport http joinery \(url)"
+    /// For assistants that only start servers themselves, such as Claude Desktop: a bridge to `url`.
+    static let bridgeConfiguration = """
+        {
+          "mcpServers": {
+            "joinery": {
+              "command": "npx",
+              "args": ["-y", "mcp-remote", "\(url)"]
+            }
+          }
+        }
+        """
+    /// Whether it runs, from Settings; on unless turned off.
+    static var isEnabled: Bool { UserDefaults.standard.object(forKey: "mcpServerEnabled") as? Bool ?? true }
 
-    private var listener: NWListener?
+    enum Status: Equatable {
+        case off, starting, running
+        /// Why it couldn't start, usually something else on the port.
+        case failed(String)
+    }
 
-    /// Starts listening. If something else has the port, there's simply no server; the app works the same.
+    private(set) var status = Status.off
+    @ObservationIgnored private var listener: NWListener?
+
+    /// Starts listening. If something else has the port, there's simply no server, and Settings says why; the app
+    /// works the same.
     func start() {
+        guard listener == nil else { return }
         let parameters = NWParameters.tcp
         // Only this Mac: nothing on the network can reach it.
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: Self.port)!)
         parameters.allowLocalEndpointReuse = true
-        guard let listener = try? NWListener(using: parameters) else { return }
+        guard let listener = try? NWListener(using: parameters) else {
+            status = .failed("Couldn't set up the server.")
+            return
+        }
         listener.newConnectionHandler = { connection in
             MainActor.assumeIsolated { Self.receive(on: connection) }
         }
+        listener.stateUpdateHandler = { [weak self] state in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                switch state {
+                case .ready:
+                    self.status = .running
+                case .failed(let error), .waiting(let error):
+                    self.status = .failed(error == .posix(.EADDRINUSE)
+                        ? "Port \(Self.port) is in use by another app, perhaps another copy of Joinery."
+                        : error.localizedDescription)
+                    self.listener?.cancel()
+                    self.listener = nil
+                default:
+                    break
+                }
+            }
+        }
+        status = .starting
         listener.start(queue: .main)
         self.listener = listener
+    }
+
+    func stop() {
+        listener?.cancel()
+        listener = nil
+        status = .off
+    }
+
+    /// Each tool's name and what it does, in a sentence, for Settings.
+    static var toolSummaries: [(name: String, summary: String)] {
+        (libraryTools + SchemaTools.definitions).compactMap { tool in
+            guard let name = tool["name"] as? String, let description = tool["description"] as? String else { return nil }
+            return (name, description.split(separator: ".").first.map { $0 + "." } ?? description)
+        }
     }
 
     // MARK: HTTP
