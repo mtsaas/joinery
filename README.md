@@ -69,7 +69,9 @@ The bottom-left corner shows frames per second while anything moves, and what th
 
 ## Scale test
 
-`scripts/scale-test.sh` builds a Debug copy and, for schemas of 10 to 200 made-up tables (the same each run), drags a table about with wires running under tables and then avoiding them. It prints frames per second, our own work per frame (routing and drawing wires) and the whole update each move causes. Give it other sizes as `scripts/scale-test.sh <derived-data-dir> "300:450 500:800"`.
+`scripts/scale-test.sh` builds an optimized copy with the debug hooks. For schemas of 10 to 200 made-up tables (the same each run), it drags a table about, zoomed to fit and at 50%, with wires running under tables and then avoiding them. It prints frames per second, our own work per frame (routing and drawing wires), and the whole view update each move causes. Give it other sizes as `scripts/scale-test.sh <derived-data-dir> "300:450 500:800"`.
+
+At 200 tables and 300 foreign keys, with wires avoiding tables, a drag holds 120 fps, and our work plus the view update takes about 6 ms of the 8.3 ms a frame allows.
 
 ## Routing feedback (Debug builds)
 
@@ -94,13 +96,18 @@ Joinery/
   Library/     The library of files and collections, the sidebar, the editor for an open schema
   Document/    Schema model (Codable JSON, .joinery), its edits, reading and writing files
   Examples/    The bundled example schemas
-  Debug/       Routing feedback mode (Debug builds only)
-  Canvas/      Canvas view, table cards, routing, wire physics, zip tying
+  Debug/       Routing feedback mode, frame-rate readout, made-up schemas for the scale test (Debug builds only)
+  MCP/         The MCP server for AI assistants, and its schema tools
+  Canvas/      Canvas view, table drawing, routing, wire physics, zip tying
 JoineryTests/  Swift Testing: physics, zip ties and bend points, type parsing, schema repair, library file operations
 scripts/       build.sh (unsandboxed CLI build), make_icon.swift, make_examples.py, score-feedback.sh
 ```
 
 The wires work in two steps. `Routing` computes each wire's rest curve: Bézier segments from socket to socket that pass through the wire's zip ties. `WireSimulation` then springs a chain of points toward that curve. The ends of each wire are stiff and the middle is loose, and neighboring points pull on each other, so a wobble travels along the wire. The simulation runs only while something is moving.
+
+It stays fast as schemas grow:
+- **Routing:** each wire's route is reused until its ends, ties or nearby tables move, so dragging a table reroutes only its own wires and those near it. Wires that do need bending around tables are spread across the cores.
+- **Tables:** all tables are drawn directly in one layer (`TableLayer`), not as views. Only tables in view are drawn, shapes of one color are filled together, and text is laid out once per string and drawn with Core Text, so it's sharp at any zoom.
 
 ## Checking from the command line
 

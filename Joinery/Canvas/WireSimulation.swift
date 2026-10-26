@@ -24,10 +24,13 @@ final class WireSimulation {
     struct Wire {
         var points: [CGPoint]
         var velocities: [CGPoint]
+        /// Settled on its route, with no velocity left.
+        var isResting = false
 
-        init(points: [CGPoint]) {
+        init(points: [CGPoint], isResting: Bool = false) {
             self.points = points
             velocities = Array(repeating: .zero, count: points.count)
+            self.isResting = isResting
         }
     }
 
@@ -48,9 +51,11 @@ final class WireSimulation {
         var isMoving = false
         for (id, route) in routes {
             guard var wire = wires[id] else {
-                wires[id] = Wire(points: route.points)
+                wires[id] = Wire(points: route.points, isResting: true)
                 continue
             }
+            // Most wires are at rest on a route that hasn't moved; there's nothing to do for them.
+            if wire.isResting, wire.points == route.points { continue }
             if wire.points.count != route.points.count {
                 // Tied or untied: keep the shape, with each new point starting where the wire is nearest to where that
                 // point is headed. It then slides into place rather than whipping across the canvas.
@@ -147,7 +152,7 @@ private extension WireSimulation.Wire {
         where points[index].distance(to: route.points[index]) > 0.05 || velocities[index].length > 0.5 {
             return false
         }
-        self = Self(points: route.points)
+        self = Self(points: route.points, isResting: true)
         return true
     }
 }

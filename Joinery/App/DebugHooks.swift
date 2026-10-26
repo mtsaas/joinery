@@ -5,18 +5,22 @@ import SwiftUI
 /// - `JOINERY_LIBRARY=<dir>`: use that folder as the library (see `Library`), so tests never touch the real one.
 /// - `JOINERY_OPEN=<name>`: select the schema with that name. A `.joinery` path passed as an argument is imported and
 ///   selected too. `JOINERY_NO_SIDEBAR`: hide the sidebar.
+/// - `JOINERY_APPEARANCE=light|dark`: whatever the system's set to.
 /// - `JOINERY_SNAPSHOT=out.png`: saves the front window to `out.png` and quits. `JOINERY_SNAPSHOT_FRAMES=n` saves n
 ///   frames 50 ms apart (out-0.png, out-1.png, …) to check an animation; `JOINERY_SNAPSHOT_DELAY` sets the wait.
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
 ///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection), `place <x> <y>` (puts the selected ties there),
-///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>|shift+cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `feedback-on`, `handle <n> <dx> <dy>`, `feedback-note <text>`, `feedback-save`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point), `shake <table> <seconds>` (drags it about and prints frame stats), `generate <tables> <foreign keys>` (replaces the schema with a made-up one; see `scripts/scale-test.sh`), `quit`, `select-ties`, `wheel` (prints it), `wheel-pick <direction>` (east, northWest, …), `ties` (prints them),
+///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>|shift+cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `feedback-on`, `handle <n> <dx> <dy>`, `feedback-note <text>`, `feedback-save`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point), `focus <table> <zoom>` (centers on that table), `shake <table> <seconds>` (drags it about and prints frame stats), `generate <tables> <foreign keys>` (replaces the schema with a made-up one; see `scripts/scale-test.sh`), `quit`, `select-ties`, `wheel` (prints it), `wheel-pick <direction>` (east, northWest, …), `ties` (prints them),
 ///   `wait <seconds>`.
 @MainActor
 enum DebugHooks {
     private static let environment = ProcessInfo.processInfo.environment
 
     static func launched() {
+        if let name = environment["JOINERY_APPEARANCE"] {
+            NSApp.appearance = NSAppearance(named: name == "light" ? .aqua : .darkAqua)
+        }
         if let name = environment["JOINERY_OPEN"] {
             let library = Library.shared
             library.selection = (library.schemas + library.collections.flatMap(\.schemas)).first { Library.name(of: $0) == name }
@@ -113,7 +117,7 @@ enum DebugHooks {
                 canvas.selection = [.table(document.wrappedValue.tables[table!].id)]
                 _ = FrameMeter.shared.report(over: 1)
                 let start = ProcessInfo.processInfo.systemUptime
-                var updates: [Double] = [], layouts: [Double] = []
+                var layouts: [Double] = []
                 let window = NSApp.windows.first(where: \.isVisible)
                 while ProcessInfo.processInfo.systemUptime - start < numbers[0] {
                     let t = ProcessInfo.processInfo.systemUptime - start
@@ -122,16 +126,17 @@ enum DebugHooks {
                         canvas.dragOffset = CGPoint(x: 120 * sin(t * 12), y: 60 * sin(t * 7))
                         window?.contentView?.layoutSubtreeIfNeeded()
                     }
-                    let (_, display) = FrameMeter.time { window?.displayIfNeeded(); CATransaction.flush() }
-                    updates.append(layout + display)
+                    window?.displayIfNeeded()
+                    CATransaction.flush()
                     layouts.append(layout)
                     try? await Task.sleep(for: .seconds(1.0 / 240))
                 }
                 canvas.dragOffset = nil
-                updates.sort()
+                // The view update a move causes, SwiftUI's and ours; not the display flush after it, which once frames come
+                // fast enough mostly waits for the screen.
+                layouts.sort()
                 print("shake:", FrameMeter.shared.report(over: numbers[0]),
-                      String(format: "| whole update %.1f ms median (layout %.1f), %.1f ms worst", updates[updates.count / 2],
-                             layouts.sorted()[layouts.count / 2], updates.last ?? 0))
+                      String(format: "| update %.1f ms median, %.1f ms worst", layouts[layouts.count / 2], layouts.last ?? 0))
             case "select-ties":
                 canvas.selection = Set(document.wrappedValue.zipTies.map { .zipTie($0.id) })
             case "ties":
@@ -187,6 +192,11 @@ enum DebugHooks {
                 canvas.isSpaceHeld.toggle()
             case "zoom" where numbers.count == 1:
                 canvas.zoom(by: numbers[0])
+            case "focus" where table != nil && numbers.count == 1:
+                let frame = Metrics.frame(of: document.wrappedValue.tables[table!])
+                canvas.zoom(by: numbers[0] / canvas.zoom)
+                canvas.pan(by: CGPoint(x: canvas.viewSize.width / 2, y: canvas.viewSize.height / 2)
+                    - canvas.viewPoint(CGPoint(x: frame.midX, y: frame.midY)))
             case "look" where numbers.count == 3:
                 canvas.zoom(by: numbers[2] / canvas.zoom)
                 canvas.pan(by: CGPoint(x: canvas.viewSize.width / 2, y: canvas.viewSize.height / 2)

@@ -388,4 +388,21 @@ struct JoineryTests {
         #expect(email.isUnique && email.isNullable)
         #expect(try SchemaTools.describe(schema).contains("\"unique\" : true"))
     }
+
+    @Test func reroutingReusesRoutesThatDidNotChange() {
+        let schema = Schema.synthetic(tables: 30, foreignKeys: 45)
+        for avoiding in [false, true] {
+            // From a routing with avoidance the other way, too, as when it's switched.
+            let first = Routing(schema: schema, avoidingTables: avoiding)
+            let switched = Routing(schema: schema, avoidingTables: avoiding, reusing: Routing(schema: schema, avoidingTables: !avoiding))
+            for (id, route) in first.routes { #expect(switched.routes[id]?.points == route.points, "switched to avoiding: \(avoiding)") }
+            let moved = schema.tables[15].id
+            let offsets = [moved: CGPoint(x: 37, y: -21)]
+            let fresh = Routing(schema: schema, tableOffsets: offsets, avoidingTables: avoiding)
+            let reused = Routing(schema: schema, tableOffsets: offsets, avoidingTables: avoiding, reusing: first)
+            // Exactly the same as working everything out again.
+            for (id, route) in fresh.routes { #expect(reused.routes[id]?.points == route.points, "avoiding: \(avoiding)") }
+            #expect(reused.routes.count == fresh.routes.count)
+        }
+    }
 }

@@ -53,6 +53,24 @@ enum Metrics {
         CGRect(origin: table.position, size: size(of: table))
     }
 
+    /// A cell of a table at `frame`: in the header (`row` nil), which spans the table, or a column's row.
+    static func cell(row: Int?, part: GridColumn, in frame: CGRect) -> CGRect {
+        guard let row else { return CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: headerHeight) }
+        let y = frame.minY + headerHeight + CGFloat(row) * rowHeight
+        let (x, width): (CGFloat, CGFloat) = switch part {
+        case .key: (0, keyColumnWidth)
+        case .name: (keyColumnWidth, tableWidth - keyColumnWidth - typeColumnWidth)
+        case .type: (tableWidth - typeColumnWidth, typeColumnWidth)
+        }
+        return CGRect(x: frame.minX + x, y: y, width: width, height: rowHeight)
+    }
+
+    /// How far around a socket the pointer grabs it, in canvas points: at least a comfortable target on screen, but no
+    /// taller than its row, so neighbors don't overlap.
+    static func socketReach(zoom: CGFloat) -> CGFloat {
+        max(socketHitRadius * 2 * zoom, min(minimumTarget, rowHeight * zoom)) / 2 / zoom
+    }
+
     static func socket(row: Int, side: Side, in frame: CGRect) -> CGPoint {
         CGPoint(x: side == .leading ? frame.minX : frame.maxX,
                 y: frame.minY + headerHeight + (CGFloat(row) + 0.5) * rowHeight)

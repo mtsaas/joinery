@@ -19,23 +19,28 @@ struct CanvasView: View {
     @State private var lastClick: (item: CanvasController.Item, time: TimeInterval)?
     @FocusState private var isCanvasFocused: Bool
     @State private var routingCache = RoutingCache()
+    @State private var textLayouts = TextLayouts()
+    @State private var wirePaths = WirePaths()
+    /// What the press on the canvas in progress landed on.
+    @State private var press: Press?
+    @State private var hoveredSocket: Routing.Socket?
     @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
-    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         let routing = routingCache.routing(for: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
                                            avoidingTables: wiresAvoidTables)
-        let colors = wireColors
+        let colors = routingCache.wireColors(for: schema)
         let foreignKeys = Dictionary(schema.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
                                      uniquingKeysWith: { first, _ in first })
         let socketColors = socketColors(routing, colors: colors)
         ZStack(alignment: .topLeading) {
             GridLayer(zoom: canvas.zoom, offset: canvas.offset)
             wireLayer(routing, colors: colors)
-            tables(socketColors: socketColors, foreignKeys: foreignKeys)
+            tableLayer(socketColors: socketColors, foreignKeys: foreignKeys)
             ForEach(schema.zipTies) { tie in
                 if let frame = routing.ties[tie.id] { tieHandle(tie, frame) }
             }
+            cellEditor
             gestureOverlay(routing)
             #if DEBUG
             if let edit = canvas.feedback { feedbackHandles(edit) }
@@ -411,7 +416,7 @@ struct CanvasView: View {
                 let ordered = relationships.sorted { !(highlighted?.contains($0.id) ?? false) && (highlighted?.contains($1.id) ?? false) }
                 for relationship in ordered {
                     guard let wire = simulation.wires[relationship.id] else { continue }
-                    let path = Path(smoothing: wire.points)
+                    let path = wirePaths.path(for: relationship.id, through: wire.points)
                     let isDimmed = highlighted.map { !$0.contains(relationship.id) } ?? false
                     let color = tieCrossings.contains(relationship.id) ? Color.primary : colors[relationship.id] ?? .gray
                     context.stroke(path, with: .color(Theme.canvas), style: StrokeStyle(lineWidth: Metrics.tieSpacing, lineCap: .round))
@@ -429,9 +434,8 @@ struct CanvasView: View {
                 }
             }
         }
-        .contentShape(.rect)
-        .onTapGesture(coordinateSpace: .canvas) { location in click(at: canvas.canvasPoint(location)) }
-        .gesture(backgroundDrag)
+        // Presses go to the table layer above, which covers the canvas.
+        .allowsHitTesting(false)
     }
 
     /// Drawn where its wires actually are, so it rides along as they spring into place. A bend point is a dot.
@@ -462,13 +466,6 @@ struct CanvasView: View {
         context.stroke(shape, with: .color(.black.opacity(0.18)), lineWidth: 0.5)
     }
 
-    /// A wire takes the color of the table it references.
-    private var wireColors: [Relationship.ID: Color] {
-        let locations = schema.columnLocations
-        return Dictionary(schema.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
-                          uniquingKeysWith: { first, _ in first })
-    }
-
     /// Sockets with wires take their wires' color; the rest have none.
     private func socketColors(_ routing: Routing, colors: [Relationship.ID: Color]) -> [Routing.Socket: Color] {
         var sockets: [Routing.Socket: Color] = [:]
@@ -497,76 +494,116 @@ struct CanvasView: View {
 
     // MARK: Tables
 
-    /// Everything a table's views show, read from the canvas up front: they read nothing from it themselves, so a
-    /// table whose look is unchanged can be skipped.
-    struct TableLook: Equatable {
-        var table: Table
-        /// In canvas points, moved by any drag.
-        var frame: CGRect
-        var zoom: CGFloat
-        var viewOffset: CGPoint
-        var isSelected: Bool
-        var cursor: CanvasController.Cell?
-        var isEditing: Bool
-        var selectsAllDraft: Bool
-        /// Only for the table being edited.
-        var draft: String
-        var targetColumn: Column.ID?
-        var foreignKeys: [Column.ID: Color]
-        var socketColors: [Routing.Socket: Color]
-        var displayScale: CGFloat
-
-        func viewPoint(_ point: CGPoint) -> CGPoint { point * zoom + viewOffset }
-    }
-
-    /// Each table's views are rebuilt only when what it shows changes, not for every frame of a drag.
-    private func tables(socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> some View {
-        ForEach(schema.tables) { table in
-            Unchanged(value: look(of: table, socketColors: socketColors, foreignKeys: foreignKeys)) { tableView($0) }
-                .equatable()
-        }
-    }
-
-    private func look(of table: Table, socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> TableLook {
-        let offset = canvas.tableOffsets[table.id] ?? .zero
-        let cursor = canvas.cell?.table == table.id ? canvas.cell : nil
-        var sockets: [Routing.Socket: Color] = [:]
-        for column in table.columns {
-            for side in Side.allCases {
-                let socket = Routing.Socket(column: column.id, side: side)
-                sockets[socket] = socketColors[socket]
+    /// Every table, and the presses on them and on the empty canvas around them.
+    private func tableLayer(socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> some View {
+        var selected = canvas.selectedTables
+        if case .table(let id)? = canvas.connection?.target { selected.insert(id) }
+        return TableLayer(tables: schema.tables, offsets: canvas.tableOffsets, zoom: canvas.zoom, viewOffset: canvas.offset,
+                          viewSize: canvas.viewSize, selected: selected, cursor: canvas.cell, targetColumn: targetColumn,
+                          foreignKeys: foreignKeys, socketColors: socketColors, hoveredSocket: hoveredSocket, layouts: textLayouts)
+            .contentShape(.rect)
+            .gesture(surfaceGesture)
+            .onContinuousHover { phase in
+                var socket: Routing.Socket?
+                if case .active(let location) = phase { socket = self.socket(at: canvas.canvasPoint(location))?.socket }
+                if socket != hoveredSocket { hoveredSocket = socket }
             }
-        }
-        return TableLook(table: table, frame: Metrics.frame(of: table).offsetBy(dx: offset.x, dy: offset.y), zoom: canvas.zoom,
-                         viewOffset: canvas.offset,
-                         isSelected: canvas.selection.contains(.table(table.id)) || canvas.connection?.target == .table(table.id),
-                         cursor: cursor, isEditing: cursor != nil && canvas.isEditingCell,
-                         selectsAllDraft: cursor != nil && canvas.selectsAllDraft, draft: cursor != nil ? canvas.draft : "",
-                         targetColumn: targetColumn.flatMap { id in table.columns.contains { $0.id == id } ? id : nil },
-                         foreignKeys: foreignKeys.filter { id, _ in table.columns.contains { $0.id == id } }, socketColors: sockets,
-                         displayScale: displayScale)
+            .pointerStyle(hoveredSocket == nil ? nil : .link)
+            .help(hoveredSocket == nil ? "" : "Drag to another column to add a foreign key")
     }
 
-    private func tableView(_ look: TableLook) -> some View {
-        let table = look.table, frame = look.frame, zoom = look.zoom
-        let origin = look.viewPoint(frame.origin)
-        return ZStack(alignment: .topLeading) {
-            TableCard(table: table, zoom: zoom, isSelected: look.isSelected, cursor: look.cursor, isEditing: look.isEditing,
-                      draft: $canvas.draft, selectsAllDraft: look.selectsAllDraft, targetColumn: look.targetColumn,
-                      foreignKeys: look.foreignKeys, editorLostFocus: { canvas.cellCommand = .commit(then: nil) },
-                      hairline: 1 / look.displayScale)
-                .equatable()
-                .position(x: origin.x + frame.width * zoom / 2, y: origin.y + frame.height * zoom / 2)
-                .gesture(itemGesture(.table(table.id), click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) })
-            ForEach(Array(table.columns.enumerated()), id: \.element.id) { row, column in
-                ForEach(Side.allCases, id: \.self) { side in
-                    let socket = Metrics.socket(row: row, side: side, in: frame)
-                    Socket(color: look.socketColors[Routing.Socket(column: column.id, side: side)], zoom: zoom)
-                        .position(look.viewPoint(socket))
-                        .gesture(connectGesture(from: column, at: socket))
-                        .help("Drag to another column to add a foreign key")
+    /// What a press on the canvas is for, from where it started.
+    enum Press {
+        /// Drawing a foreign key out of a column's socket.
+        case socket(Column, at: CGPoint)
+        case table(Table)
+        case background
+    }
+
+    private func press(at point: CGPoint) -> Press {
+        if let (column, socket, _) = socket(at: point) { return .socket(column, at: socket) }
+        if let table = schema.tables.last(where: { Metrics.frame(of: $0).contains(point) }) { return .table(table) }
+        return .background
+    }
+
+    /// The socket within reach of `point`, in canvas points, with its column and center.
+    private func socket(at point: CGPoint) -> (column: Column, center: CGPoint, socket: Routing.Socket)? {
+        let reach = Metrics.socketReach(zoom: canvas.zoom)
+        for table in schema.tables.reversed() {
+            let frame = Metrics.frame(of: table)
+            guard frame.insetBy(dx: -reach, dy: -reach).contains(point) else { continue }
+            let row = Int(((point.y - frame.minY - Metrics.headerHeight) / Metrics.rowHeight).rounded(.down))
+            guard table.columns.indices.contains(row) else { continue }
+            for side in Side.allCases {
+                let center = Metrics.socket(row: row, side: side, in: frame)
+                if center.distance(to: point) <= reach {
+                    return (table.columns[row], center, Routing.Socket(column: table.columns[row].id, side: side))
                 }
             }
+        }
+        return nil
+    }
+
+    /// One gesture for the whole canvas, which does what suits where the press started: from a socket it draws a
+    /// foreign key; on a table it selects, moves, or picks a cell; on empty canvas it selects with a rectangle, ties
+    /// with Option, or clicks what's there.
+    private var surfaceGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .canvas)
+            .onChanged { value in
+                let press = self.press ?? self.press(at: canvas.canvasPoint(value.startLocation))
+                if self.press == nil { self.press = press }
+                switch press {
+                case .socket(let column, let socket):
+                    // A short way first, so a click on a socket doesn't start a wire.
+                    guard canvas.connection != nil || CGPoint(value.translation).length >= 2 else { return }
+                    dragConnection(from: column, at: socket, to: canvas.canvasPoint(value.location))
+                case .table(let table):
+                    dragItem(.table(table.id), by: value.translation)
+                case .background:
+                    dragBackground(from: value.startLocation, to: value.location)
+                }
+            }
+            .onEnded { value in
+                let press = self.press ?? .background
+                self.press = nil
+                switch press {
+                case .socket:
+                    finishConnection()
+                case .table(let table):
+                    dropItem(.table(table.id), at: value.location, translation: value.translation,
+                             click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) }
+                case .background:
+                    if canvas.backgroundDrag == nil { click(at: canvas.canvasPoint(value.location)) } else { finishBackgroundDrag() }
+                }
+            }
+    }
+
+    private func textStyle(of cell: CanvasController.Cell, row: Int?, in table: Table) -> TableText {
+        guard let row else { return .header }
+        return cell.part == .type ? .type : table.columns[row].isPrimaryKey ? .keyName : .name
+    }
+
+    /// The cell being edited: a text field over its place in the table, in the same type, inside the grid cursor, with
+    /// the cell's own background hiding the text it replaces.
+    @ViewBuilder
+    private var cellEditor: some View {
+        if canvas.isEditingCell, let cell = canvas.cell, let table = schema.table(cell.table) {
+            let offset = canvas.tableOffsets[table.id] ?? .zero
+            let row: Int? = if case .column(let id) = cell.row { table.columns.firstIndex { $0.id == id } } else { nil }
+            let zoom = canvas.zoom
+            // Inside the cursor's border (see `TableLayer`).
+            let inset = 1 + max(2 * zoom, 1.5)
+            let rect = Metrics.cell(row: row, part: cell.part, in: Metrics.frame(of: table).offsetBy(dx: offset.x, dy: offset.y))
+            CellEditor(text: $canvas.draft, selectsAll: canvas.selectsAllDraft, completesTypes: cell.part == .type) {
+                canvas.cellCommand = .commit(then: nil)
+            }
+            .font(textStyle(of: cell, row: row, in: table).swiftUIFont(zoom: zoom))
+            .foregroundStyle(cell.part == .type ? .secondary : .primary)
+            .lineLimit(1)
+            .padding(.horizontal, Metrics.cellInset * zoom - inset)
+            .frame(width: rect.width * zoom - inset * 2, height: rect.height * zoom - inset * 2, alignment: .leading)
+            .background(row == nil ? table.color.headerFill : Theme.card)
+            .position(canvas.viewPoint(CGPoint(x: rect.midX, y: rect.midY)))
         }
     }
 
@@ -592,49 +629,52 @@ struct CanvasView: View {
 
     /// Clicking selects, Shift-clicking adds; dragging moves everything selected. A click (without a drag) also calls
     /// `click`, and a double-click `doubleClick`, with where, in canvas points.
-    private func itemGesture(_ item: CanvasController.Item, click: ((CGPoint) -> Void)? = nil,
-                             doubleClick: @escaping (CGPoint) -> Void) -> some Gesture {
+    private func itemGesture(_ item: CanvasController.Item, doubleClick: @escaping (CGPoint) -> Void) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .canvas)
-            .onChanged { value in
-                if canvas.dragOffset == nil {
-                    isCanvasFocused = true
-                    canvas.click(item, extending: NSEvent.modifierFlags.contains(.shift))
-                }
-                canvas.dragOffset = CGPoint(value.translation) / canvas.zoom
-            }
-            .onEnded { value in
-                canvas.dragOffset = nil
-                let delta = CGPoint(value.translation) / canvas.zoom
-                if delta.length * canvas.zoom > 2 {
-                    schema.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
-                    lastClick = nil
-                    return
-                }
-                click?(canvas.canvasPoint(value.location))
-                let now = ProcessInfo.processInfo.systemUptime
-                if let last = lastClick, last.item == item, now - last.time < NSEvent.doubleClickInterval {
-                    lastClick = nil
-                    doubleClick(canvas.canvasPoint(value.location))
-                } else {
-                    lastClick = (item, now)
-                }
-            }
+            .onChanged { dragItem(item, by: $0.translation) }
+            .onEnded { dropItem(item, at: $0.location, translation: $0.translation, click: nil, doubleClick: doubleClick) }
     }
 
-    private func connectGesture(from column: Column, at socket: CGPoint) -> some Gesture {
-        DragGesture(minimumDistance: 2, coordinateSpace: .canvas)
-            .onChanged { value in
-                let end = canvas.canvasPoint(value.location)
-                let target = schema.dropTarget(at: end).flatMap { $0 == .column(column.id) ? nil : $0 }
-                canvas.connection = .init(from: column.id, start: socket, end: end, target: target)
-            }
-            .onEnded { _ in
-                if let connection = canvas.connection, let target = connection.target,
-                   let id = schema.connect(dragging: connection.from, onto: target) {
-                    canvas.selection = [.relationship(id)]
-                }
-                canvas.connection = nil
-            }
+    /// Pressing selects the item (Shift adds it); dragging moves the selection.
+    private func dragItem(_ item: CanvasController.Item, by translation: CGSize) {
+        if canvas.dragOffset == nil {
+            isCanvasFocused = true
+            canvas.click(item, extending: NSEvent.modifierFlags.contains(.shift))
+        }
+        canvas.dragOffset = CGPoint(translation) / canvas.zoom
+    }
+
+    /// Ends a move, or if it hardly moved, a click (or double-click) at `location`, in view points.
+    private func dropItem(_ item: CanvasController.Item, at location: CGPoint, translation: CGSize,
+                          click: ((CGPoint) -> Void)?, doubleClick: (CGPoint) -> Void) {
+        canvas.dragOffset = nil
+        let delta = CGPoint(translation) / canvas.zoom
+        if delta.length * canvas.zoom > 2 {
+            schema.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
+            lastClick = nil
+            return
+        }
+        click?(canvas.canvasPoint(location))
+        let now = ProcessInfo.processInfo.systemUptime
+        if let last = lastClick, last.item == item, now - last.time < NSEvent.doubleClickInterval {
+            lastClick = nil
+            doubleClick(canvas.canvasPoint(location))
+        } else {
+            lastClick = (item, now)
+        }
+    }
+
+    private func dragConnection(from column: Column, at socket: CGPoint, to end: CGPoint) {
+        let target = schema.dropTarget(at: end).flatMap { $0 == .column(column.id) ? nil : $0 }
+        canvas.connection = .init(from: column.id, start: socket, end: end, target: target)
+    }
+
+    private func finishConnection() {
+        if let connection = canvas.connection, let target = connection.target,
+           let id = schema.connect(dragging: connection.from, onto: target) {
+            canvas.selection = [.relationship(id)]
+        }
+        canvas.connection = nil
     }
 
     // MARK: The grid
@@ -837,40 +877,39 @@ struct CanvasView: View {
     }
 
     /// With Option, draws a line to tie wires (as a right-drag does, through the event monitor); otherwise drags out a
-    /// selection rectangle.
-    private var backgroundDrag: some Gesture {
-        DragGesture(minimumDistance: 3, coordinateSpace: .canvas)
-            .onChanged { value in
-                let start = canvas.canvasPoint(value.startLocation), now = canvas.canvasPoint(value.location)
-                if canvas.backgroundDrag == nil {
-                    isCanvasFocused = true
-                    let flags = NSEvent.modifierFlags
-                    if flags.contains(.option) {
-                        canvas.backgroundDrag = .stroke
-                    } else {
-                        canvas.backgroundDrag = .marquee(base: flags.contains(.shift) ? canvas.selection : [])
-                    }
-                }
-                switch canvas.backgroundDrag {
-                case .stroke:
-                    canvas.stroke = .init(start: start, end: now)
-                case .marquee(let base):
-                    let rect = CGRect(x: min(start.x, now.x), y: min(start.y, now.y), width: abs(now.x - start.x), height: abs(now.y - start.y))
-                    canvas.marquee = rect
-                    canvas.selection = base.union(items(in: rect))
-                case nil:
-                    break
-                }
+    /// selection rectangle. Only once it's gone a few points, so a click stays a click. In view points.
+    private func dragBackground(from startLocation: CGPoint, to location: CGPoint) {
+        guard canvas.backgroundDrag != nil || startLocation.distance(to: location) >= 3 else { return }
+        let start = canvas.canvasPoint(startLocation), now = canvas.canvasPoint(location)
+        if canvas.backgroundDrag == nil {
+            isCanvasFocused = true
+            let flags = NSEvent.modifierFlags
+            if flags.contains(.option) {
+                canvas.backgroundDrag = .stroke
+            } else {
+                canvas.backgroundDrag = .marquee(base: flags.contains(.shift) ? canvas.selection : [])
             }
-            .onEnded { _ in
-                switch canvas.backgroundDrag {
-                case .stroke:
-                    finishStroke()
-                case .marquee, nil:
-                    canvas.marquee = nil
-                }
-                canvas.backgroundDrag = nil
-            }
+        }
+        switch canvas.backgroundDrag {
+        case .stroke:
+            canvas.stroke = .init(start: start, end: now)
+        case .marquee(let base):
+            let rect = CGRect(x: min(start.x, now.x), y: min(start.y, now.y), width: abs(now.x - start.x), height: abs(now.y - start.y))
+            canvas.marquee = rect
+            canvas.selection = base.union(items(in: rect))
+        case nil:
+            break
+        }
+    }
+
+    private func finishBackgroundDrag() {
+        switch canvas.backgroundDrag {
+        case .stroke:
+            finishStroke()
+        case .marquee, nil:
+            canvas.marquee = nil
+        }
+        canvas.backgroundDrag = nil
     }
 
     /// What a selection rectangle picks up, of the tables and wires it touches and the ties inside it.
@@ -1113,19 +1152,6 @@ private struct GridHints: View {
     }
 }
 
-/// `content` for `value`, re-evaluated only when `value` changes (with `.equatable()`). The content must take
-/// everything it shows from `value`: whatever else it reads won't update it.
-private struct Unchanged<Value: Equatable, Content: View>: View, Equatable {
-    let value: Value
-    let content: (Value) -> Content
-
-    var body: some View { content(value) }
-
-    nonisolated static func == (a: Self, b: Self) -> Bool {
-        MainActor.assumeIsolated { a.value == b.value }
-    }
-}
-
 /// The last routing worked out, kept while nothing it depends on changes: a redraw that only moves the grid cursor or
 /// the selection needn't route every wire again.
 @MainActor
@@ -1133,23 +1159,52 @@ private final class RoutingCache {
     private var inputs: (schema: Schema, tables: [Table.ID: CGPoint], ties: [ZipTie.ID: CGPoint], avoiding: Bool)?
     private var routing: Routing?
 
+    private var colors: (schema: Schema, colors: [Relationship.ID: Color])?
+
+    /// Each wire's color, the color of the table it references, worked out again only when the schema changes.
+    func wireColors(for schema: Schema) -> [Relationship.ID: Color] {
+        if let colors, colors.schema == schema { return colors.colors }
+        let locations = schema.columnLocations
+        let wireColors = Dictionary(schema.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
+                                    uniquingKeysWith: { first, _ in first })
+        colors = (schema, wireColors)
+        return wireColors
+    }
+
     func routing(for schema: Schema, tableOffsets: [Table.ID: CGPoint], tieOffsets: [ZipTie.ID: CGPoint],
                  avoidingTables: Bool) -> Routing {
         if let inputs, let routing, inputs.avoiding == avoidingTables, inputs.tables == tableOffsets,
            inputs.ties == tieOffsets, inputs.schema == schema {
             return routing
         }
-        #if DEBUG
-        let (routing, milliseconds) = FrameMeter.time {
-            Routing(schema: schema, tableOffsets: tableOffsets, tieOffsets: tieOffsets, avoidingTables: avoidingTables)
+        // From the last one, so only routes whose ends, ties or nearby tables moved are worked out again.
+        let route = { [routing] in
+            Routing(schema: schema, tableOffsets: tableOffsets, tieOffsets: tieOffsets, avoidingTables: avoidingTables,
+                    reusing: routing)
         }
+        #if DEBUG
+        let (routing, milliseconds) = FrameMeter.time(route)
         FrameMeter.shared.routed(in: milliseconds)
         #else
-        let routing = Routing(schema: schema, tableOffsets: tableOffsets, tieOffsets: tieOffsets, avoidingTables: avoidingTables)
+        let routing = route()
         #endif
         inputs = (schema, tableOffsets, tieOffsets, avoidingTables)
         self.routing = routing
         return routing
+    }
+}
+
+/// Each wire's drawn path, kept while its points stay put: most wires are at rest most of the time, and smoothing a
+/// path through them is most of the cost of drawing one.
+@MainActor
+private final class WirePaths {
+    private var paths: [Relationship.ID: (points: [CGPoint], path: Path)] = [:]
+
+    func path(for wire: Relationship.ID, through points: [CGPoint]) -> Path {
+        if let cached = paths[wire], cached.points == points { return cached.path }
+        let path = Path(smoothing: points)
+        paths[wire] = (points, path)
+        return path
     }
 }
 

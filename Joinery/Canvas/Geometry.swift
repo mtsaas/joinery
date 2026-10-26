@@ -20,6 +20,17 @@ extension CGPoint {
 }
 
 /// How far along `a`→`b` it crosses `c`→`d`, from 0 to 1, or nil if the segments don't cross.
+extension CGRect {
+    /// How far `point` is from the rectangle; 0 inside it.
+    func distance(to point: CGPoint) -> CGFloat {
+        CGPoint(x: max(minX - point.x, 0, point.x - maxX), y: max(minY - point.y, 0, point.y - maxY)).length
+    }
+}
+
+extension CGSize {
+    static func * (size: CGSize, scale: CGFloat) -> CGSize { CGSize(width: size.width * scale, height: size.height * scale) }
+}
+
 func crossing(_ a: CGPoint, _ b: CGPoint, _ c: CGPoint, _ d: CGPoint) -> CGFloat? {
     let r = b - a, s = d - c
     let denominator = r.x * s.y - r.y * s.x

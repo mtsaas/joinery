@@ -31,7 +31,7 @@ struct Routing {
         }
     }
 
-    private struct Waypoint {
+    private struct Waypoint: Equatable {
         var point: CGPoint
         /// The direction the wire runs through this point.
         var tangent: CGPoint
@@ -48,6 +48,22 @@ struct Routing {
     /// The sockets each wire is plugged into: its foreign key's, then the referenced column's.
     private(set) var sockets: [Relationship.ID: (from: Socket, to: Socket)] = [:]
 
+    /// What each wire's route was worked out from: where it runs through, its curve before avoiding anything, and the
+    /// tables that pushed it. A routing made from this one reuses every route whose inputs are the same, so dragging
+    /// a table only reroutes its own wires and those near it.
+    private struct Inputs {
+        var waypoints: [Waypoint]
+        var curve: Route
+        var bounds: CGRect
+        var obstacles: [CGRect]
+        var own: [CGRect]
+    }
+
+    private var inputs: [Relationship.ID: Inputs] = [:]
+    /// Where each table was, to tell what's moved since.
+    private var frames: [Table.ID: CGRect] = [:]
+    private var isAvoiding = false
+
     #if DEBUG
     /// How many routings have been worked out, to check redraws aren't redoing it needlessly.
     nonisolated(unsafe) static var built = 0
@@ -57,12 +73,12 @@ struct Routing {
     ///   - tableOffsets: How far tables being dragged have moved, not yet saved to `schema`.
     ///   - tieOffsets: The same for zip ties.
     ///   - avoidingTables: Whether wires bend around tables in their way rather than running under them.
+    ///   - previous: A routing to reuse unchanged routes from.
     init(schema: Schema, tableOffsets: [Table.ID: CGPoint] = [:], tieOffsets: [ZipTie.ID: CGPoint] = [:],
-         avoidingTables: Bool = false) {
+         avoidingTables: Bool = false, reusing previous: Routing? = nil) {
         #if DEBUG
         Self.built += 1
         #endif
-        var frames: [Table.ID: CGRect] = [:]
         var rows: [Column.ID: (table: Table.ID, row: Int)] = [:]
         for table in schema.tables {
             frames[table.id] = Metrics.frame(of: table).offsetBy(dx: tableOffsets[table.id]?.x ?? 0, dy: tableOffsets[table.id]?.y ?? 0)
@@ -132,6 +148,23 @@ struct Routing {
                                relationships: tie.relationships)
         }
 
+        // In the schema's order, so the obstacles a wire meets are listed the same way each time.
+        let tableFrames = schema.tables.compactMap { frames[$0.id] }
+        isAvoiding = avoidingTables
+        // Where tables have moved from and to since `previous`: only wires near those can meet different tables. Nil if
+        // there's nothing to compare with, or it didn't avoid tables, so every wire looks again.
+        let moved = previous.flatMap { avoidingTables && $0.isAvoiding ? $0 : nil }.map { previous in
+            frames.flatMap { id, frame in previous.frames[id] == frame ? [] : [frame] + [previous.frames[id]].compactMap { $0 } }
+                + previous.frames.compactMap { id, frame in frames[id] == nil ? frame : nil }
+        }
+        let margin = Self.avoidanceReach * 2
+        // Close enough to push: within reach of the wire itself, not just of the box around it, which for a long
+        // diagonal wire covers half the schema. Twice the reach, for where pushes and lifts carry it.
+        func isNear(_ frame: CGRect, _ curve: Route, within bounds: CGRect) -> Bool {
+            frame.intersects(bounds.insetBy(dx: -margin, dy: -margin)) && curve.points.contains { frame.distance(to: $0) < margin }
+        }
+        // Wires to bend around tables, worked out together after the rest.
+        var toAvoid: [(id: Relationship.ID, curve: Route, obstacles: [CGRect], own: [CGRect])] = []
         for relationship in schema.relationships {
             guard let (start, end) = ends[relationship.id] else { continue }
             var waypoints = [start]
@@ -142,17 +175,48 @@ struct Routing {
                 waypoints.append(Waypoint(point: tie.slot(slot), tangent: tangent, isTie: true))
             }
             waypoints.append(end)
-            routes[relationship.id] = Self.route(through: waypoints)
-        }
 
-        if avoidingTables {
-            for relationship in schema.relationships {
-                // A wire isn't pushed off the tables it plugs into, only kept from running under them.
-                let own = [relationship.from, relationship.to].compactMap { rows[$0].flatMap { frames[$0.table] } }
-                let others = frames.values.filter { !own.contains($0) }
-                routes[relationship.id]?.avoid(others, staying: own)
+            let before = previous?.inputs[relationship.id]
+            let isSameCurve = before?.waypoints == waypoints
+            let curve = isSameCurve ? before!.curve : Self.route(through: waypoints)
+            let bounds = isSameCurve ? before!.bounds : curve.bounds
+            var obstacles: [CGRect] = [], own: [CGRect] = []
+            if avoidingTables {
+                if isSameCurve, let before, let moved, !moved.contains(where: { isNear($0, curve, within: bounds) }) {
+                    // Nothing near it moved, so it meets the same tables.
+                    (obstacles, own) = (before.obstacles, before.own)
+                } else {
+                    // A wire isn't pushed off the tables it plugs into, only kept from running under them.
+                    let ends = [relationship.from, relationship.to].compactMap { rows[$0].flatMap { frames[$0.table] } }
+                    obstacles = tableFrames.filter { !ends.contains($0) && isNear($0, curve, within: bounds) }
+                    own = ends.filter { $0.intersects(bounds) }
+                }
+            }
+            inputs[relationship.id] = Inputs(waypoints: waypoints, curve: curve, bounds: bounds, obstacles: obstacles, own: own)
+            if let before, before.waypoints == waypoints, before.obstacles == obstacles, before.own == own,
+               let route = previous?.routes[relationship.id] {
+                routes[relationship.id] = route
+            } else if obstacles.isEmpty && own.isEmpty {
+                routes[relationship.id] = curve
+            } else {
+                toAvoid.append((relationship.id, curve, obstacles, own))
             }
         }
+
+        // Each wire bends on its own, so they're shared among the cores: dragging a table through a crowd of wires,
+        // turning avoidance on, or opening a big schema reroutes many at once.
+        var avoided = [Route?](repeating: nil, count: toAvoid.count)
+        avoided.withUnsafeMutableBufferPointer { results in
+            let results = results
+            let work = { (index: Int) in
+                var route = toAvoid[index].curve
+                route.avoid(toAvoid[index].obstacles, staying: toAvoid[index].own)
+                results[index] = route
+            }
+            // A few aren't worth the handoff.
+            if toAvoid.count < 4 { (0..<toAvoid.count).forEach(work) } else { DispatchQueue.concurrentPerform(iterations: toAvoid.count, execute: work) }
+        }
+        for (wire, route) in zip(toAvoid, avoided) { routes[wire.id] = route }
     }
 
     /// How far out of a socket or tie the wire is held: completely at the anchor, easing to not at all here. It's
@@ -229,19 +293,21 @@ struct Routing {
 }
 
 extension Routing.Route {
+    var bounds: CGRect {
+        let xs = points.map(\.x), ys = points.map(\.y)
+        return CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
+    }
+
     /// Bends the wire around `obstacles` as if each table repelled it: a push that's strongest at the table and fades
     /// smoothly to nothing at `Routing.avoidanceReach`, against the wire's wish to keep its own shape. It's the wire's
     /// displacement that's smoothed, not its points, so it bulges around tables in easy curves and relaxes back to its
     /// natural route where nothing pushes. The finished displacement is then faded out toward each socket and tie by
     /// `flexibility` (squared), which starts flat, so the wire still leaves them square.
-    // ponytail: wires × points × tables × passes per redraw; spatial bucketing if schemas reach hundreds of tables.
-    /// - Parameter own: The wire's own tables. They don't push it, but it's lifted out from under them.
+    /// - Parameters:
+    ///   - obstacles: Tables near enough to push it, within `Routing.avoidanceReach` of `bounds`.
+    ///   - own: The wire's own tables, where they overlap it. They don't push it, but it's lifted out from under them.
     mutating func avoid(_ obstacles: [CGRect], staying own: [CGRect] = []) {
         let reach = Routing.avoidanceReach
-        let xs = points.map(\.x), ys = points.map(\.y)
-        let bounds = CGRect(x: xs.min()!, y: ys.min()!, width: xs.max()! - xs.min()!, height: ys.max()! - ys.min()!)
-        let obstacles = obstacles.filter { $0.insetBy(dx: -reach, dy: -reach).intersects(bounds) }
-        let own = own.filter { $0.intersects(bounds) }
         guard !obstacles.isEmpty || !own.isEmpty else { return }
 
         let base = points
