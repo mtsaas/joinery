@@ -252,7 +252,9 @@ enum DebugHooks {
                     if let state = canvas.untangling { print(String(format: "untangling %.0f%%: %d → %d", state.progress * 100, state.from, state.best)) }
                     try? await Task.sleep(for: .seconds(0.5))
                 }
-                print(String(format: "untangled in %.1f s", ProcessInfo.processInfo.systemUptime - started))
+                let frames = document.wrappedValue.tables.map(Metrics.frame)
+                let overlapping = frames.indices.flatMap { i in frames.indices.filter { $0 > i && frames[i].intersects(frames[$0]) } }.count
+                print(String(format: "untangled in %.1f s, %d overlapping pairs", ProcessInfo.processInfo.systemUptime - started, overlapping))
             case "routings":
                 print("routings built: \(Routing.built)")
             case "clock":

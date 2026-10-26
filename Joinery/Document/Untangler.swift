@@ -7,7 +7,7 @@ import Foundation
 /// far the nearer end of each wire is past the other's line. That slopes the same way however far from uncrossing,
 /// where a smoothed count goes flat (measured with `scripts/untangle-bench.sh`: this leaves about a fifth of the
 /// crossings in scrambled models; a smoothed count, two thirds). With it go a strong push apart where tables would
-/// overlap, a gentle pull on wires much longer than usual, and a weak one back toward where each table started. Each step
+/// overlap (and pushing apart after every step), a gentle pull on wires much longer than usual, and a weak one back toward where each table started. Each step
 /// moves each table down that slope, by Adam's rule, in steps that shrink as it goes. Nothing is random: the same model
 /// and selection always come out the same. Tables stay within a little more than the area they first spanned: unbounded,
 /// a few were flung far off to escape their crossings, spreading the selection over three times its area for 2% fewer
@@ -111,7 +111,14 @@ struct Untangler {
         iteration += 1
         let rate = 1 + (tuning.startRate - 1) * (1 - progress)
         let (beta1, beta2, epsilon) = (0.9, 0.999, 1e-8)
-        let slopes = moving.map { slope(of: $0) }
+        let segments = wires.indices.map { endpoints($0, in: positions) }
+        // Each table's slope is its own, so they're shared among the cores.
+        var slopes = [CGPoint](repeating: .zero, count: moving.count)
+        slopes.withUnsafeMutableBufferPointer { results in
+            let results = results
+            let work = { (number: Int) in results[number] = self.slope(of: self.moving[number], segments: segments) }
+            if moving.count < 4 { (0..<moving.count).forEach(work) } else { DispatchQueue.concurrentPerform(iterations: moving.count, execute: work) }
+        }
         for (number, table) in moving.enumerated() {
             let g = slopes[number]
             momentum[number] = momentum[number] * beta1 + g * (1 - beta1)
@@ -121,6 +128,10 @@ struct Untangler {
             positions[table] -= CGPoint(x: rate * m.x / (v.x.squareRoot() + epsilon), y: rate * m.y / (v.y.squareRoot() + epsilon))
             positions[table] = kept(positions[table], size: sizes[table])
         }
+        // Pushed out of each other every step, so the descent only passes through arrangements without overlaps: left to
+        // the overlap term alone, a table joined to many is pulled into a pile of them, and the descent finds its way
+        // out of that worse (on a real 45-table model, 101 crossings left of 174 against 66).
+        positions = separated(positions, passes: 2)
         if iteration % Self.checkEvery == 0 || isDone { remember() }
     }
 
@@ -141,10 +152,10 @@ struct Untangler {
 
     /// `positions` with moving tables pushed out of each other and of the rest, a gap apart: each pair that's too close
     /// is parted along the way that's shortest, the moving tables taking all of it (or half each, both moving).
-    private func separated(_ positions: [CGPoint]) -> [CGPoint] {
+    private func separated(_ positions: [CGPoint], passes: Int = 60) -> [CGPoint] {
         var positions = positions
         let isMoving = Set(moving)
-        for _ in 0..<60 {
+        for _ in 0..<passes {
             var moved = false
             for table in moving {
                 for other in positions.indices where other != table {
@@ -170,42 +181,46 @@ struct Untangler {
     }
 
     /// Which way, and how steeply, the tangle grows as a table moves: from the change either side, its wires and its
-    /// neighbors being all that changes.
-    private func slope(of table: Int) -> CGPoint {
+    /// neighbors being all that changes. `segments` are every wire's, as things stand.
+    private func slope(of table: Int, segments: [(CGPoint, CGPoint)]) -> CGPoint {
         let h: CGFloat = 2
-        func energy(at point: CGPoint) -> Double {
-            var moved = positions
-            moved[table] = point
-            return localEnergy(of: table, in: moved)
-        }
+        func energy(at point: CGPoint) -> Double { localEnergy(of: table, at: point, segments: segments) }
         let p = positions[table]
         return CGPoint(x: (energy(at: p + CGPoint(x: h, y: 0)) - energy(at: p - CGPoint(x: h, y: 0))) / (2 * h),
                        y: (energy(at: p + CGPoint(x: 0, y: h)) - energy(at: p - CGPoint(x: 0, y: h))) / (2 * h))
     }
 
-    /// The part of the tangle a table's position affects.
-    private func localEnergy(of table: Int, in positions: [CGPoint]) -> Double {
+    /// The part of the tangle a table's position affects, were it at `point`. `segments` are every wire's, as things
+    /// stand. Run for every table four times a step, so pairs too far apart to touch are passed over first.
+    private func localEnergy(of table: Int, at point: CGPoint, segments: [(CGPoint, CGPoint)]) -> Double {
         var energy = 0.0
-        let own = wiresOf[table]
-        let segments = wires.indices.map { endpoints($0, in: positions) }
-        // Crossings of its wires with every other.
-        for a in own {
-            for b in wires.indices where b != a && !(own.contains(b) && b < a) && !sharesTable(a, b) {
-                energy += tuning.depthWeight * Self.crossingDepth(segments[a], segments[b])
+        for a in wiresOf[table] {
+            // Its own wires move with it; the rest stay put. Its wires all end at it, so don't cross one another.
+            let w = wires[a]
+            let s = (w.from == table ? CGPoint(x: point.x + sizes[table].width / 2, y: point.y + w.fromY) : segments[a].0,
+                     w.to == table ? CGPoint(x: point.x + sizes[table].width / 2, y: point.y + w.toY) : segments[a].1)
+            let box = (minX: min(s.0.x, s.1.x), maxX: max(s.0.x, s.1.x), minY: min(s.0.y, s.1.y), maxY: max(s.0.y, s.1.y))
+            for b in wires.indices where b != a {
+                let t = segments[b]
+                guard max(t.0.x, t.1.x) >= box.minX, min(t.0.x, t.1.x) <= box.maxX,
+                      max(t.0.y, t.1.y) >= box.minY, min(t.0.y, t.1.y) <= box.maxY, !sharesTable(a, b) else { continue }
+                energy += tuning.depthWeight * Self.crossingDepth(s, t)
             }
             // Wires much longer than usual pull their tables in.
-            let length = segments[a].0.distance(to: segments[a].1)
+            let length = s.0.distance(to: s.1)
             if length > Self.reach { energy += 0.002 * Double((length - Self.reach) * (length - Self.reach)) / Double(Self.reach) }
         }
         // Overlapping other tables, or coming within the gap of them, pushes it away, hard.
-        let frame = CGRect(origin: positions[table], size: sizes[table]).insetBy(dx: -Self.gap / 2, dy: -Self.gap / 2)
+        let size = sizes[table], gap = Self.gap
         for other in positions.indices where other != table {
-            let near = CGRect(origin: positions[other], size: sizes[other]).insetBy(dx: -Self.gap / 2, dy: -Self.gap / 2)
-            let overlap = frame.intersection(near)
-            if !overlap.isNull { energy += 0.05 * Double(min(overlap.width, overlap.height) * min(overlap.width, overlap.height)) }
+            let p = positions[other], o = sizes[other]
+            let width = min(point.x + size.width, p.x + o.width) - max(point.x, p.x) + gap
+            let height = min(point.y + size.height, p.y + o.height) - max(point.y, p.y) + gap
+            if width > 0 && height > 0 { energy += 0.05 * Double(min(width, height) * min(width, height)) }
         }
         // A little toward where it started.
-        energy += 0.00002 * Double(positions[table].distance(to: start[table]) * positions[table].distance(to: start[table]))
+        let away = point.distance(to: start[table])
+        energy += 0.00002 * Double(away * away)
         return energy
     }
 
