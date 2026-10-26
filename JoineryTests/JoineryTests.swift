@@ -430,4 +430,24 @@ struct JoineryTests {
             #expect(reused.routes.count == fresh.routes.count)
         }
     }
+
+    @Test func aligningTablesLeavesTiesCaughtWithThemAlone() {
+        let canvas = CanvasController()
+        let tables = [UUID(), UUID()], ties = [UUID(), UUID()]
+        canvas.selection = Set(tables.map { .table($0) } + ties.map { .zipTie($0) })
+        #expect(canvas.alignable?.tables == Set(tables))
+        #expect(canvas.alignable?.ties.isEmpty == true)
+        canvas.selection = Set(ties.map { .zipTie($0) })
+        #expect(canvas.alignable?.ties == Set(ties), "ties on their own line up")
+        canvas.selection = [.table(tables[0]), .zipTie(ties[0])]
+        #expect(canvas.alignable == nil, "one table is nothing to line up")
+    }
+
+    @Test func overlappingTablesAreDrawnInLayers() {
+        let frames = [CGRect(x: 0, y: 0, width: 236, height: 300), CGRect(x: 600, y: 0, width: 236, height: 100),
+                      CGRect(x: 100, y: 150, width: 236, height: 100), CGRect(x: 150, y: 200, width: 236, height: 100)]
+        let tables = frames.map { (table: Table(name: "t", position: $0.origin, color: .blue), frame: $0) }
+        // Apart, one layer; on top of another, the next one up.
+        #expect(TableLayer.layered(tables).map { $0.map(\.frame) } == [[frames[0], frames[1]], [frames[2]], [frames[3]]])
+    }
 }

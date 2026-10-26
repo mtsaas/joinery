@@ -190,13 +190,13 @@ struct CanvasView: View {
                 },
             ]
         }
-        let tables = canvas.selectedTables, ties = canvas.selectedTies
-        if tables.count + ties.count >= 2 {
-            let count = [(tables.count, "table"), (ties.count, "tie")].filter { $0.0 > 0 }
+        let tables = canvas.selectedTables
+        if let (aligned, ties) = canvas.alignable {
+            let count = [(aligned.count, "table"), (ties.count, "tie")].filter { $0.0 > 0 }
                 .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }.formatted()
             commands += Schema.Alignment.allCases.map { alignment in
                 PaletteCommand(id: alignment.title, title: alignment.title, subtitle: count, symbol: alignment.symbol) {
-                    schema.align(tables, ties: ties, alignment)
+                    schema.align(aligned, ties: ties, alignment)
                 }
             }
         }
@@ -288,18 +288,18 @@ struct CanvasView: View {
     private func wheelContents(_ wheel: CanvasController.Wheel) -> (slots: [CommandWheel.Direction: PaletteCommand],
                                                                    extras: [PaletteCommand],
                                                                    color: (current: TableColor, set: (TableColor) -> Void)?) {
-        let tables = canvas.selectedTables, ties = canvas.selectedTies
+        let tables = canvas.selectedTables
         var slots: [CommandWheel.Direction: PaletteCommand] = [:], extras: [PaletteCommand] = []
         var color: (current: TableColor, set: (TableColor) -> Void)?
         let deleteSelection = PaletteCommand(id: "delete", title: "Delete", symbol: "trash", shortcut: "⌫", isDestructive: true) {
             canvas.deleteSelection(in: &schema)
         }
-        if tables.count + ties.count >= 2 {
+        if let (aligned, ties) = canvas.alignable {
             let directions: [Schema.Alignment: CommandWheel.Direction] = [.left: .west, .right: .east, .top: .north,
                                                                            .bottom: .south, .center: .northWest, .middle: .southWest]
             for (alignment, direction) in directions {
                 slots[direction] = PaletteCommand(id: alignment.title, title: alignment.title, symbol: alignment.symbol) {
-                    schema.align(tables, ties: ties, alignment)
+                    schema.align(aligned, ties: ties, alignment)
                 }
             }
             if tables.count >= 3 {

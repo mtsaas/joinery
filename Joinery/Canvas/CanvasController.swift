@@ -123,6 +123,13 @@ final class CanvasController {
     }
     var panOrigin: CGPoint?
 
+    /// What aligning lines up: the selected tables, or only if there are none, the selected ties. Ties a selection
+    /// rectangle catches along with tables stay put. Nil when there aren't two things to line up.
+    var alignable: (tables: Set<Table.ID>, ties: Set<ZipTie.ID>)? {
+        let tables = selectedTables, ties = tables.isEmpty ? selectedTies : []
+        return tables.count + ties.count >= 2 ? (tables, ties) : nil
+    }
+
     var selectedTables: Set<Table.ID> { Set(selection.compactMap { if case .table(let id) = $0 { id } else { nil } }) }
     var selectedTies: Set<ZipTie.ID> { Set(selection.compactMap { if case .zipTie(let id) = $0 { id } else { nil } }) }
 

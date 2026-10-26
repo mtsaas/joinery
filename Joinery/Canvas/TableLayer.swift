@@ -5,7 +5,8 @@ import SwiftUI
 /// the zoom, so they're sharp at any size. It stays cheap however many tables there are:
 /// - Only tables in view are drawn; when text would be too small to read, it's left out.
 /// - Shapes of one color are gathered into one path and filled once, for every table together; all the cards'
-///   shadows are one pass.
+///   shadows are one pass. Tables that overlap are drawn in layers, so the one on top covers the one beneath; most
+///   schemas are one layer.
 /// - Text is laid out once per string and style (`TextLayouts`) and drawn from that with Core Text.
 ///
 /// Each table is a grid like a small spreadsheet: a name header, then a row per column with its key, name and type.
@@ -36,7 +37,10 @@ struct TableLayer: View {
     var body: some View {
         let visible = visibleTables
         Canvas { context, _ in
-            draw(visible, in: &context)
+            for layer in Self.layered(visible) {
+                var context = context
+                draw(layer, in: &context)
+            }
         }
         .accessibilityChildren {
             ForEach(visible, id: \.table.id) { table, frame in
@@ -62,6 +66,25 @@ struct TableLayer: View {
     }
 
     // MARK: Drawing
+
+    /// The tables in layers, bottom first: each goes one above the highest earlier table it overlaps (sockets and
+    /// selection ring included), so no two in a layer overlap and they can be drawn together, and a later table covers
+    /// an earlier one, as it would as a view.
+    static func layered(_ tables: [(table: Table, frame: CGRect)]) -> [[(table: Table, frame: CGRect)]] {
+        let margin = Metrics.selectionGap + Metrics.selectionWidth + 1
+        let reaches = tables.map { $0.frame.insetBy(dx: -margin, dy: -margin) }
+        var levels: [Int] = [], layers: [[(table: Table, frame: CGRect)]] = []
+        for (index, table) in tables.enumerated() {
+            var level = 0
+            for earlier in 0..<index where levels[earlier] >= level && reaches[earlier].intersects(reaches[index]) {
+                level = levels[earlier] + 1
+            }
+            levels.append(level)
+            if layers.count == level { layers.append([]) }
+            layers[level].append(table)
+        }
+        return layers
+    }
 
     private func draw(_ visible: [(table: Table, frame: CGRect)], in context: inout GraphicsContext) {
         let radius = Metrics.cornerRadius
