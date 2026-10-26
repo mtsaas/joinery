@@ -53,6 +53,13 @@ extension DataModel {
             tableIDs.append(table.id)
         }
         let here = Set(tables.flatMap(\.columns).map(\.id))
+        // Copied groups' ports, for the copied columns, or the same ones if they're here.
+        for group in clip.groups {
+            guard let index = groups.firstIndex(where: { $0.id == groupIDs[group.id] && $0.id != group.id }), groups[index].ports == group.ports else { continue }
+            groups[index].ports = group.ports.compactMap { port in
+                (columnIDs[port.column] ?? (here.contains(port.column) ? port.column : nil)).map { GroupPort(column: $0) }
+            }
+        }
         var wireIDs: [Relationship.ID: Relationship.ID] = [:]
         for wire in clip.relationships {
             guard let from = columnIDs[wire.from] else { continue }

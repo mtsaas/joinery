@@ -28,6 +28,8 @@ enum Metrics {
     static let minimumTarget: CGFloat = 24
 
     static let wireWidth: CGFloat = 2.25
+    /// A port's bus, standing for many wires.
+    static let busWidth: CGFloat = wireWidth * 2
     /// The outline around a selected wire: a point and a half each side of it.
     static let selectedWireWidth: CGFloat = wireWidth + 3
     /// Between neighboring wires in a zip tie. Each wire is drawn over a halo this wide, so a bundle reads as separate
@@ -43,6 +45,9 @@ enum Metrics {
     /// Above its tables, for its name.
     static let groupLabelHeight: CGFloat = 22
     static let groupCornerRadius: CGFloat = cornerRadius + groupPadding
+    /// A port's pill on a group's edge, as much as is kept clear for it (its label may make it longer).
+    static let portWidth: CGFloat = 96
+    static let portHeight: CGFloat = 20
 
     /// Which grid column a point on a table falls in, by its distance from the table's left edge.
     enum GridColumn { case key, name, type }

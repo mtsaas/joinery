@@ -288,6 +288,7 @@ struct CanvasView: View {
             commands.append(PaletteCommand(id: "ungroup", title: "Ungroup", symbol: "rectangle.dashed", shortcut: "⇧⌘G") {
                 canvas.ungroupSelection(in: &model)
             })
+            commands += portCommands(for: canvas.selectedGroups)
         }
         if model.tables.contains(where: { tables.contains($0.id) && $0.group != nil }) {
             commands.append(PaletteCommand(id: "ungroup-tables", title: "Remove from Group", symbol: "rectangle.dashed.badge.record") {
@@ -373,7 +374,9 @@ struct CanvasView: View {
             }
         } else if let hit = simulation.hit(near: point, within: reach) {
             target = .wire(hit)
-            if !canvas.selection.contains(.relationship(hit.relationship)) { canvas.selection = [.relationship(hit.relationship)] }
+            // A bus stands for the wires it carries.
+            let wires = routingCache.current?.ports[hit.relationship]?.wires ?? [hit.relationship]
+            if !wires.allSatisfy({ canvas.selection.contains(.relationship($0)) }) { canvas.selection = Set(wires.map { .relationship($0) }) }
         } else {
             target = .canvas
         }
@@ -442,7 +445,7 @@ struct CanvasView: View {
             slots[.south] = PaletteCommand(id: "ungroup", title: "Ungroup", symbol: "rectangle.dashed", shortcut: "⇧⌘G") {
                 canvas.ungroupSelection(in: &model)
             }
-            extras = [untangle, deleteSelection]
+            extras = [untangle] + portCommands(for: [id]) + [deleteSelection]
             color = (group.color, { color in
                 if let index = model.groups.firstIndex(where: { $0.id == id }) { model.groups[index].color = color }
             })
@@ -555,6 +558,23 @@ struct CanvasView: View {
                     context.stroke(path, with: .color(color.opacity(isDimmed ? 0.28 : 1)),
                                    style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round))
                 }
+                // Each port's bus, then the port over where its wires meet it.
+                for (id, port) in routing.ports {
+                    let color = port.wires.first.flatMap { colors[$0] } ?? .gray
+                    let isDimmed = highlighted.map { highlighted in !port.wires.contains(where: highlighted.contains) } ?? false
+                    if let bus = simulation.wires[id] {
+                        let path = wirePaths.path(for: id, through: bus.points)
+                        context.stroke(path, with: .color(Theme.canvas),
+                                       style: StrokeStyle(lineWidth: Metrics.busWidth + Metrics.tieSpacing, lineCap: .round))
+                        if !port.wires.isEmpty && port.wires.allSatisfy(selectedWires.contains) {
+                            context.stroke(path, with: .color(color.mix(with: .black, by: Theme.selectedWireDarkening)),
+                                           style: StrokeStyle(lineWidth: Metrics.busWidth + 3, lineCap: .round))
+                        }
+                        context.stroke(path, with: .color(color.opacity(isDimmed ? 0.28 : 1)),
+                                       style: StrokeStyle(lineWidth: Metrics.busWidth, lineCap: .round))
+                    }
+                    drawPort(port, color: color, isDimmed: isDimmed, in: context)
+                }
                 for (id, tie) in routing.ties {
                     drawTie(tie, id: id, isSelected: selectedTies.contains(id), isHovered: id == hoveredTie,
                             color: tie.relationships.first.flatMap { colors[$0] } ?? .gray,
@@ -565,6 +585,38 @@ struct CanvasView: View {
         }
         // Presses go to the table layer above, which covers the canvas.
         .allowsHitTesting(false)
+    }
+
+    /// Bundling groups' shared wires into ports, and taking their ports away.
+    private func portCommands(for groups: Set<TableGroup.ID>) -> [PaletteCommand] {
+        var commands = [PaletteCommand(id: "bundle", title: "Bundle Shared Wires", subtitle: "a port for each column 3 or more go to",
+                                       symbol: "cable.connector.horizontal") {
+            var bundled = model
+            for group in groups { bundled.bundleSharedWires(in: group) }
+            model = bundled
+        }]
+        if model.groups.contains(where: { groups.contains($0.id) && !$0.ports.isEmpty }) {
+            commands.append(PaletteCommand(id: "remove-ports", title: "Remove Ports", subtitle: "wires run all the way again",
+                                           symbol: "cable.connector.slash") {
+                var unbundled = model
+                for group in groups { unbundled.removePorts(from: group) }
+                model = unbundled
+            })
+        }
+        return commands
+    }
+
+    /// A pill on its group's edge, filled with its wires' color, named for the column it stands for.
+    private func drawPort(_ port: DataModel.PortPlacement, color: Color, isDimmed: Bool, in context: GraphicsContext) {
+        var context = context
+        if isDimmed { context.opacity = TableLayer.fadedOpacity }
+        let label = context.resolve(Text(port.label).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white))
+        let size = label.measure(in: CGSize(width: 400, height: Metrics.portHeight))
+        let width = max(size.width + 20, Metrics.portHeight * 2)
+        let pill = CGRect(x: port.point.x - width / 2, y: port.point.y - Metrics.portHeight / 2, width: width, height: Metrics.portHeight)
+        let shape = Path(roundedRect: pill, cornerRadius: Metrics.portHeight / 2)
+        context.fill(shape, with: .color(color))
+        context.draw(label, at: port.point)
     }
 
     /// Drawn where its wires actually are, so it rides along as they spring into place. A bend point is a dot.
@@ -877,7 +929,15 @@ struct CanvasView: View {
     }
 
     private func dragConnection(from column: Column, at socket: CGPoint, to end: CGPoint) {
-        let target = model.dropTarget(at: end).flatMap { $0 == .column(column.id) ? nil : $0 }
+        let owner = model.columnLocations[column.id]?.table.group
+        let target = model.dropTarget(at: end).flatMap { target -> DataModel.DropTarget? in
+            switch target {
+            case .column(column.id): nil
+            // A port is for a column outside the group.
+            case .group(let group): owner == group ? nil : target
+            default: target
+            }
+        }
         canvas.connection = .init(from: column.id, start: socket, end: end, target: target)
     }
 
@@ -1076,6 +1136,12 @@ struct CanvasView: View {
             lastClick = nil
             return
         }
+        if let port = routingCache.current?.ports[hit.relationship] {
+            let wires = port.wires.map { CanvasController.Item.relationship($0) }
+            canvas.selection = isExtending ? canvas.selection.union(wires) : Set(wires)
+            lastClick = nil
+            return
+        }
         let item = CanvasController.Item.relationship(hit.relationship)
         let now = ProcessInfo.processInfo.systemUptime
         if let last = lastClick, last.item == item, now - last.time < NSEvent.doubleClickInterval,
@@ -1183,13 +1249,17 @@ struct CanvasView: View {
         let color = connection.map { connection in
             switch connection.target {
             case .column(let id)?: model.columnLocations[id]?.table.color.color ?? Theme.socket
-            case .table?: model.columnLocations[connection.from]?.table.color.color ?? Theme.socket
+            case .port(let id)?: model.groups.lazy.flatMap(\.ports).first { $0.id == id }
+                .flatMap { model.columnLocations[$0.column]?.table.color.color } ?? Theme.socket
+            case .table?, .group?: model.columnLocations[connection.from]?.table.color.color ?? Theme.socket
             case nil: Theme.socket
             }
         }
-        let newColumn: String? = if let connection, case .table(let id)? = connection.target {
-            model.newColumnName(referencing: connection.from, in: id)
-        } else { nil }
+        let newColumn: String? = switch connection?.target {
+        case .table(let id)?: connection.flatMap { model.newColumnName(referencing: $0.from, in: id) }.map { "+ " + $0 }
+        case .group?: connection.flatMap { model.qualifiedName(of: $0.from) }.map { "+ port for " + $0 }
+        default: nil
+        }
         return Canvas { screen, _ in
             var context = screen
             context.translateBy(x: offset.x, y: offset.y)
@@ -1209,7 +1279,7 @@ struct CanvasView: View {
             }
             if let connection, let newColumn {
                 // A tag by the pointer, at screen size whatever the zoom.
-                let label = screen.resolve(Text("+ \(newColumn)").font(.callout.weight(.medium)).foregroundStyle(.white))
+                let label = screen.resolve(Text(newColumn).font(.callout.weight(.medium)).foregroundStyle(.white))
                 let size = label.measure(in: CGSize(width: 400, height: 40))
                 let origin = connection.end * zoom + offset + CGPoint(x: 14, y: -size.height - 14)
                 let tag = CGRect(origin: origin, size: size).insetBy(dx: -8, dy: -4)
@@ -1388,6 +1458,8 @@ private struct GridHints: View {
 private final class RoutingCache {
     private var inputs: (model: DataModel, tables: [Table.ID: CGPoint], ties: [ZipTie.ID: CGPoint], avoiding: Bool)?
     private var routing: Routing?
+    /// The routing last worked out.
+    var current: Routing? { routing }
 
     private var colors: (model: DataModel, colors: [Relationship.ID: Color])?
 

@@ -49,6 +49,10 @@ extension DataModel {
         case column(Column.ID)
         /// The table's header or empty space: give it a new column to connect.
         case table(Table.ID)
+        /// A group's port: connect to the column it stands for.
+        case port(GroupPort.ID)
+        /// A group's empty space: give it a port for the dragged column, bundling its wires to it.
+        case group(TableGroup.ID)
     }
 
     func dropTarget(at point: CGPoint) -> DropTarget? {
@@ -59,7 +63,12 @@ extension DataModel {
             return point.y >= frame.minY + Metrics.headerHeight && table.columns.indices.contains(row)
                 ? .column(table.columns[row].id) : .table(table.id)
         }
-        return nil
+        for (id, port) in portPlacements() {
+            let pill = CGRect(x: port.point.x - Metrics.portWidth / 2, y: port.point.y - Metrics.portHeight / 2,
+                              width: Metrics.portWidth, height: Metrics.portHeight)
+            if pill.contains(point) { return .port(id) }
+        }
+        return groups.reversed().first { frame(of: $0.id)?.contains(point) == true }.map { .group($0.id) }
     }
 
     /// What to call a new column in `table` that references `column`: its name, but `<table>_id` for an `id` column
@@ -105,6 +114,12 @@ extension DataModel {
             let new = Column(name: name, type: source.columns[row].type)
             tables[index].columns.append(new)
             return connect(new.id, to: column)
+        case .port(let id):
+            guard let port = groups.lazy.flatMap(\.ports).first(where: { $0.id == id }) else { return nil }
+            return connect(dragging: column, onto: .column(port.column))
+        case .group(let id):
+            addPort(to: id, for: column)
+            return nil
         }
     }
 
@@ -373,6 +388,12 @@ extension DataModel {
         for tie in zipTies where tie.relationships.isEmpty { removeZipTie(tie.id) }
         let groupIDs = Set(groups.map(\.id))
         for index in tables.indices where tables[index].group.map(groupIDs.contains) == false { tables[index].group = nil }
+        // A port stands for a column outside its group.
+        let owner = columnLocations
+        for index in groups.indices {
+            let group = groups[index].id
+            groups[index].ports.removeAll { port in owner[port.column].map { $0.table.group == group } ?? true }
+        }
         removeEmptyGroups()
     }
 }

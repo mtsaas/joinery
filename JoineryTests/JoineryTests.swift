@@ -615,4 +615,43 @@ struct JoineryTests {
         #expect(model.zipTies.isEmpty && model.relationships[0].zipTies.isEmpty)
         #expect(!canvas.selection.contains(.zipTie(tie)))
     }
+
+    @Test func aGroupsPortBundlesItsWiresToAColumnIntoOneBus() throws {
+        var model = storefront()
+        let users = model.tables[0], usersID = users.columns[0].id
+        let wires = model.relationships.map(\.id)
+        model.addBendPoint(on: wires[0], at: CGPoint(x: 400, y: 0), direction: CGPoint(x: 1, y: 0), segment: 0)
+        // Orders and reviews, both referencing users, grouped; users left of them, outside.
+        let group = model.group([model.tables[1].id, model.tables[2].id], named: "shop")
+        #expect(model.bundleSharedWires(in: group, minimum: 2) == 1)
+        #expect(model.zipTies.isEmpty, "ties placed for the old wires go")
+
+        let (id, port) = try #require(model.portPlacements().first)
+        let frame = try #require(model.frame(of: group))
+        #expect(port.label == "users.id" && Set(port.wires) == Set(wires))
+        #expect(port.normal == CGPoint(x: -1, y: 0) && port.point.x == frame.minX, "on the side facing users")
+
+        // Each wire ends at the port; one bus runs from it to the users socket facing it.
+        let routing = Routing(model: model)
+        for wire in wires { #expect(routing.routes[wire]?.points.last == port.point) }
+        let bus = try #require(routing.routes[id])
+        #expect(bus.points.first == port.point)
+        #expect(bus.points.last == Metrics.socket(row: 0, side: .trailing, in: Metrics.frame(of: users)))
+
+        // Dropping a socket on the port references its column.
+        let orders = model.tables[1].id
+        let index = try #require(model.tables.firstIndex { $0.id == orders })
+        let column = Column(name: "buyer_id", type: .uuid)
+        model.tables[index].columns.append(column)
+        #expect(model.dropTarget(at: port.point) == .port(id))
+        let connected = model.connect(dragging: column.id, onto: .port(id))
+        let wire = try #require(connected)
+        #expect(model.relationships.first { $0.id == wire }?.to == usersID)
+        #expect(model.portPlacements()[id]?.wires.count == 3)
+
+        // Once users joins the group, there's nothing outside to stand for.
+        model.tables[0].group = group
+        model.repair()
+        #expect(model.groups[0].ports.isEmpty)
+    }
 }

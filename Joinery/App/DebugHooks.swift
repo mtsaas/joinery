@@ -199,6 +199,12 @@ enum DebugHooks {
             case "library":
                 let library = Library.shared
                 print("library open: \(library.open?.name ?? "none"), recents: \(library.recents.map(Library.name(of:)).prefix(3))")
+            case "bundle":
+                // Every group's shared wires bundled into ports.
+                var model = document.wrappedValue
+                let added = model.groups.map(\.id).reduce(0) { $0 + model.bundleSharedWires(in: $1) }
+                document.wrappedValue = model
+                print("bundled: \(added) ports", model.portPlacements().values.map { "\($0.label) (\($0.wires.count)) at \(Int($0.point.x)), \(Int($0.point.y))" }.sorted())
             case "history":
                 // Version history open, with the version at an index selected ("history" alone: "Now").
                 NotificationCenter.default.post(name: .pickVersion, object: numbers.first.map { Int($0) })

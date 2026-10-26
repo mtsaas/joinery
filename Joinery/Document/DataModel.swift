@@ -28,6 +28,27 @@ struct TableGroup: Codable, Identifiable, Equatable {
     var id = UUID()
     var name: String
     var color: TableColor
+    /// Columns outside it that its tables' wires to are bundled into one cable, through a port on its edge.
+    var ports: [GroupPort] = []
+}
+
+extension TableGroup {
+    /// What a file from before ports leaves out is empty.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        color = try container.decode(TableColor.self, forKey: .color)
+        ports = try container.decodeIfPresent([GroupPort].self, forKey: .ports) ?? []
+    }
+}
+
+/// A socket on a group's edge standing for a column outside it, such as a much-referenced `entity.id`: every wire
+/// between that column and the group's tables runs to the port instead, and one cable, a bus, from the port to the
+/// column. It sits on the edge facing the column, wherever that is.
+struct GroupPort: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var column: Column.ID
 }
 
 struct Table: Codable, Identifiable, Equatable {
