@@ -40,6 +40,43 @@ final class CanvasController {
         selection = selection.filter { if case .group(let id) = $0 { model.groups.contains { $0.id == id } } else { true } }
     }
 
+    // MARK: Copy and paste
+
+    /// Puts the selected tables (and selected groups' tables) on the pasteboard, with their foreign keys, ties and groups.
+    /// - Returns: Whether there was anything to copy.
+    @discardableResult
+    func copySelection(from model: DataModel) -> Bool {
+        let clip = model.clip(tables: selectedTables, groups: selectedGroups)
+        guard !clip.tables.isEmpty, let data = try? JSONEncoder().encode(clip) else { return false }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setData(data, forType: DataModel.pasteboardType)
+        pastes = 0
+        return true
+    }
+
+    func cutSelection(from model: inout DataModel) {
+        if copySelection(from: model) { deleteSelection(in: &model) }
+    }
+
+    /// Adds what was copied, here or from another data model, and selects it. Over the original, if it's in view, it
+    /// lands a little down and to the right, further each time; otherwise in the middle of the view.
+    func paste(into model: inout DataModel) {
+        guard let data = NSPasteboard.general.data(forType: DataModel.pasteboardType),
+              let clip = try? JSONDecoder().decode(DataModel.self, from: data), let bounds = clip.bounds else { return }
+        let visible = CGRect(origin: CGPoint(x: -offset.x / zoom, y: -offset.y / zoom), size: viewSize * (1 / zoom))
+        let columns = Set(model.tables.flatMap(\.columns).map(\.id))
+        let isOverOriginal = visible.intersects(bounds) && clip.tables.contains { $0.columns.contains { columns.contains($0.id) } }
+        pastes += 1
+        let step = CGPoint(x: 32, y: 32) * CGFloat(isOverOriginal ? pastes : pastes - 1)
+        let shift = isOverOriginal ? step : CGPoint(x: visible.midX - bounds.midX, y: visible.midY - bounds.midY) + step
+        let pasted = model.paste(clip, offset: shift)
+        selection = Set(pasted.tables.map { .table($0) } + pasted.ties.map { .zipTie($0) })
+    }
+
+    func selectAll(in model: DataModel) {
+        selection = Set(model.tables.map { .table($0.id) } + model.zipTies.map { .zipTie($0.id) })
+    }
+
     /// Selects a group with its tables and the ties inside it, so moving it moves them all; or with Shift adds them to
     /// the selection.
     func selectGroup(_ id: TableGroup.ID, in model: DataModel, extending: Bool) {
@@ -217,6 +254,8 @@ final class CanvasController {
     var isTying = false
     /// Focus mode: everything but the selection and what it's joined to fades.
     var isFocusing = false
+    /// How many times what was last copied has been pasted, to set each paste a little further along.
+    var pastes = 0
     /// Set when the right-drag drawing `stroke` ends, for the view to tie the wires it crossed.
     var isStrokeFinished = false
     /// The selection rectangle being dragged out, in canvas points.

@@ -39,6 +39,7 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
 | Zip-tie wires | Turn on the zip-tie tool (Z, or the toolbar's tie button), then drag a line across two or more wires; it stays on until you press Z or Escape. Option-drag ties without it |
 | Select | Click tables, wires, ties; Shift-click to add; drag a box around tables, ties and wires to select those wholly inside it; ⌘A for everything |
 | Move | Drag anything selected to move the whole selection. Tables snap into line with others, edges or centers, and guides show where they line up; hold ⌘ to move freely. Hold Shift to keep a move horizontal or vertical. Arrow keys nudge (Shift for 10 points) |
+| Copy and paste | ⌘C copies the selected tables (a selected group's included), with their foreign keys, zip ties and groups; ⌘X cuts; ⌘V pastes, on the same canvas (a little offset, further each time) or in another data model (in the middle of the view). Names that are taken get a number; pasted tables join a group of the same name; foreign keys to tables left behind stay where those tables exist |
 | Delete | Delete removes the selection, or from the wheel |
 | Minimap | Bottom right: the whole data model small, with a frame around what's in view; click or drag in it to go there. View ▸ Show Minimap (⇧⌘M) hides it |
 | Pan / zoom | Scroll, right-drag, or hold Space and drag / pinch, ⌘-scroll, ⌘+ ⌘- ⌘0, Zoom to Fit ⌘1 |

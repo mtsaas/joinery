@@ -14,6 +14,15 @@ struct CanvasCommands: Commands {
         model = updated
     }
 
+    /// `action` on the text being edited, if there is any; otherwise `body` on the canvas.
+    private func edit(_ action: Selector, _ body: (CanvasController, inout DataModel) -> Void) {
+        if NSApp.keyWindow?.firstResponder is NSText || canvas == nil {
+            NSApp.sendAction(action, to: nil, from: nil)
+        } else {
+            change(body)
+        }
+    }
+
     var body: some Commands {
         CommandMenu("Insert") {
             Button("Table") {
@@ -23,6 +32,17 @@ struct CanvasCommands: Commands {
             }
             .keyboardShortcut("t", modifiers: [.command, .option])
             .disabled(canvas == nil)
+        }
+        // On the canvas, its own; while text is being edited (a cell, a name, a search), the text's.
+        CommandGroup(replacing: .pasteboard) {
+            Button("Cut") { edit(#selector(NSText.cut(_:))) { $0.cutSelection(from: &$1) } }
+                .keyboardShortcut("x")
+            Button("Copy") { edit(#selector(NSText.copy(_:))) { canvas, model in canvas.copySelection(from: model) } }
+                .keyboardShortcut("c")
+            Button("Paste") { edit(#selector(NSText.paste(_:))) { $0.paste(into: &$1) } }
+                .keyboardShortcut("v")
+            Button("Select All") { edit(#selector(NSText.selectAll(_:))) { canvas, model in canvas.selectAll(in: model) } }
+                .keyboardShortcut("a")
         }
         CommandMenu("Arrange") {
             Button("Group") { change { $0.groupSelection(in: &$1) } }

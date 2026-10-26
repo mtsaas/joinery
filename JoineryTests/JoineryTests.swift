@@ -546,4 +546,30 @@ struct JoineryTests {
             }
         }
     }
+
+    @Test func copiedTablesPasteWithTheirKeysTiesAndSchema() throws {
+        var model = storefront()
+        let orders = model.tables[1], reviews = model.tables[2]
+        model.group([orders.id, reviews.id], named: "sales")
+        model.zipTies.append(ZipTie(position: CGPoint(x: 400, y: 0), direction: CGPoint(x: 1, y: 0), relationships: model.relationships.map(\.id)))
+        for index in model.relationships.indices { model.relationships[index].zipTies = [model.zipTies[0].id] }
+
+        // Into the same model: new names, the same schema, still referencing users, the tie copied too.
+        let clip = model.clip(tables: [orders.id, reviews.id])
+        var same = model
+        let pasted = same.paste(clip, offset: CGPoint(x: 32, y: 32))
+        #expect(same.tables.map(\.name) == ["users", "orders", "reviews", "orders_2", "reviews_2"])
+        #expect(same.groups.count == 1 && same.members(of: same.groups[0].id).count == 4)
+        #expect(same.relationships.count == 4)
+        #expect(pasted.ties.count == 1 && same.zipTies.count == 2)
+        let copiedWires = same.relationships.suffix(2)
+        #expect(copiedWires.allSatisfy { $0.zipTies == pasted.ties })
+
+        // Into another: users isn't there, so the keys to it go; the tables and schema come.
+        var other = DataModel()
+        _ = other.paste(clip, offset: .zero)
+        #expect(other.tables.map(\.name) == ["orders", "reviews"])
+        #expect(other.relationships.isEmpty && other.zipTies.isEmpty)
+        #expect(other.groups.map(\.name) == ["sales"])
+    }
 }

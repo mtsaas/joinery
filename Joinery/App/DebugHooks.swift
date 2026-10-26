@@ -100,7 +100,7 @@ enum DebugHooks {
                 } else if words[1].hasPrefix("shift+cmd+"), let letter = words[1].last {
                     await press(String(letter), keyCode: ["u": 32, "r": 15, "k": 40][String(letter)] ?? 0, modifiers: [.command, .shift])
                 } else if words[1].hasPrefix("cmd+"), let letter = words[1].last {
-                    await press(String(letter), keyCode: ["k": 40, "a": 0][String(letter)] ?? 0, modifiers: .command)
+                    await press(String(letter), keyCode: ["k": 40, "a": 0, "c": 8, "v": 9, "x": 7][String(letter)] ?? 0, modifiers: .command)
                 }
             case "open-palette":
                 canvas.togglePalette()
@@ -204,6 +204,26 @@ enum DebugHooks {
                     document.wrappedValue.arrange(layout)
                     canvas.zoomToFit(document.wrappedValue.bounds)
                 }
+            case "clipboard" where words.count == 2:
+                // What Copy, Cut and Paste do on the canvas, without needing the app in front for the menu.
+                switch words[1] {
+                case "copy": canvas.copySelection(from: document.wrappedValue)
+                case "cut": canvas.cutSelection(from: &document.wrappedValue)
+                case "paste": canvas.paste(into: &document.wrappedValue)
+                default: break
+                }
+            case "menu" where words.count > 1:
+                // Chooses a menu item by its title, as a click would.
+                let title = words.dropFirst().joined(separator: " ")
+                func choose(in menu: NSMenu) -> Bool {
+                    for (index, item) in menu.items.enumerated() {
+                        if item.title == title { menu.performActionForItem(at: index); return true }
+                        if let submenu = item.submenu, choose(in: submenu) { return true }
+                    }
+                    return false
+                }
+                print("menu \(title): active \(NSApp.isActive), key window \(NSApp.keyWindow != nil), responder \(NSApp.keyWindow?.firstResponder.map { "\(type(of: $0))" } ?? "none")")
+                if let menu = NSApp.mainMenu, !choose(in: menu) { print("menu: no item called \(title)") }
             case "routings":
                 print("routings built: \(Routing.built)")
             case "clock":

@@ -156,10 +156,8 @@ struct CanvasView: View {
             nudge(press)
             return .handled
         }
-        .onCommand(#selector(NSText.selectAll(_:))) {
-            canvas.selection = Set(model.tables.map { .table($0.id) } + model.zipTies.map { .zipTie($0.id) })
-        }
         .onDeleteCommand { if isCanvasKeyTarget { canvas.deleteSelection(in: &model) } }
+
         .onExitCommand {
             #if DEBUG
             if canvas.feedback != nil { return canvas.feedback = nil }
