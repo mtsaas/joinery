@@ -23,7 +23,17 @@ extension DataModel {
         /// wires, and the outside one, for its bus.
         var inside: CGPoint { point - normal * socketDistance }
         var outside: CGPoint { point + normal * socketDistance }
-        private var socketDistance: CGFloat { (normal.x == 0 ? size.height : size.width) / 2 + Metrics.socketDiameter / 2 + 1 }
+        /// Where the `index`th of `count` wires through it plugs in: side by side across its inside end, a tie's
+        /// spacing apart, so they leave as separate wires, not one bundle.
+        func insideSlot(_ index: Int, of count: Int) -> CGPoint {
+            guard count > 1 else { return inside }
+            return insideTie + normal.perpendicular * ((CGFloat(index) - CGFloat(count - 1) / 2) * Metrics.tieSpacing)
+        }
+        /// The middle of the tie holding several wires across its inside end, against the pill.
+        var insideTie: CGPoint { point - normal * (extent / 2 + Metrics.tieThickness / 2) }
+        private var socketDistance: CGFloat { extent / 2 + Metrics.socketDiameter / 2 + 1 }
+        /// How far the pill reaches square to the edge.
+        private var extent: CGFloat { normal.x == 0 ? size.height : size.width }
     }
 
     // MARK: Cables

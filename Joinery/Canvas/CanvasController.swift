@@ -132,6 +132,9 @@ final class CanvasController {
         var target: DataModel.DropTarget?
     }
 
+    /// A port just added from the +, and when: it grows out of the + into place.
+    var appearingPort: (id: GroupPort.ID, start: TimeInterval)?
+
     /// Where a port would be added, while the pointer's near a group's edge: shown as a + there.
     var portHint: (group: TableGroup.ID, spot: (side: Side4, along: CGFloat), point: CGPoint)?
 

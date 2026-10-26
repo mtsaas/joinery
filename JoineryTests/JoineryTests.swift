@@ -633,7 +633,10 @@ struct JoineryTests {
 
         // Each wire ends at the port; one bus runs from it to the users socket facing it.
         let routing = Routing(model: model)
-        for wire in wires { #expect(routing.routes[wire]?.points.last == port.inside) }
+        // Side by side across its inside end, a tie's spacing apart, not all into one point.
+        let ends = Set(wires.compactMap { routing.routes[$0]?.points.last })
+        #expect(ends == [port.insideSlot(0, of: 2), port.insideSlot(1, of: 2)])
+        #expect(port.insideSlot(0, of: 2).distance(to: port.insideSlot(1, of: 2)) == Metrics.tieSpacing)
         let bus = try #require(routing.routes[id])
         #expect(bus.points.first == port.outside)
         #expect(bus.points.last == Metrics.socket(row: 0, side: .trailing, in: Metrics.frame(of: users)))
@@ -656,7 +659,8 @@ struct JoineryTests {
         model.movePort(id, to: spot)
         let moved = try #require(model.portPlacements()[id])
         #expect(moved.normal == CGPoint(x: 0, y: 1) && moved.point == CGPoint(x: frame.midX, y: frame.maxY))
-        #expect(Routing(model: model).routes[wires[0]]?.points.last == moved.inside, "the wires follow it")
+        #expect(Routing(model: model).routes[wires[0]]?.points.last.map { $0.distance(to: moved.insideTie) <= Metrics.tieSpacing } == true,
+                "the wires follow it")
         let saved = try JSONDecoder().decode(DataModel.self, from: model.fileData)
         #expect(saved.portPlacements()[id] == moved, "and it's kept where it was put")
         model.movePort(id, to: nil)

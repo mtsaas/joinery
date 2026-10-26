@@ -137,6 +137,22 @@ struct Routing {
                 }
             }
         }
+        // A port's wires plug in side by side across its inside end, in the order they come from across it, so none
+        // cross on the way in.
+        for port in ports.values where port.wires.count > 1 {
+            let across = port.normal.perpendicular
+            let ordered = port.wires.sorted { a, b in
+                let from = { (wire: Relationship.ID) -> CGFloat in
+                    guard let ends = ends[wire] else { return 0 }
+                    return (port.column == model.relationships.first { $0.id == wire }?.to ? ends.start : ends.end).point.dot(across)
+                }
+                return (from(a), a.uuidString) < (from(b), b.uuidString)
+            }
+            for (index, wire) in ordered.enumerated() {
+                let slot = port.insideSlot(index, of: ordered.count)
+                if ends[wire]?.end.point == port.inside { ends[wire]?.end.point = slot } else { ends[wire]?.start.point = slot }
+            }
+        }
         // Each port's bus, a cable like any wire, through its own ties: out of the port's outside socket, square to the
         // edge, into its column's socket on the side facing it (or its last tie). There even before any wire runs
         // through the port, as a socket for the group's tables to plug into.

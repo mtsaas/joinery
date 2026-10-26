@@ -223,6 +223,15 @@ enum DebugHooks {
                    let point = model.edgePoint(of: group.id, at: (side, numbers[0])) {
                     canvas.portHint = (group.id, (side, numbers[0]), point)
                 }
+            case "capture" where words.count == 2:
+                // The window now, to a file: for frames of an animation, between short waits.
+                capture(to: words[1])
+            case "click-plus" where words.count == 4:
+                // The + on a group's edge clicked: "click-plus hierarchy left 0.45".
+                guard let group = document.wrappedValue.groups.first(where: { $0.name == words[1] }), let side = Side4(rawValue: words[2]),
+                      let port = document.wrappedValue.addPort(to: group.id, at: (side, numbers[0])) else { break }
+                canvas.portHint = nil
+                canvas.appearingPort = (port, ProcessInfo.processInfo.systemUptime)
             case "bend-bus":
                 // A bend point halfway along the first plugged port's bus.
                 let model = document.wrappedValue

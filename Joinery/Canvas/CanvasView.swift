@@ -532,7 +532,8 @@ struct CanvasView: View {
         var cableTies = Dictionary(relationships.map { ($0.id, $0.zipTies) }, uniquingKeysWith: { first, _ in first })
         for port in model.groups.flatMap(\.ports) { cableTies[port.id] = port.zipTies }
 
-        return TimelineView(.animation(paused: !isAnimating)) { timeline in
+        let appearing = canvas.appearingPort
+        return TimelineView(.animation(paused: !isAnimating && appearing == nil)) { timeline in
             Canvas { context, _ in
                 #if DEBUG
                 let start = ProcessInfo.processInfo.systemUptime
@@ -573,7 +574,13 @@ struct CanvasView: View {
                         context.stroke(path, with: .color(color.opacity(isDimmed ? 0.28 : 1)),
                                        style: StrokeStyle(lineWidth: Metrics.busWidth, lineCap: .round))
                     }
-                    drawPort(port, color: color, isSelected: selectedWires.contains(id), isDimmed: isDimmed, in: context)
+                    // A port just added grows out of the + it was made with.
+                    var growth: CGFloat = 1
+                    if let appearing, appearing.id == id {
+                        growth = min(1, (ProcessInfo.processInfo.systemUptime - appearing.start) / Self.portAppearance)
+                        if growth >= 1 { Task { canvas.appearingPort = nil } }
+                    }
+                    drawPort(port, color: color, isSelected: selectedWires.contains(id), isDimmed: isDimmed, growth: growth, zoom: zoom, in: context)
                 }
                 for (id, tie) in routing.ties {
                     drawTie(tie, id: id, isSelected: selectedTies.contains(id), isHovered: id == hoveredTie,
@@ -616,22 +623,44 @@ struct CanvasView: View {
     }
 
     /// A pill on its group's edge, filled with its wires' color, named for the column it stands for.
+    /// How long a port takes to grow out of the + it's made with.
+    static let portAppearance = 0.24
+
     /// A pill on its group's edge, filled with its bus's color and named for the column it's plugged into, between a
     /// socket inside the group and one out: each an empty ring until something plugs in, then filled, as a table's.
-    private func drawPort(_ port: DataModel.PortPlacement, color: Color, isSelected: Bool, isDimmed: Bool, in context: GraphicsContext) {
+    /// Wires plugged in inside are held side by side by a tie across it. `growth`, from 0 to 1, grows it out of the +.
+    private func drawPort(_ port: DataModel.PortPlacement, color: Color, isSelected: Bool, isDimmed: Bool,
+                          growth: CGFloat = 1, zoom: CGFloat, in context: GraphicsContext) {
         var context = context
         if isDimmed { context.opacity = TableLayer.fadedOpacity }
-        let size = port.size
+        // Eased out: quick at first, settling into place.
+        let eased = 1 - pow(1 - growth, 3)
+        let plus = Metrics.portHintRadius * 2 / zoom
+        let size = CGSize(width: plus + (port.size.width - plus) * eased, height: plus + (port.size.height - plus) * eased)
         let pill = CGRect(x: port.point.x - size.width / 2, y: port.point.y - size.height / 2, width: size.width, height: size.height)
         let shape = Path(roundedRect: pill, cornerRadius: size.height / 2)
-        context.fill(shape, with: .color(port.column == nil ? Theme.card : color))
+        let fill = port.column == nil ? Theme.card : color
+        context.fill(shape, with: .color(eased < 1 ? Color.accentColor.mix(with: fill, by: eased) : fill))
         context.stroke(shape, with: .color(isSelected ? Color.accentColor : port.column == nil ? Theme.socket : .clear),
                        lineWidth: isSelected ? 2 : 1)
         if !port.label.isEmpty {
             context.draw(context.resolve(Text(port.label).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)), at: port.point)
         }
+        context.opacity *= eased
+        if port.wires.count > 1 {
+            // A tie across the inside end, holding the wires plugged in there apart.
+            var tie = context
+            tie.translateBy(x: port.insideTie.x, y: port.insideTie.y)
+            tie.rotate(by: .radians(atan2(port.normal.y, port.normal.x)))
+            let halfLength = Metrics.tieHalfLength(holding: port.wires.count)
+            let band = Path(roundedRect: CGRect(x: -Metrics.tieThickness / 2, y: -halfLength, width: Metrics.tieThickness, height: halfLength * 2),
+                            cornerRadius: Metrics.tieThickness / 2)
+            tie.fill(band, with: .color(Theme.tie))
+            tie.stroke(band, with: .color(.black.opacity(0.18)), lineWidth: 0.5)
+        }
         let line: CGFloat = 1.5, diameter = Metrics.socketDiameter
-        for (center, isPlugged) in [(port.inside, !port.wires.isEmpty), (port.outside, port.column != nil)] {
+        let sockets = (port.wires.count > 1 ? [] : [(port.inside, !port.wires.isEmpty)]) + [(port.outside, port.column != nil)]
+        for (center, isPlugged) in sockets {
             let circle = Path(ellipseIn: CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter))
             if isPlugged {
                 context.fill(circle, with: .color(color))
@@ -877,7 +906,10 @@ struct CanvasView: View {
                     finishConnection()
                 case .newPort(let group, let side, let along):
                     canvas.portHint = nil
-                    if let port = model.addPort(to: group, at: (side, along)) { canvas.selection = [.relationship(port)] }
+                    if let port = model.addPort(to: group, at: (side, along)) {
+                        canvas.selection = [.relationship(port)]
+                        canvas.appearingPort = (port, ProcessInfo.processInfo.systemUptime)
+                    }
                 case .port(let id):
                     if let drag = canvas.portDrag {
                         canvas.portDrag = nil
