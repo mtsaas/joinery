@@ -38,6 +38,12 @@ enum Metrics {
     static let tieOverhang: CGFloat = 4.5
     static let bendPointDiameter: CGFloat = 7
 
+    /// Between a group's boundary and its tables.
+    static let groupPadding: CGFloat = 24
+    /// Above its tables, for its name.
+    static let groupLabelHeight: CGFloat = 22
+    static let groupCornerRadius: CGFloat = cornerRadius + groupPadding
+
     /// Which grid column a point on a table falls in, by its distance from the table's left edge.
     enum GridColumn { case key, name, type }
 

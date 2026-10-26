@@ -5,7 +5,7 @@ extension DataModel {
     /// A made-up model of a given size, the same every time for a seed, for measuring how things scale: tables `t0`,
     /// `t1`… in a grid, each with an `id` key and a few columns, and foreign keys mostly between near neighbors (as in
     /// real models) with some reaching across.
-    static func synthetic(tables count: Int, foreignKeys: Int, seed: UInt64 = 1) -> DataModel {
+    static func synthetic(tables count: Int, foreignKeys: Int, groups: Int = 0, seed: UInt64 = 1) -> DataModel {
         var random = SplitMix(seed: seed)
         var model = DataModel()
         let perRow = max(1, Int(Double(count).squareRoot().rounded(.up)))
@@ -17,6 +17,11 @@ extension DataModel {
             for column in 0..<random.next(below: 5) {
                 model.tables[row].columns.append(Column(name: "c\(column)", type: DataType.allCases[random.next(below: DataType.allCases.count)]))
             }
+        }
+        // Runs of neighbors, as schemas tend to be.
+        for group in 0..<groups {
+            let run = (count * group / groups)..<(count * (group + 1) / groups)
+            model.group(Set(model.tables[run].map(\.id)), named: "schema_\(group)")
         }
         guard count > 1 else { return model }
         for key in 0..<foreignKeys {

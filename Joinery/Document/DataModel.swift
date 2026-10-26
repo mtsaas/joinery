@@ -7,6 +7,27 @@ struct DataModel: Codable, Equatable {
     var tables: [Table] = []
     var relationships: [Relationship] = []
     var zipTies: [ZipTie] = []
+    /// Named boundaries around tables, such as a database's schemas.
+    var groups: [TableGroup] = []
+}
+
+extension DataModel {
+    /// What a file from before something existed leaves out is empty.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        tables = try container.decodeIfPresent([Table].self, forKey: .tables) ?? []
+        relationships = try container.decodeIfPresent([Relationship].self, forKey: .relationships) ?? []
+        zipTies = try container.decodeIfPresent([ZipTie].self, forKey: .zipTies) ?? []
+        groups = try container.decodeIfPresent([TableGroup].self, forKey: .groups) ?? []
+    }
+}
+
+/// A boundary drawn around some tables, with a name: for anything, but mostly a schema, whose name it then is. Its
+/// tables say they're in it (`Table.group`); it's as big as they make it.
+struct TableGroup: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var name: String
+    var color: TableColor
 }
 
 struct Table: Codable, Identifiable, Equatable {
@@ -17,6 +38,8 @@ struct Table: Codable, Identifiable, Equatable {
     /// Shown on the table and on every wire referencing it.
     var color: TableColor
     var columns: [Column] = []
+    /// The group it's in, if any; for a schema, the schema.
+    var group: TableGroup.ID?
 }
 
 enum TableColor: String, Codable, CaseIterable, Identifiable {

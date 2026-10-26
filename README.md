@@ -33,6 +33,7 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
 | Add a column for a key | Drag from a socket onto a table's header: it gets a column named for yours (`users.id` gives `user_id`), of its type, referencing it |
 | Wires avoid tables | View ▸ Wires Avoid Tables, or from the palette: wires bend around tables in their way |
 | Reroute a wire | Double-click it to add a bend point there, then drag the point; double-click a bend point to remove it |
+| Group (schemas) | Select tables and press ⌘G (or right-click ▸ Group) to draw a named boundary around them, and type its name; for a database, its schema. Click a group's name to select it with its tables and the zip ties inside it, drag the name to move them all, double-click it to rename. Drop a table inside a group to put it there; right-click a table ▸ Remove from Group to take it out. ⇧⌘G ungroups, leaving the tables |
 | Zip-tie wires | Turn on the zip-tie tool (Z, or the toolbar's tie button), then drag a line across two or more wires; it stays on until you press Z or Escape. Option-drag ties without it |
 | Select | Click tables, wires, ties; Shift-click to add; drag a box around tables, ties and wires to select those wholly inside it; ⌘A for everything |
 | Move | Drag anything selected to move the whole selection. Tables snap into line with others, edges or centers, and guides show where they line up; hold ⌘ to move freely. Hold Shift to keep a move horizontal or vertical. Arrow keys nudge (Shift for 10 points) |
@@ -58,11 +59,12 @@ Other assistants can use the same URL. Those that only run local commands can br
 | --- | --- |
 | `list_models`, `open_model`, `new_model` | Choose what to work on |
 | `get_model` | Every table, column, type, key and foreign key |
-| `create_tables` | Adds tables, placed clear of the others. A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole data model can be made in one call |
-| `alter_table` | Renames, recolors, adds, drops or changes columns |
+| `create_tables` | Adds tables, placed clear of the others (beside the rest of their schema, given one). A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole data model can be made in one call |
+| `alter_table` | Renames, recolors, moves to another schema, adds, drops or changes columns |
+| `set_schema`, `drop_schema` | Make, fill, rename or recolor a schema, drawn as a group around its tables; or remove it, keeping the tables |
 | `drop_tables`, `add_foreign_key`, `remove_foreign_key` | What they say |
 
-Columns take `primary_key`, `nullable` (or `required`), `unique` and `references`. Types accept SQL spellings, such as `varchar(255)`, `decimal(10,2)`, `bigserial` and `timestamp with time zone`. Each call applies completely or not at all.
+Tables take `schema`, the group they're drawn in. Columns take `primary_key`, `nullable` (or `required`), `unique` and `references`. Types accept SQL spellings, such as `varchar(255)`, `decimal(10,2)`, `bigserial` and `timestamp with time zone`. Each call applies completely or not at all.
 
 ## Frame rate (Debug builds)
 

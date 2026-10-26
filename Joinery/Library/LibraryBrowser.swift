@@ -428,6 +428,8 @@ private struct ModelThumbnail: View {
                 let zoom = min((geometry.size.width - inset * 2) / bounds.width, (geometry.size.height - inset * 2) / bounds.height, 0.6)
                 let offset = CGPoint(x: geometry.size.width / 2 - bounds.midX * zoom, y: geometry.size.height / 2 - bounds.midY * zoom)
                 ZStack {
+                    GroupLayer(groups: preview.model.groups.compactMap { group in preview.model.frame(of: group.id).map { (group, $0) } },
+                               zoom: zoom, viewOffset: offset, selected: [])
                     Canvas { context, _ in
                         context.translateBy(x: offset.x, y: offset.y)
                         context.scaleBy(x: zoom, y: zoom)

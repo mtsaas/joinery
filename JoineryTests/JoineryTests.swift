@@ -472,4 +472,58 @@ struct JoineryTests {
                                            tolerance: 6, across: false)
         #expect(locked.offset.x == 0 && locked.offset.y == 300, "its top meets the other's bottom")
     }
+
+    @Test func groupsHoldTheirTablesTakeInWhatsDroppedOnThemAndTheirTies() throws {
+        // A file from before groups.
+        let old = #"{"tables": [{"id": "6A2D0F0E-3B8B-4C47-9E5A-1F2E3D4C5B6A", "name": "t", "position": [0, 0], "color": "blue", "columns": []}], "relationships": [], "zipTies": []}"#
+        let loaded = try JSONDecoder().decode(DataModel.self, from: Data(old.utf8))
+        #expect(loaded.groups.isEmpty && loaded.tables[0].group == nil)
+
+        var model = storefront()
+        let users = model.tables[0].id, orders = model.tables[1].id, reviews = model.tables[2].id
+        let group = model.group([orders, reviews], named: "sales")
+        #expect(model.members(of: group).map(\.id) == [orders, reviews])
+
+        // users dropped in the middle of sales joins it.
+        let frame = try #require(model.frame(of: group))
+        model.tables[0].position = CGPoint(x: frame.midX - Metrics.tableWidth / 2, y: frame.midY - 20)
+        model.regroup([users])
+        #expect(model.tables[0].group == group)
+
+        // Moved with its whole group, a table stays in it, wherever the group goes.
+        model.move(tables: [users, orders, reviews], ties: [], by: CGPoint(x: 5000, y: 0))
+        model.regroup([users, orders, reviews])
+        #expect(model.members(of: group).count == 3)
+
+        // A tie inside the boundary is the group's, and comes with it when it's selected.
+        model.zipTies.append(ZipTie(position: CGPoint(x: frame.midX + 5000, y: frame.midY), direction: CGPoint(x: 1, y: 0),
+                                    relationships: [model.relationships[0].id]))
+        let canvas = CanvasController()
+        canvas.selectGroup(group, in: model, extending: false)
+        #expect(canvas.selectedTies == [model.zipTies[0].id])
+        #expect(canvas.selectedTables == [users, orders, reviews])
+
+        // Emptied, it goes.
+        model.removeFromGroups([users, orders, reviews])
+        #expect(model.groups.isEmpty)
+    }
+
+    @Test func assistantToolsWorkInSchemas() throws {
+        var model = DataModel()
+        _ = try ModelTools.call("create_tables", ["tables": [
+            ["name": "users", "schema": "auth", "columns": [["name": "id", "type": "uuid", "primary_key": true]]],
+            ["name": "sessions", "schema": "auth", "columns": [["name": "user_id", "type": "uuid", "references": "users"]]],
+            ["name": "orders", "schema": "sales", "columns": [["name": "user_id", "type": "uuid", "references": "users"]]],
+        ]], on: &model)
+        #expect(model.groups.map(\.name) == ["auth", "sales"])
+        let auth = model.groups[0].id
+        #expect(model.members(of: auth).map(\.name) == ["users", "sessions"])
+        #expect(try ModelTools.describe(model).contains("\"schema\" : \"auth\""))
+
+        _ = try ModelTools.call("set_schema", ["schema": "sales", "tables": ["sessions"], "rename_to": "commerce"], on: &model)
+        #expect(model.groups.first { $0.name == "commerce" }.map { model.members(of: $0.id).map(\.name) } == ["sessions", "orders"])
+        _ = try ModelTools.call("drop_schema", ["schema": "auth"], on: &model)
+        #expect(model.groups.map(\.name) == ["commerce"])
+        #expect(model.tables.first { $0.name == "users" }?.group == nil)
+    }
 }

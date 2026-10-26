@@ -1,10 +1,17 @@
 import SwiftUI
 
-/// The Insert menu and the View menu's zoom items, acting on the frontmost document.
+/// The Insert and Arrange menus and the View menu's zoom items, acting on the frontmost document.
 struct CanvasCommands: Commands {
     @FocusedValue(\.canvasController) private var canvas
     @FocusedBinding(\.model) private var model
     @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
+
+    /// Does something to the frontmost data model, as one change.
+    private func change(_ body: (CanvasController, inout DataModel) -> Void) {
+        guard let canvas, var updated = model else { return }
+        body(canvas, &updated)
+        model = updated
+    }
 
     var body: some Commands {
         CommandMenu("Insert") {
@@ -15,6 +22,16 @@ struct CanvasCommands: Commands {
             }
             .keyboardShortcut("t", modifiers: [.command, .option])
             .disabled(canvas == nil)
+        }
+        CommandMenu("Arrange") {
+            Button("Group") { change { $0.groupSelection(in: &$1) } }
+                .keyboardShortcut("g")
+                .disabled(canvas?.selectedTables.isEmpty ?? true)
+            Button("Ungroup") { change { $0.ungroupSelection(in: &$1) } }
+                .keyboardShortcut("g", modifiers: [.command, .shift])
+                .disabled(canvas?.selectedGroups.isEmpty ?? true)
+            Button("Remove from Group") { change { $0.removeSelectionFromGroups(in: &$1) } }
+                .disabled(canvas?.selectedTables.isEmpty ?? true)
         }
         #if DEBUG
         CommandMenu("Debug") {

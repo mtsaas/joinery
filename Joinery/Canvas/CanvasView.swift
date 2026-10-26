@@ -37,14 +37,18 @@ struct CanvasView: View {
         let foreignKeys = Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
                                      uniquingKeysWith: { first, _ in first })
         let socketColors = socketColors(routing, colors: colors)
+        let groupFrames = model.groups.compactMap { group in model.frame(of: group.id, offsets: canvas.tableOffsets).map { (group, $0) } }
         ZStack(alignment: .topLeading) {
             GridLayer(zoom: canvas.zoom, offset: canvas.offset)
+            GroupLayer(groups: groupFrames, zoom: canvas.zoom, viewOffset: canvas.offset, selected: canvas.selectedGroups,
+                       renaming: canvas.renamingGroup)
             wireLayer(routing, colors: colors)
             tableLayer(socketColors: socketColors, foreignKeys: foreignKeys)
             ForEach(model.zipTies) { tie in
                 if let frame = routing.ties[tie.id] { tieHandle(tie, frame) }
             }
             cellEditor
+            groupNameEditor(groupFrames)
             gestureOverlay(routing)
             #if DEBUG
             if let edit = canvas.feedback { feedbackHandles(edit) }
@@ -220,6 +224,20 @@ struct CanvasView: View {
                 }
             }
         }
+        if !tables.isEmpty {
+            commands.append(PaletteCommand(id: "group", title: "Group Tables", subtitle: tables.count == 1 ? "1 table" : "\(tables.count) tables",
+                                           symbol: "rectangle.dashed", shortcut: "⌘G") { canvas.groupSelection(in: &model) })
+        }
+        if !canvas.selectedGroups.isEmpty {
+            commands.append(PaletteCommand(id: "ungroup", title: "Ungroup", symbol: "rectangle.dashed", shortcut: "⇧⌘G") {
+                canvas.ungroupSelection(in: &model)
+            })
+        }
+        if model.tables.contains(where: { tables.contains($0.id) && $0.group != nil }) {
+            commands.append(PaletteCommand(id: "ungroup-tables", title: "Remove from Group", symbol: "rectangle.dashed.badge.record") {
+                canvas.removeSelectionFromGroups(in: &model)
+            })
+        }
         if tables.count >= 3 {
             let count = "\(tables.count) tables"
             commands += [
@@ -290,6 +308,11 @@ struct CanvasView: View {
             // Its header is the table; a row, that column.
             if case .column(let id) = cell(at: point, in: table).row { target = .column(id, in: table.id) } else { target = .table(table.id) }
             if !canvas.selection.contains(.table(table.id)) { canvas.selection = [.table(table.id)] }
+        } else if let group = group(at: point) {
+            target = .group(group)
+            if !canvas.selection.contains(.group(group)) {
+                canvas.selectGroup(group, in: model, extending: false)
+            }
         } else if let hit = simulation.hit(near: point, within: reach) {
             target = .wire(hit)
             if !canvas.selection.contains(.relationship(hit.relationship)) { canvas.selection = [.relationship(hit.relationship)] }
@@ -314,6 +337,9 @@ struct CanvasView: View {
         let deleteSelection = PaletteCommand(id: "delete", title: "Delete", symbol: "trash", shortcut: "⌫", isDestructive: true) {
             canvas.deleteSelection(in: &model)
         }
+        let groupSelection = PaletteCommand(id: "group", title: "Group", symbol: "rectangle.dashed", shortcut: "⌘G") {
+            canvas.groupSelection(in: &model)
+        }
         if let (aligned, ties) = canvas.alignable {
             let directions: [DataModel.Alignment: CommandWheel.Direction] = [.left: .west, .right: .east, .top: .north,
                                                                            .bottom: .south, .center: .northWest, .middle: .southWest]
@@ -328,7 +354,7 @@ struct CanvasView: View {
                 slots[.southEast] = PaletteCommand(id: "distribute-v", title: "Distribute Vertically",
                                                    symbol: "distribute.vertical.center") { model.distribute(tables, horizontally: false) }
             }
-            extras = [deleteSelection]
+            extras = [groupSelection, deleteSelection]
             return (slots, extras, nil)
         }
         switch wheel.target {
@@ -342,6 +368,23 @@ struct CanvasView: View {
                 model.removeTable(id)
             }
             color = (table.color, { binding(for: id).wrappedValue.color = $0 })
+            if table.group != nil {
+                slots[.west] = PaletteCommand(id: "ungroup-table", title: "Remove from Group", symbol: "rectangle.dashed.badge.record") {
+                    canvas.removeSelectionFromGroups(in: &model)
+                }
+            } else {
+                slots[.west] = groupSelection
+            }
+        case .group(let id):
+            guard let group = model.groups.first(where: { $0.id == id }) else { break }
+            slots[.north] = PaletteCommand(id: "rename-group", title: "Rename", symbol: "pencil") { canvas.renamingGroup = id }
+            slots[.south] = PaletteCommand(id: "ungroup", title: "Ungroup", symbol: "rectangle.dashed", shortcut: "⇧⌘G") {
+                canvas.ungroupSelection(in: &model)
+            }
+            extras = [deleteSelection]
+            color = (group.color, { color in
+                if let index = model.groups.firstIndex(where: { $0.id == id }) { model.groups[index].color = color }
+            })
         case .column(let id, let tableID):
             guard let table = model.table(tableID), let column = table.columns.first(where: { $0.id == id }) else { break }
             func toggle(_ title: String, _ symbol: String, _ isOn: Bool, _ change: @escaping (inout Column) -> Void) -> PaletteCommand {
@@ -408,8 +451,10 @@ struct CanvasView: View {
         return (slots, extras, color)
     }
 
-    /// Whether keys are for the canvas itself rather than a cell being edited or the palette's search.
-    private var isCanvasKeyTarget: Bool { isCanvasFocused && !canvas.isEditingCell && !canvas.showsPalette }
+    /// Whether keys are for the canvas itself rather than a cell being edited, a group being named or the palette's search.
+    private var isCanvasKeyTarget: Bool {
+        isCanvasFocused && !canvas.isEditingCell && !canvas.showsPalette && canvas.renamingGroup == nil
+    }
 
     // MARK: Wires
 
@@ -506,7 +551,7 @@ struct CanvasView: View {
             switch item {
             case .relationship(let id): wires.insert(id)
             case .zipTie(let id): wires.formUnion(model.zipTies.first { $0.id == id }?.relationships ?? [])
-            case .table: break
+            case .table, .group: break
             }
         }
         return wires
@@ -537,13 +582,21 @@ struct CanvasView: View {
         /// Drawing a foreign key out of a column's socket.
         case socket(Column, at: CGPoint)
         case table(Table)
+        /// On a group's name: selecting and moving the group.
+        case group(TableGroup.ID)
         case background
     }
 
     private func press(at point: CGPoint) -> Press {
         if let (column, socket, _) = socket(at: point) { return .socket(column, at: socket) }
         if let table = model.tables.last(where: { Metrics.frame(of: $0).contains(point) }) { return .table(table) }
+        if let group = group(at: point) { return .group(group) }
         return .background
+    }
+
+    /// The group whose name band is under `point`, in canvas points; the last drawn, if they overlap.
+    private func group(at point: CGPoint) -> TableGroup.ID? {
+        model.groups.last { group in model.frame(of: group.id).map { GroupLayer.labelBand(of: $0).contains(point) } == true }?.id
     }
 
     /// The socket within reach of `point`, in canvas points, with its column and center.
@@ -580,6 +633,8 @@ struct CanvasView: View {
                     dragConnection(from: column, at: socket, to: canvas.canvasPoint(value.location))
                 case .table(let table):
                     dragItem(.table(table.id), by: value.translation)
+                case .group(let id):
+                    dragItem(.group(id), by: value.translation)
                 case .background:
                     dragBackground(from: value.startLocation, to: value.location)
                 }
@@ -593,10 +648,33 @@ struct CanvasView: View {
                 case .table(let table):
                     dropItem(.table(table.id), at: value.location, translation: value.translation,
                              click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) }
+                case .group(let id):
+                    // A double-click on its name renames it.
+                    dropItem(.group(id), at: value.location, translation: value.translation, click: nil) { _ in canvas.renamingGroup = id }
                 case .background:
                     if canvas.backgroundDrag == nil { click(at: canvas.canvasPoint(value.location)) } else { finishBackgroundDrag() }
                 }
             }
+    }
+
+    /// A group's name being edited, in place of its label: Return or clicking away keeps it, Escape doesn't.
+    @ViewBuilder
+    private func groupNameEditor(_ frames: [(TableGroup, CGRect)]) -> some View {
+        if let id = canvas.renamingGroup, let (group, frame) = frames.first(where: { $0.0.id == id }) {
+            let zoom = canvas.zoom
+            let origin = GroupLayer.labelOrigin(of: frame) * zoom + canvas.offset
+            let width = max(160, (frame.width - Metrics.groupPadding * 2) * zoom)
+            RenameField(name: group.name) { name in
+                canvas.renamingGroup = nil
+                let name = name?.trimmingCharacters(in: .whitespaces) ?? ""
+                if !name.isEmpty, let index = model.groups.firstIndex(where: { $0.id == id }) { model.groups[index].name = name }
+            }
+            .textFieldStyle(.plain)
+            .font(GroupLayer.labelFont(zoom: zoom))
+            .foregroundStyle(group.color.color)
+            .frame(width: width, height: 22 * max(zoom, 0.6))
+            .position(x: origin.x + width / 2, y: origin.y)
+        }
     }
 
     private func textStyle(of cell: CanvasController.Cell, row: Int?, in table: Table) -> TableText {
@@ -663,7 +741,13 @@ struct CanvasView: View {
         let isShifted = NSEvent.modifierFlags.contains(.shift)
         if canvas.dragOffset == nil {
             isCanvasFocused = true
-            if isShifted && canvas.selection.contains(item) { deselectOnClick = item } else { canvas.click(item, extending: isShifted) }
+            if case .group(let id) = item, !canvas.selection.contains(item) {
+                canvas.selectGroup(id, in: model, extending: isShifted)
+            } else if isShifted && canvas.selection.contains(item) {
+                deselectOnClick = item
+            } else {
+                canvas.click(item, extending: isShifted)
+            }
         }
         (canvas.dragOffset, canvas.guides) = move(by: translation)
     }
@@ -691,12 +775,20 @@ struct CanvasView: View {
         defer { deselectOnClick = nil }
         let delta = move(by: translation).offset
         if CGPoint(translation).length > 2 {
-            model.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
+            // One change: moved, and into any group dropped in.
+            var moved = model
+            moved.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
+            moved.regroup(canvas.selectedTables)
+            model = moved
             lastClick = nil
             return
         }
         if deselectOnClick == item {
             canvas.selection.remove(item)
+            // A group goes with its tables.
+            if case .group(let id) = item {
+                canvas.selection.subtract(model.members(of: id).map { .table($0.id) } + model.ties(in: id).map { .zipTie($0) })
+            }
             return
         }
         click?(canvas.canvasPoint(location))
@@ -966,7 +1058,8 @@ struct CanvasView: View {
                 let reach = Metrics.tieHalfLength(holding: tie.relationships.count)
                 return rect.contains(CGRect(x: tie.position.x - reach, y: tie.position.y - reach, width: reach * 2, height: reach * 2))
             }.map(\.id),
-            wires: simulation.wires.filter { $0.value.points.allSatisfy(rect.contains) }.map(\.key))
+            wires: simulation.wires.filter { $0.value.points.allSatisfy(rect.contains) }.map(\.key),
+            groups: model.groups.filter { model.frame(of: $0.id).map(rect.contains) == true }.map(\.id))
     }
 
     private func finishStroke() {

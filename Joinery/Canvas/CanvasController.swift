@@ -8,6 +8,43 @@ final class CanvasController {
         case table(Table.ID)
         case relationship(Relationship.ID)
         case zipTie(ZipTie.ID)
+        /// Selected along with its tables, which moving it moves.
+        case group(TableGroup.ID)
+    }
+
+    /// The group whose name is being edited.
+    var renamingGroup: TableGroup.ID?
+
+    var selectedGroups: Set<TableGroup.ID> { Set(selection.compactMap { if case .group(let id) = $0 { id } else { nil } }) }
+
+    /// Puts the selected tables in a new group, selects it, and starts naming it.
+    func groupSelection(in model: inout DataModel) {
+        let tables = selectedTables
+        guard !tables.isEmpty else { return }
+        let id = model.group(tables)
+        selectGroup(id, in: model, extending: false)
+        renamingGroup = id
+    }
+
+    /// Takes away the selected groups, leaving their tables selected where they are.
+    func ungroupSelection(in model: inout DataModel) {
+        for id in selectedGroups {
+            model.ungroup(id)
+            selection.remove(.group(id))
+        }
+    }
+
+    /// Takes the selected tables out of their groups.
+    func removeSelectionFromGroups(in model: inout DataModel) {
+        model.removeFromGroups(selectedTables)
+        selection = selection.filter { if case .group(let id) = $0 { model.groups.contains { $0.id == id } } else { true } }
+    }
+
+    /// Selects a group with its tables and the ties inside it, so moving it moves them all; or with Shift adds them to
+    /// the selection.
+    func selectGroup(_ id: TableGroup.ID, in model: DataModel, extending: Bool) {
+        let items = Set([Item.group(id)] + model.members(of: id).map { Item.table($0.id) } + model.ties(in: id).map(Item.zipTie))
+        selection = extending ? selection.union(items) : items
     }
 
     /// A cell of a table's grid: its name, or a column's key, name or type.
@@ -89,7 +126,9 @@ final class CanvasController {
 
     /// The right-click command wheel, while it's open.
     struct Wheel {
-        enum Target { case canvas, table(Table.ID), column(Column.ID, in: Table.ID), tie(ZipTie.ID), wire(WireSimulation.Hit) }
+        enum Target {
+            case canvas, table(Table.ID), column(Column.ID, in: Table.ID), tie(ZipTie.ID), wire(WireSimulation.Hit), group(TableGroup.ID)
+        }
         /// In view points.
         var center: CGPoint
         /// What was right-clicked, and where, in canvas points.
@@ -207,9 +246,9 @@ final class CanvasController {
 
     /// What a selection rectangle selects, given everything it touches. With tables, everything; without, ties take
     /// precedence over the wires through them (which are easy to catch by accident); with neither, the wires.
-    static func boxSelection(tables: [Table.ID], ties: [ZipTie.ID], wires: [Relationship.ID]) -> Set<Item> {
+    static func boxSelection(tables: [Table.ID], ties: [ZipTie.ID], wires: [Relationship.ID], groups: [TableGroup.ID] = []) -> Set<Item> {
         let tables = tables.map(Item.table), ties = ties.map(Item.zipTie), wires = wires.map(Item.relationship)
-        if !tables.isEmpty { return Set(tables + ties + wires) }
+        if !tables.isEmpty { return Set(tables + ties + wires + groups.map(Item.group)) }
         return Set(ties.isEmpty ? wires : ties)
     }
 
@@ -326,6 +365,8 @@ final class CanvasController {
             case .table(let id): model.removeTable(id)
             case .relationship(let id): model.removeRelationships { $0.id == id }
             case .zipTie(let id): model.removeZipTie(id)
+            // Its tables go with it, being selected too; this is for one somehow left without.
+            case .group(let id): model.ungroup(id)
             }
         }
         selection = []

@@ -38,9 +38,9 @@ extension DataModel {
         columnLocations[column].map { "\($0.table.name).\($0.table.columns[$0.row].name)" }
     }
 
-    /// The smallest rectangle around every table, or nil when there are none.
+    /// The smallest rectangle around every table and group, or nil when there are none.
     var bounds: CGRect? {
-        tables.map(Metrics.frame).reduce(nil) { $0?.union($1) ?? $1 }
+        (tables.map(Metrics.frame) + groups.compactMap { frame(of: $0.id) }).reduce(nil) { $0?.union($1) ?? $1 }
     }
 
     /// Where a wire dragged out of a socket would land.
@@ -198,6 +198,7 @@ extension DataModel {
         let columns = Set(table.columns.map(\.id))
         tables.removeAll { $0.id == id }
         removeRelationships { columns.contains($0.from) || columns.contains($0.to) }
+        removeEmptyGroups()
     }
 
     mutating func removeColumn(_ id: Column.ID) {
@@ -256,6 +257,83 @@ extension DataModel {
 
     /// Drops references to anything that isn't there, so a hand-edited or damaged file can't make the canvas draw
     /// wires to nowhere. A wire and a tie stay joined only if each lists the other.
+    // MARK: Groups
+
+    func members(of group: TableGroup.ID) -> [Table] {
+        tables.filter { $0.group == group }
+    }
+
+    /// The boundary drawn around a group's tables, with room for its name above them; nil while it has none. Moves
+    /// along with tables being dragged, by `offsets`.
+    func frame(of group: TableGroup.ID, offsets: [Table.ID: CGPoint] = [:]) -> CGRect? {
+        let frames = tables.filter { $0.group == group }.map { table in
+            Metrics.frame(of: table).offsetBy(dx: offsets[table.id]?.x ?? 0, dy: offsets[table.id]?.y ?? 0)
+        }
+        guard let union = frames.reduce(nil, { $0?.union($1) ?? $1 }) else { return nil }
+        let padding = Metrics.groupPadding
+        return CGRect(x: union.minX - padding, y: union.minY - padding - Metrics.groupLabelHeight,
+                      width: union.width + padding * 2, height: union.height + padding * 2 + Metrics.groupLabelHeight)
+    }
+
+    /// The zip ties and bend points inside a group's boundary: they belong to it, and go wherever it's moved.
+    func ties(in group: TableGroup.ID) -> [ZipTie.ID] {
+        guard let frame = frame(of: group) else { return [] }
+        return zipTies.filter { frame.contains($0.position) }.map(\.id)
+    }
+
+    /// Puts `tables` in a new group, out of any they were in, and returns it.
+    @discardableResult
+    mutating func group(_ ids: Set<Table.ID>, named name: String? = nil) -> TableGroup.ID {
+        // The color used least so far, as for tables.
+        let color = TableColor.allCases.min { a, b in groups.count { $0.color == a } < groups.count { $0.color == b } } ?? .indigo
+        var number = groups.count + 1
+        while groups.contains(where: { $0.name == "schema_\(number)" }) { number += 1 }
+        let group = TableGroup(name: name ?? "schema_\(number)", color: color)
+        groups.append(group)
+        for index in tables.indices where ids.contains(tables[index].id) { tables[index].group = group.id }
+        removeEmptyGroups()
+        return group.id
+    }
+
+    /// Takes the group away; its tables stay where they are.
+    mutating func ungroup(_ id: TableGroup.ID) {
+        for index in tables.indices where tables[index].group == id { tables[index].group = nil }
+        groups.removeAll { $0.id == id }
+    }
+
+    /// Takes tables out of their groups, letting go of any group left empty.
+    mutating func removeFromGroups(_ ids: Set<Table.ID>) {
+        for index in tables.indices where ids.contains(tables[index].id) { tables[index].group = nil }
+        removeEmptyGroups()
+    }
+
+    /// After `moved` tables are dropped, each that landed (by its middle) inside another group's boundary joins it.
+    /// One moved along with the rest of its own group stays in it; leaving a group is done on purpose, not by dragging.
+    mutating func regroup(_ moved: Set<Table.ID>) {
+        // Boundaries around the tables that stayed put.
+        let still = Dictionary(grouping: tables.filter { !moved.contains($0.id) && $0.group != nil }, by: { $0.group! })
+        let boundaries = groups.compactMap { group -> (id: TableGroup.ID, frame: CGRect)? in
+            guard let members = still[group.id] else { return nil }
+            let union = members.map(Metrics.frame).reduce(members.map(Metrics.frame)[0]) { $0.union($1) }
+            let padding = Metrics.groupPadding
+            return (group.id, union.insetBy(dx: -padding, dy: -padding))
+        }
+        for index in tables.indices where moved.contains(tables[index].id) {
+            let frame = Metrics.frame(of: tables[index])
+            let middle = CGPoint(x: frame.midX, y: frame.midY)
+            // The last drawn is on top.
+            if let landing = boundaries.last(where: { $0.frame.contains(middle) }), landing.id != tables[index].group {
+                tables[index].group = landing.id
+            }
+        }
+        removeEmptyGroups()
+    }
+
+    mutating func removeEmptyGroups() {
+        let used = Set(tables.compactMap(\.group))
+        groups.removeAll { !used.contains($0.id) }
+    }
+
     mutating func repair() {
         let columns = Set(tables.flatMap(\.columns).map(\.id))
         relationships.removeAll { !columns.contains($0.from) || !columns.contains($0.to) }
@@ -271,6 +349,9 @@ extension DataModel {
             relationships[index].zipTies = relationships[index].zipTies.uniqued.filter { wiresOf[$0]?.contains(wire) == true }
         }
         for tie in zipTies where tie.relationships.isEmpty { removeZipTie(tie.id) }
+        let groupIDs = Set(groups.map(\.id))
+        for index in tables.indices where tables[index].group.map(groupIDs.contains) == false { tables[index].group = nil }
+        removeEmptyGroups()
     }
 }
 

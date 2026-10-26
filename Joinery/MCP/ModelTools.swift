@@ -32,7 +32,7 @@ enum ModelTools {
     static let definitions: [[String: Any]] = [
         [
             "name": "get_model",
-            "description": "The open data model: every table with its columns (type, primary key, nullable, unique) and the foreign keys between them. Columns not marked nullable are required. Read this before changing anything.",
+            "description": "The open data model: its schemas, and every table with its schema, its columns (type, primary key, nullable, unique) and the foreign keys between them. Columns not marked nullable are required. Read this before changing anything.",
             "inputSchema": ["type": "object", "properties": [String: Any]()],
             "annotations": ["readOnlyHint": true],
         ],
@@ -50,6 +50,7 @@ enum ModelTools {
                                 "name": ["type": "string"],
                                 "columns": ["type": "array", "items": columnSchema],
                                 "color": ["type": "string", "enum": TableColor.allCases.map(\.rawValue)],
+                                "schema": ["type": "string", "description": "The schema it's in; made if there isn't one. Schemas are drawn as groups around their tables, and new tables are placed beside the rest of theirs."],
                             ],
                             "required": ["name", "columns"],
                         ],
@@ -67,6 +68,7 @@ enum ModelTools {
                     "table": tableReference,
                     "rename_to": ["type": "string"],
                     "color": ["type": "string", "enum": TableColor.allCases.map(\.rawValue)],
+                    "schema": ["type": "string", "description": "Moves it into this schema (made if need be), or out of any for an empty string."],
                     "add_columns": ["type": "array", "items": columnSchema],
                     "drop_columns": ["type": "array", "items": ["type": "string"]],
                     "change_columns": [
@@ -99,6 +101,25 @@ enum ModelTools {
                 "required": ["tables"],
             ],
             "annotations": ["destructiveHint": true],
+        ],
+        [
+            "name": "set_schema",
+            "description": "Makes or changes a schema, drawn as a group around its tables: puts tables in it (out of any other), renames or recolors it.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "schema": ["type": "string"],
+                    "tables": ["type": "array", "items": tableReference],
+                    "rename_to": ["type": "string"],
+                    "color": ["type": "string", "enum": TableColor.allCases.map(\.rawValue)],
+                ],
+                "required": ["schema"],
+            ],
+        ],
+        [
+            "name": "drop_schema",
+            "description": "Removes a schema's grouping; its tables stay, in no schema.",
+            "inputSchema": ["type": "object", "properties": ["schema": ["type": "string"]], "required": ["schema"]],
         ],
         [
             "name": "add_foreign_key",
@@ -134,6 +155,11 @@ enum ModelTools {
         case "create_tables": result = try createTables(arguments, in: &draft)
         case "alter_table": result = try alterTable(arguments, in: &draft)
         case "drop_tables": result = try dropTables(arguments, in: &draft)
+        case "set_schema": result = try setSchema(arguments, in: &draft)
+        case "drop_schema":
+            let name = try string("schema", in: arguments)
+            draft.ungroup(try group(named: name, in: draft).id)
+            result = "Dropped the schema \(name); its tables stay."
         case "add_foreign_key":
             let from = try column(named: string("from", in: arguments), in: draft)
             let to = try column(named: string("to", in: arguments), in: draft)
@@ -156,9 +182,14 @@ enum ModelTools {
     static func describe(_ model: DataModel) throws -> String {
         let references = Dictionary(model.relationships.compactMap { r in model.qualifiedName(of: r.to).map { (r.from, $0) } },
                                     uniquingKeysWith: { first, _ in first })
+        let groupNames = Dictionary(model.groups.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
+        let schemas: [[String: Any]] = model.groups.map { group in
+            ["name": group.name, "color": group.color.rawValue, "tables": model.members(of: group.id).map(\.name)]
+        }
         let tables: [[String: Any]] = model.tables.map { table in
             [
                 "name": table.name,
+                "schema": table.group.flatMap { groupNames[$0] } ?? NSNull(),
                 "color": table.color.rawValue,
                 "columns": table.columns.map { column -> [String: Any] in
                     var description: [String: Any] = ["name": column.name, "type": column.type.rawValue]
@@ -170,7 +201,7 @@ enum ModelTools {
                 },
             ]
         }
-        let data = try JSONSerialization.data(withJSONObject: ["tables": tables], options: [.prettyPrinted, .sortedKeys])
+        let data = try JSONSerialization.data(withJSONObject: ["schemas": schemas, "tables": tables], options: [.prettyPrinted, .sortedKeys])
         return String(decoding: data, as: UTF8.self)
     }
 
@@ -192,7 +223,13 @@ enum ModelTools {
             if !columns.isEmpty { model.tables[index].columns = columns.map(\.column) }
             try requireUniqueColumns(model.tables[index])
             pending += columns.compactMap { column in column.references.map { (column.column.id, $0) } }
-            model.tables[index].position = model.openSpot(for: model.tables[index], excluding: id)
+            var near: CGRect?
+            if let schema = spec["schema"] as? String, !schema.isEmpty {
+                let group = assign([id], toSchema: schema, in: &model)
+                // Beside the rest of its schema.
+                near = model.members(of: group).filter { $0.id != id }.map(Metrics.frame).reduce(nil) { $0?.union($1) ?? $1 }
+            }
+            model.tables[index].position = model.openSpot(for: model.tables[index], excluding: id, near: near)
             names.append(name)
         }
         for (column, reference) in pending {
@@ -216,6 +253,15 @@ enum ModelTools {
         if let color = arguments["color"] as? String {
             model.tables[index].color = try tableColor(color)
             changes.append("made it \(color)")
+        }
+        if let schema = arguments["schema"] as? String {
+            if schema.isEmpty {
+                model.removeFromGroups([id])
+                changes.append("took it out of its schema")
+            } else {
+                assign([id], toSchema: schema, in: &model)
+                changes.append("put it in \(schema)")
+            }
         }
         for name in arguments["drop_columns"] as? [String] ?? [] {
             model.removeColumn(try column(named: name, in: model.tables[index]).id)
@@ -247,7 +293,9 @@ enum ModelTools {
         }
         if !added.isEmpty { changes.append("added \(added.map(\.column.name).joined(separator: ", "))") }
         try requireUniqueColumns(model.tables[index])
-        guard !changes.isEmpty else { throw Failure("Nothing to change: give rename_to, color, add_columns, drop_columns or change_columns.") }
+        guard !changes.isEmpty else {
+            throw Failure("Nothing to change: give rename_to, color, schema, add_columns, drop_columns or change_columns.")
+        }
         return "\(model.tables[index].name): " + changes.joined(separator: "; ") + "."
     }
 
@@ -255,6 +303,42 @@ enum ModelTools {
         guard let names = arguments["tables"] as? [String], !names.isEmpty else { throw Failure("Give the tables to drop.") }
         for name in names { model.removeTable(try table(named: name, in: model).id) }
         return "Dropped \(names.joined(separator: ", "))."
+    }
+
+    private static func setSchema(_ arguments: [String: Any], in model: inout DataModel) throws -> String {
+        let name = try string("schema", in: arguments)
+        let tables = try (arguments["tables"] as? [String] ?? []).map { try table(named: $0, in: model).id }
+        let existing = model.groups.first { $0.name.lowercased() == name.lowercased() }
+        guard existing != nil || !tables.isEmpty else { throw Failure("There's no schema called \(name); give tables to make it with.") }
+        let id = assign(Set(tables), toSchema: name, in: &model)
+        let index = model.groups.firstIndex { $0.id == id }!
+        if let color = arguments["color"] as? String { model.groups[index].color = try tableColor(color) }
+        if let rename = arguments["rename_to"] as? String, !rename.isEmpty {
+            guard !model.groups.contains(where: { $0.id != id && $0.name.lowercased() == rename.lowercased() }) else {
+                throw Failure("There's already a schema called \(rename).")
+            }
+            model.groups[index].name = rename
+        }
+        let members = model.members(of: id).map(\.name)
+        return "\(model.groups[index].name): \(members.joined(separator: ", "))."
+    }
+
+    /// The schema (group) called `name`, with `ids` put in it; made if there isn't one.
+    @discardableResult
+    private static func assign(_ ids: Set<Table.ID>, toSchema name: String, in model: inout DataModel) -> TableGroup.ID {
+        guard let group = model.groups.first(where: { $0.name.lowercased() == name.lowercased() }) else {
+            return model.group(ids, named: name)
+        }
+        for index in model.tables.indices where ids.contains(model.tables[index].id) { model.tables[index].group = group.id }
+        model.removeEmptyGroups()
+        return group.id
+    }
+
+    private static func group(named name: String, in model: DataModel) throws -> TableGroup {
+        guard let group = model.groups.first(where: { $0.name.lowercased() == name.lowercased() }) else {
+            throw Failure("There's no schema called \(name). Schemas: \(model.groups.map(\.name).joined(separator: ", ")).")
+        }
+        return group
     }
 
     // MARK: Reading arguments
@@ -331,10 +415,10 @@ enum ModelTools {
 
 extension DataModel {
     /// Where `table` can go without crowding the others: the first gap, reading left to right in rows over the area
-    /// they cover, or below them all.
-    func openSpot(for table: Table, excluding id: Table.ID) -> CGPoint {
+    /// they cover (or `near` covers, to keep it beside some tables), or below them all.
+    func openSpot(for table: Table, excluding id: Table.ID, near: CGRect? = nil) -> CGPoint {
         let others = tables.filter { $0.id != id }.map(Metrics.frame)
-        guard let bounds = others.reduce(nil, { $0?.union($1) ?? $1 }) else { return .zero }
+        guard let bounds = near ?? others.reduce(nil, { $0?.union($1) ?? $1 }) else { return .zero }
         let gap: CGFloat = 80, size = Metrics.size(of: table)
         let step = Metrics.tableWidth + gap
         let columns = max(4, Int((bounds.width + gap) / step))
