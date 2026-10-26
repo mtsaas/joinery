@@ -16,6 +16,18 @@ struct CanvasCommands: Commands {
             .keyboardShortcut("t", modifiers: [.command, .option])
             .disabled(canvas == nil)
         }
+        #if DEBUG
+        CommandMenu("Debug") {
+            Toggle("Routing Feedback Mode", isOn: Binding { canvas?.isFeedbackMode ?? false } set: { isOn in
+                canvas?.isFeedbackMode = isOn
+                if !isOn { canvas?.feedback = nil }
+            })
+            .keyboardShortcut("r", modifiers: [.command, .option])
+            .disabled(canvas == nil)
+            Button("Export Routing Feedback…") { RoutingFeedback.export() }
+            Button("Show Routing Feedback in Finder") { NSWorkspace.shared.activateFileViewerSelecting([RoutingFeedback.folder]) }
+        }
+        #endif
         CommandGroup(after: .toolbar) {
             Button("Command Palette…") { canvas?.togglePalette() }
                 .keyboardShortcut("k")

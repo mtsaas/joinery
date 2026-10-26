@@ -39,6 +39,21 @@ Schemas live in a library shown in the sidebar. Each schema is a plain `.joinery
 Each wire takes the color of the table it references, and FK cells match it. Wires leave sockets and pass through
 ties and bend points square to them.
 
+## Routing feedback (Debug builds)
+
+To show how a cable *should* run, use Debug ▸ Routing Feedback Mode (⌥⌘R, also in the ⌘K palette).
+
+1. Click a cable. A grey copy appears with points along it; its sockets and ties stay fixed.
+2. Drag the points to where the cable should go. The area between the grey line and the real cable is shaded. Click the grey line to add a point; right-click a point to remove it.
+3. Optionally add a note, then press Return to save or Esc to discard.
+
+Each saved correction records:
+- **Replay data:** the whole schema as it was, which foreign key, and whether wires were avoiding tables.
+- **The routing that produced the line:** `Routing.version` and its parameters.
+- **Both lines:** the routed line and the expected one, plus your control points and note.
+
+Corrections are kept inside the library. Debug ▸ Export Routing Feedback… writes them all to one JSON file. `scripts/score-feedback.sh routing-feedback.json` then replays every case against the current routing and reports how far each lands from the expected line, then and now.
+
 ## Layout
 
 ```
@@ -47,9 +62,10 @@ Joinery/
   Library/     The library of files and collections, the sidebar, the editor for an open schema
   Document/    Schema model (Codable JSON, .joinery), its edits, reading and writing files
   Examples/    The bundled example schemas
+  Debug/       Routing feedback mode (Debug builds only)
   Canvas/      Canvas view, table cards, routing, wire physics, zip tying
 JoineryTests/  Swift Testing: physics, zip ties and bend points, type parsing, schema repair, library file operations
-scripts/       build.sh (unsandboxed CLI build), make_icon.swift, make_examples.py
+scripts/       build.sh (unsandboxed CLI build), make_icon.swift, make_examples.py, score-feedback.sh
 ```
 
 The wires work in two steps. `Routing` computes each wire's rest curve: Bézier segments from socket to socket that pass through the wire's zip ties. `WireSimulation` then springs a chain of points toward that curve. The ends of each wire are stiff and the middle is loose, and neighboring points pull on each other, so a wobble travels along the wire. The simulation runs only while something is moving.

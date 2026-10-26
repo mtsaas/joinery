@@ -45,6 +45,11 @@ final class CanvasController {
     /// A field to focus as soon as the view can, set by things outside the view such as menu commands.
     var requestedFocus: Field?
     var isSpaceHeld = false
+    #if DEBUG
+    /// Clicking a wire starts a correction to it instead of selecting it.
+    var isFeedbackMode = false
+    var feedback: FeedbackEdit?
+    #endif
     var showsPalette = false
     /// Which of the palette's matches is highlighted.
     var paletteHighlight = 0

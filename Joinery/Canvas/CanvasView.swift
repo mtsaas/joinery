@@ -37,7 +37,10 @@ struct CanvasView: View {
             ForEach(schema.zipTies) { tie in
                 if let frame = routing.ties[tie.id] { tieHandle(tie, frame) }
             }
-            gestureOverlay
+            gestureOverlay(routing)
+            #if DEBUG
+            if let edit = canvas.feedback { feedbackHandles(edit) }
+            #endif
             if canvas.isSpaceHeld { panSurface }
         }
         .coordinateSpace(.canvas)
@@ -76,6 +79,13 @@ struct CanvasView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
+        #if DEBUG
+        .overlay(alignment: .bottom) {
+            if canvas.isFeedbackMode {
+                FeedbackBar(canvas: canvas, save: saveFeedback).padding(.bottom, 20)
+            }
+        }
+        #endif
         .animation(.smooth(duration: 0.2), value: canvas.editingTable != nil)
         .animation(.smooth(duration: 0.15), value: canvas.showsPalette)
         .onChange(of: canvas.showsPalette) { if !canvas.showsPalette { isCanvasFocused = true } }
@@ -103,7 +113,12 @@ struct CanvasView: View {
             canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })
         }
         .onDeleteCommand { if isCanvasKeyTarget { canvas.deleteSelection(in: &schema) } }
-        .onExitCommand { canvas.selection = [] }
+        .onExitCommand {
+            #if DEBUG
+            if canvas.feedback != nil { return canvas.feedback = nil }
+            #endif
+            canvas.selection = []
+        }
         .onChange(of: canvas.requestedFocus) { _, requested in
             guard let requested else { return }
             canvas.editingTable = owner(of: requested)
@@ -132,6 +147,9 @@ struct CanvasView: View {
             finishStroke()
         }
         #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: .saveFeedback)) { note in
+            if note.object as AnyObject? === canvas { saveFeedback() }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .click)) { note in
             if note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint { click(at: point) }
         }
@@ -196,6 +214,13 @@ struct CanvasView: View {
                 canvas.zoom(by: 1 / canvas.zoom)
             },
         ]
+        #if DEBUG
+        commands.append(PaletteCommand(id: "feedback", title: "Routing Feedback Mode", subtitle: canvas.isFeedbackMode ? "On" : "Off",
+                                       symbol: "point.topleft.down.to.point.bottomright.curvepath", shortcut: "⌥⌘R") {
+            canvas.isFeedbackMode.toggle()
+            if !canvas.isFeedbackMode { canvas.feedback = nil }
+        })
+        #endif
         commands += schema.tables.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map { table in
             PaletteCommand(id: "table-\(table.id)", title: table.name, subtitle: "\(table.columns.count) columns", symbol: "tablecells") {
                 canvas.selection = [.table(table.id)]
@@ -545,6 +570,9 @@ struct CanvasView: View {
     /// bend point there.
     private func click(at point: CGPoint) {
         isCanvasFocused = true
+        #if DEBUG
+        if canvas.isFeedbackMode { return feedbackClick(at: point) }
+        #endif
         let isExtending = NSEvent.modifierFlags.contains(.shift)
         guard let hit = simulation.hit(near: point, within: Metrics.wireHitRadius / canvas.zoom) else {
             if !isExtending { canvas.selection = [] }
@@ -644,9 +672,12 @@ struct CanvasView: View {
     // MARK: Overlay
 
     /// The wire being dragged out, the tie line and the selection rectangle, above the tables.
-    private var gestureOverlay: some View {
+    private func gestureOverlay(_ routing: Routing) -> some View {
         let zoom = canvas.zoom, offset = canvas.offset, connection = canvas.connection, stroke = canvas.stroke
         let marquee = canvas.marquee
+        #if DEBUG
+        let feedback = canvas.feedback.map { (routed: routing.routes[$0.relationship]?.points ?? [], expected: $0.expected) }
+        #endif
         // Previews the color it'll take once dropped, and on a table, the column it'll add.
         let color = connection.map { connection in
             switch connection.target {
@@ -693,10 +724,117 @@ struct CanvasView: View {
                 context.fill(shape, with: .color(Color.accentColor.opacity(0.08)))
                 context.stroke(shape, with: .color(Color.accentColor.opacity(0.7)), lineWidth: 1 / zoom)
             }
+            #if DEBUG
+            // The correction: grey, with the gap between it and the routed wire shaded.
+            if let feedback, !feedback.routed.isEmpty {
+                var gap = Path()
+                gap.addLines(feedback.routed + feedback.expected.reversed())
+                gap.closeSubpath()
+                context.fill(gap, with: .color(.gray.opacity(0.22)), style: FillStyle(eoFill: true))
+                var line = Path()
+                line.addLines(feedback.expected)
+                context.stroke(line, with: .color(.gray), style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round, lineJoin: .round))
+            }
+            #endif
         }
         .allowsHitTesting(false)
     }
 }
+
+#if DEBUG
+extension CanvasView {
+    /// In feedback mode, a click on the correction adds a point there; on another wire, starts correcting it.
+    fileprivate func feedbackClick(at point: CGPoint) {
+        let tolerance = Metrics.wireHitRadius / canvas.zoom
+        if var edit = canvas.feedback, let index = edit.insertionIndex(near: point, within: tolerance) {
+            edit.points.insert(point, at: index)
+            edit.isAnchor.insert(false, at: index)
+            canvas.feedback = edit
+        } else if let hit = simulation.hit(near: point, within: tolerance),
+                  let route = Routing(schema: schema, avoidingTables: wiresAvoidTables).routes[hit.relationship] {
+            canvas.feedback = FeedbackEdit(relationship: hit.relationship, route: route)
+        }
+    }
+
+    /// Saves the correction with the schema and routing as they are now.
+    fileprivate func saveFeedback() {
+        guard let edit = canvas.feedback,
+              let route = Routing(schema: schema, avoidingTables: wiresAvoidTables).routes[edit.relationship],
+              let relationship = schema.relationships.first(where: { $0.id == edit.relationship }) else { return }
+        let foreignKey = "\(schema.qualifiedName(of: relationship.from) ?? "?") → \(schema.qualifiedName(of: relationship.to) ?? "?")"
+        do {
+            try RoutingFeedback.save(RoutingFeedbackCase(
+                schemaName: Library.shared.open?.name ?? "", note: edit.note, routingVersion: Routing.version,
+                routingParameters: Routing.parameters, avoidingTables: wiresAvoidTables, schema: schema,
+                relationship: edit.relationship, foreignKey: foreignKey, routed: route.points, expected: edit.expected,
+                controlPoints: edit.points))
+            canvas.feedback = nil
+        } catch {
+            Library.shared.failure = "Couldn't save the correction: \(error.localizedDescription)"
+        }
+    }
+
+    /// The correction's movable points: drag to reshape, right-click to remove.
+    fileprivate func feedbackHandles(_ edit: FeedbackEdit) -> some View {
+        ForEach(edit.points.indices.filter { !edit.isAnchor[$0] }, id: \.self) { index in
+            Circle()
+                .fill(Color.gray)
+                .strokeBorder(Theme.card, lineWidth: 1.5)
+                .frame(width: 10, height: 10)
+                .frame(width: Metrics.minimumTarget, height: Metrics.minimumTarget)
+                .contentShape(.circle)
+                .position(canvas.viewPoint(edit.points[index]))
+                .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .canvas).onChanged { value in
+                    canvas.feedback?.points[index] = canvas.canvasPoint(value.location)
+                })
+                .contextMenu {
+                    Button("Remove Point", systemImage: "minus.circle") {
+                        canvas.feedback?.points.remove(at: index)
+                        canvas.feedback?.isAnchor.remove(at: index)
+                    }
+                }
+                .pointerStyle(.grabIdle)
+        }
+    }
+}
+
+/// Routing feedback mode's instructions and controls.
+private struct FeedbackBar: View {
+    @Bindable var canvas: CanvasController
+    let save: () -> Void
+    @State private var saved = RoutingFeedback.count
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                .foregroundStyle(.secondary)
+            if canvas.feedback != nil {
+                TextField("What's wrong? (optional)", text: Binding { canvas.feedback?.note ?? "" } set: { canvas.feedback?.note = $0 })
+                    .textFieldStyle(.plain)
+                    .frame(width: 240)
+                    .onSubmit(saveAndCount)
+                Button("Save", action: saveAndCount).keyboardShortcut(.return, modifiers: [])
+                Button("Discard") { canvas.feedback = nil }
+            } else {
+                Text("Click a cable, then drag its grey line to where it should run.")
+                    .foregroundStyle(.secondary)
+            }
+            Divider().frame(height: 16)
+            Text("\(saved) saved").foregroundStyle(.secondary).monospacedDigit()
+            Button("Done") { canvas.isFeedbackMode = false; canvas.feedback = nil }
+        }
+        .font(.callout)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .glassEffect()
+    }
+
+    private func saveAndCount() {
+        save()
+        saved = RoutingFeedback.count
+    }
+}
+#endif
 
 /// Shortcuts while editing a table, in a capsule at the bottom of the canvas. The keys themselves are caught by the
 /// event monitor; the ⌘ ones here are also buttons, for the mouse.

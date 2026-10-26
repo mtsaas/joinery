@@ -169,6 +169,17 @@ struct Routing {
     /// How far out of a socket or tie the wire is held: completely at the anchor, easing to not at all here. It's
     /// stiffer there while things move, and avoidance can't push it, so it leaves square and bends progressively.
     static let squareReach: CGFloat = 72
+    /// Names this version of the routing in saved feedback, with `parameters`. Change it when the method changes, so
+    /// feedback can be told apart by what produced the line it corrects.
+    static let version = "2026-10-25 elastic"
+
+    /// The tuning constants, for saved feedback.
+    static var parameters: [String: Double] {
+        ["samplesPerSegment": Double(samplesPerSegment), "squareReach": squareReach, "avoidanceReach": avoidanceReach,
+         "avoidancePasses": Double(avoidancePasses), "avoidanceSettlingPasses": Double(avoidanceSettlingPasses),
+         "pushRunway": pushRunway, "endStiffening": endStiffening, "tension": tension]
+    }
+
     /// How far a table's push on wires reaches; it fades smoothly to nothing there.
     static let avoidanceReach: CGFloat = 64
     static let avoidancePasses = 40
