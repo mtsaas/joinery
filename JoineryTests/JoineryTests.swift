@@ -529,11 +529,14 @@ struct JoineryTests {
 
     @Test func layoutsLeaveNoTablesOverlappingAndKeepGroupsTogether() {
         var model = DataModel.synthetic(tables: 60, foreignKeys: 90, groups: 4)
+        model.zipTies.append(ZipTie(position: .zero, direction: CGPoint(x: 1, y: 0), relationships: [model.relationships[0].id]))
+        model.relationships[0].zipTies = [model.zipTies[0].id]
         // Everything piled up, as an import might leave it.
         for index in model.tables.indices { model.tables[index].position = CGPoint(x: CGFloat(index), y: 0) }
         for layout in DataModel.Layout.allCases {
             var arranged = model
             arranged.arrange(layout)
+            #expect(arranged.zipTies.isEmpty && arranged.relationships.allSatisfy(\.zipTies.isEmpty), "ties placed for the old layout go")
             let frames = arranged.tables.map(Metrics.frame)
             for (i, a) in frames.enumerated() {
                 for b in frames[(i + 1)...] { #expect(!a.intersects(b), "\(layout.title)") }

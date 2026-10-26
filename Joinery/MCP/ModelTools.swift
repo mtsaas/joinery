@@ -123,7 +123,7 @@ enum ModelTools {
         ],
         [
             "name": "arrange",
-            "description": "Lays every table out afresh: orthogonal_groups packs each schema (and each set of joined tables) as a compact block, as DataGrip does; hierarchical puts referenced tables left of those referencing them. Good after making many tables.",
+            "description": "Lays every table out afresh: orthogonal_groups packs each schema (and each set of joined tables) as a compact block, as DataGrip does; hierarchical puts referenced tables left of those referencing them. Removes zip ties and bend points, which the old positions placed. Good after making many tables.",
             "inputSchema": [
                 "type": "object",
                 "properties": ["layout": ["type": "string", "enum": ["orthogonal_groups", "hierarchical"]]],

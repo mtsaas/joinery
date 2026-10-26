@@ -32,8 +32,9 @@ extension DataModel {
     /// Room between blocks of tables, groups' labels and padding included.
     private static let blockGap: CGFloat = 120
 
-    /// Moves every table to where `layout` puts it, starting from where the tables are now, and each zip tie to the
-    /// middle of its wires' ends. One change, to undo whole.
+    /// Moves every table to where `layout` puts it, starting from where the tables are now, and takes away every zip tie
+    /// and bend point: they were placed for the old layout, and would only knot the wires in the new one. One change, so
+    /// undoing it brings them back with the tables where they were.
     mutating func arrange(_ layout: Layout) {
         guard !tables.isEmpty else { return }
         let origin = bounds.map { CGPoint(x: $0.minX, y: $0.minY) } ?? .zero
@@ -46,7 +47,8 @@ extension DataModel {
         for index in tables.indices {
             if let position = positions[tables[index].id] { tables[index].position = origin + position }
         }
-        placeTies()
+        zipTies = []
+        for index in relationships.indices { relationships[index].zipTies = [] }
     }
 
     // MARK: Blocks
@@ -193,18 +195,5 @@ extension DataModel {
             neighbors[b, default: []].insert(a)
         }
         return neighbors
-    }
-
-    /// Each zip tie (and bend point) to the middle of its wires' tables, where it's likely to be in their way.
-    private mutating func placeTies() {
-        let owner = columnLocations.mapValues(\.table)
-        for index in zipTies.indices {
-            let middles = zipTies[index].relationships.compactMap { id -> CGPoint? in
-                guard let wire = relationships.first(where: { $0.id == id }),
-                      let from = owner[wire.from].map(Metrics.frame), let to = owner[wire.to].map(Metrics.frame) else { return nil }
-                return CGPoint(x: (from.midX + to.midX) / 2, y: (from.midY + to.midY) / 2)
-            }
-            if !middles.isEmpty { zipTies[index].position = middles.reduce(.zero, +) / CGFloat(middles.count) }
-        }
     }
 }

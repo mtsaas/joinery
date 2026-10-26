@@ -33,7 +33,7 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
 | Add a column for a key | Drag from a socket onto a table's header: it gets a column named for yours (`users.id` gives `user_id`), of its type, referencing it |
 | Wires avoid tables | View ▸ Wires Avoid Tables, or from the palette: wires bend around tables in their way |
 | Reroute a wire | Double-click it to add a bend point there, then drag the point; double-click a bend point to remove it |
-| Auto layout | The toolbar's Layout menu lays every table out afresh. Orthogonal Groups, as in DataGrip, packs each group (and each set of joined tables) as a compact block of related tables; Hierarchical puts referenced tables left of those referencing them, block by block. ⌘Z puts everything back |
+| Auto layout | The toolbar's Layout menu lays every table out afresh. Orthogonal Groups, as in DataGrip, packs each group (and each set of joined tables) as a compact block of related tables; Hierarchical puts referenced tables left of those referencing them, block by block. Zip ties and bend points are removed, as they were placed for the old layout. ⌘Z puts everything back |
 | Focus | Turn on focus mode (F, or the toolbar's scope button) with a table or group selected, or select one after: it, the tables its foreign keys join it to, the wires among them and their zip ties stay; everything else fades. Focus stays put while you click about and build, and tables you add join it. ⇧F focuses on the selection instead; the palette can add the selection to focus |
 | Group (schemas) | Select tables and press ⌘G (or right-click ▸ Group) to draw a named boundary around them, and type its name; for a database, its schema. Click a group's name to select it with its tables and the zip ties inside it, drag the name to move them all, double-click it to rename. Drop a table inside a group to put it there; right-click a table ▸ Remove from Group to take it out. ⇧⌘G ungroups, leaving the tables |
 | Zip-tie wires | Turn on the zip-tie tool (Z, or the toolbar's tie button), then drag a line across two or more wires; it stays on until you press Z or Escape. Option-drag ties without it |
@@ -65,7 +65,7 @@ Other assistants can use the same URL. Those that only run local commands can br
 | `get_model` | Every table, column, type, key and foreign key |
 | `create_tables` | Adds tables, placed clear of the others (beside the rest of their schema, given one). A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole data model can be made in one call |
 | `alter_table` | Renames, recolors, moves to another schema, adds, drops or changes columns |
-| `arrange` | Lays every table out afresh: `orthogonal_groups` or `hierarchical` |
+| `arrange` | Lays every table out afresh: `orthogonal_groups` or `hierarchical`; removes zip ties |
 | `set_schema`, `drop_schema` | Make, fill, rename or recolor a schema, drawn as a group around its tables; or remove it, keeping the tables |
 | `drop_tables`, `add_foreign_key`, `remove_foreign_key` | What they say |
 
