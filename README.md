@@ -67,6 +67,10 @@ Columns take `primary_key`, `nullable` (or `required`), `unique` and `references
 
 The bottom-left corner shows frames per second while anything moves, and what the last frame cost: routing the wires and drawing them. `JOINERY_SCRIPT="shake <table> <seconds>"` drags a table about and prints the frame rate and how long each whole update took.
 
+## Scale test
+
+`scripts/scale-test.sh` builds a Debug copy and, for schemas of 10 to 200 made-up tables (the same each run), drags a table about with wires running under tables and then avoiding them. It prints frames per second, our own work per frame (routing and drawing wires) and the whole update each move causes. Give it other sizes as `scripts/scale-test.sh <derived-data-dir> "300:450 500:800"`.
+
 ## Routing feedback (Debug builds)
 
 To show how a cable *should* run, use Debug ▸ Routing Feedback Mode (⌥⌘R, also in the ⌘K palette).
