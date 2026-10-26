@@ -7,9 +7,9 @@ import SwiftUI
 /// - Right-dragging from empty canvas or a wire draws a line that zip-ties the wires it crosses. Right-clicks pass
 ///   through untouched, so tables and ties still get their context menus; a drag can't start while one is open.
 /// - In the command palette, the arrow keys move through the matches and Escape closes it.
-/// - While a table's cells are being edited, Tab and Shift-Tab step through them in our order (adding a column past
-///   the last), Escape stops editing, ⌘⌫ deletes the column and ⇧⌘K toggles its primary key. The text field would
-///   otherwise take these itself (and SwiftUI shortcuts don't reliably reach past it).
+/// - On a table's grid, the spreadsheet keys: arrows, Tab and Return move the cursor; typing, F2, Delete and Space
+///   edit; Escape cancels, then leaves. While a cell is being edited these are caught before its text field, which
+///   would otherwise take them itself (and SwiftUI shortcuts don't reliably reach past it).
 struct CanvasEventMonitor: NSViewRepresentable {
     let canvas: CanvasController
 
@@ -60,7 +60,48 @@ struct CanvasEventMonitor: NSViewRepresentable {
         }
 
         private enum Key {
-            static let tab: UInt16 = 48, space: UInt16 = 49, delete: UInt16 = 51, escape: UInt16 = 53, down: UInt16 = 125, up: UInt16 = 126
+            static let `return`: UInt16 = 36, tab: UInt16 = 48, space: UInt16 = 49, delete: UInt16 = 51, escape: UInt16 = 53
+            static let enter: UInt16 = 76, forwardDelete: UInt16 = 117, f2: UInt16 = 120
+            static let left: UInt16 = 123, right: UInt16 = 124, down: UInt16 = 125, up: UInt16 = 126
+        }
+
+        /// What a key does on the grid, or nil to let it through.
+        private func cellCommand(for event: NSEvent, isEditing: Bool) -> CanvasController.CellCommand? {
+            let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+            let shift = modifiers == .shift
+            switch event.keyCode {
+            case Key.tab:
+                return isEditing ? .commit(then: shift ? .previous : .next) : .move(shift ? .previous : .next)
+            case Key.return, Key.enter:
+                if modifiers == .command { return .insertColumn }
+                let move: CanvasController.CellMove = shift ? .up : .downOrNew
+                return isEditing ? .commit(then: move) : .move(move)
+            case Key.escape:
+                return isEditing ? .cancel : .leave
+            case Key.up, Key.down:
+                let move: CanvasController.CellMove = event.keyCode == Key.up ? .up : .down
+                return isEditing ? .commit(then: move) : .move(move)
+            case Key.left, Key.right:
+                return isEditing ? nil : .move(event.keyCode == Key.left ? .left : .right)
+            case Key.delete where modifiers == .command:
+                return .deleteColumn
+            case Key.delete, Key.forwardDelete:
+                return isEditing ? nil : .clear
+            case Key.f2:
+                return isEditing ? nil : .edit(replacingWith: nil)
+            case Key.space where !isEditing && modifiers.isEmpty:
+                return .space
+            default:
+                if modifiers == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "k" { return .toggleKey }
+                // Typing on a cell starts editing it, with what's typed in place of what was there.
+                guard !isEditing, modifiers.isSubset(of: .shift), let text = event.characters, Self.isPrintable(text) else { return nil }
+                return .edit(replacingWith: text)
+            }
+        }
+
+        /// Text a key types, as opposed to a control or function key.
+        private static func isPrintable(_ text: String) -> Bool {
+            !text.isEmpty && text.unicodeScalars.allSatisfy { !CharacterSet.controlCharacters.contains($0) && $0.value < 0xF700 }
         }
 
         /// - Returns: Whether the event was used.
@@ -75,17 +116,15 @@ struct CanvasEventMonitor: NSViewRepresentable {
                 case Key.escape: canvas.showsPalette = false
                 default: return false
                 }
-            case .keyDown where isTyping:
-                guard canvas.editingTable != nil else { return false }
-                let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
-                switch event.keyCode {
-                case Key.tab: canvas.fieldKey = modifiers.contains(.shift) ? .previous : .next
-                case Key.escape: canvas.fieldKey = .done
-                case Key.delete where modifiers == .command: canvas.fieldKey = .deleteColumn
-                case _ where modifiers == [.command, .shift] && event.charactersIgnoringModifiers?.lowercased() == "k":
-                    canvas.fieldKey = .togglePrimaryKey
-                default: return false
+            case .keyDown where canvas.cell != nil && (!isTyping || canvas.isEditingCell):
+                // Typed in the moment before the cell's editor takes focus: keep it for the editor.
+                if canvas.isEditingCell, !isTyping, event.modifierFlags.isDisjoint(with: [.command, .control, .option]),
+                   let text = event.characters, Self.isPrintable(text) {
+                    canvas.draft += text
+                    return true
                 }
+                guard let command = cellCommand(for: event, isEditing: canvas.isEditingCell) else { return false }
+                canvas.cellCommand = command
             case .keyDown, .keyUp:
                 guard !isTyping, event.keyCode == Key.space,
                       event.modifierFlags.isDisjoint(with: [.command, .option, .control]) else { return false }

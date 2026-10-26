@@ -1,19 +1,25 @@
 import SwiftUI
 
-/// A table on the canvas as a grid: a name header, then a row per column with its key, name and type. Drawn at `zoom`
-/// rather than scaled, so text stays sharp. While editing, the cells are text fields.
+/// A table on the canvas as a grid, like a small spreadsheet: a name header, then a row per column with its key, name
+/// and type. Drawn at `zoom` rather than scaled, so text stays sharp.
+///
+/// Every cell is plain text, except the one being edited: it alone becomes a text field, set in exactly the same
+/// place and type, so editing doesn't look like filling in a form. The grid cursor is a border around its cell.
 struct TableCard: View {
-    @Binding var table: Table
+    let table: Table
     let zoom: CGFloat
     let isSelected: Bool
+    /// The grid cursor, if it's in this table.
+    let cursor: CanvasController.Cell?
     let isEditing: Bool
+    @Binding var draft: String
+    let selectsAllDraft: Bool
     /// The row a wire being dragged would connect to.
     let targetColumn: Column.ID?
     /// Foreign key columns, in the color of the table each references.
     let foreignKeys: [Column.ID: Color]
-    var focus: FocusState<CanvasController.Field?>.Binding
-    /// Return in a field.
-    let submit: (CanvasController.Field) -> Void
+    /// Called if the cell being edited loses focus some other way than the grid's keys, say a click elsewhere.
+    let editorLostFocus: () -> Void
 
     @Environment(\.displayScale) private var displayScale
 
@@ -26,7 +32,7 @@ struct TableCard: View {
             header
             ForEach(Array(table.columns.enumerated()), id: \.element.id) { index, column in
                 let inCompoundKey = compoundKeys.contains { $0.contains(index) }
-                row(binding(for: column.id), showsKey: !inCompoundKey)
+                row(column, showsKey: !inCompoundKey)
                     .background(column.id == targetColumn ? Color.accentColor.opacity(0.14) : .clear)
                     // Between rows; the header's own edge is the line above the first. Within a compound key the
                     // key cells are one, so the line stops short of them.
@@ -68,7 +74,7 @@ struct TableCard: View {
         .shadow(color: .black.opacity(0.07), radius: 1.5 * zoom, y: 0.5 * zoom)
         .shadow(color: .black.opacity(0.09), radius: 14 * zoom, y: 6 * zoom)
         .overlay {
-            if isSelected || isEditing {
+            if isSelected {
                 // strokeBorder draws inside its shape, so the ring's inner edge sits `selectionGap` out from the card,
                 // at the concentric radius.
                 let outset = Metrics.selectionGap + Metrics.selectionWidth
@@ -78,85 +84,50 @@ struct TableCard: View {
             }
         }
         .contentShape(.rect(cornerRadius: Metrics.cornerRadius * zoom, style: .circular))
-        .accessibilityElement(children: isEditing ? .contain : .combine)
+        .accessibilityElement(children: .combine)
         .accessibilityLabel("Table \(table.name), \(table.columns.count) columns")
     }
 
-    /// Looks the column up by id on every access, not by position: a cell can outlive its column for a moment (a
-    /// type field saves as it disappears, after the column is deleted), and would otherwise index past the end.
-    private func binding(for id: Column.ID) -> Binding<Column> {
-        Binding {
-            table.columns.first { $0.id == id } ?? Column(id: id, name: "", type: .text)
-        } set: { column in
-            if let index = table.columns.firstIndex(where: { $0.id == id }) { table.columns[index] = column }
-        }
-    }
-
     private var header: some View {
-        cell(width: nil) {
-            if isEditing {
-                TextField("table_name", text: $table.name)
-                    .focused(focus, equals: .tableName(table.id))
-                    .onSubmit { submit(.tableName(table.id)) }
-            } else {
-                Text(table.name)
-            }
-        }
-        .font(.system(size: 11.5 * zoom, weight: .semibold))
-        .frame(height: Metrics.headerHeight * zoom)
-        .background(table.color.headerFill)
+        let cell = CanvasController.Cell.name(of: table.id)
+        return text(table.name, in: cell, width: nil)
+            .font(.system(size: 11.5 * zoom, weight: .semibold))
+            .frame(height: Metrics.headerHeight * zoom)
+            .background(table.color.headerFill)
+            .overlay { cursorBorder(cell) }
     }
 
-    private func row(_ column: Binding<Column>, showsKey: Bool) -> some View {
-        let id = column.wrappedValue.id
+    private func row(_ column: Column, showsKey: Bool) -> some View {
+        let cell = { (part: Metrics.GridColumn) in CanvasController.Cell(table: table.id, row: .column(column.id), part: part) }
         return HStack(spacing: 0) {
             keyCell(column, showsLabel: showsKey)
                 .frame(width: Metrics.keyColumnWidth * zoom)
+                .overlay { cursorBorder(cell(.key)) }
             Theme.cardBorder.frame(width: hairline)
-            cell(width: nil) {
-                if isEditing {
-                    TextField("column_name", text: column.name)
-                        .focused(focus, equals: .columnName(id))
-                        .onSubmit { submit(.columnName(id)) }
-                } else {
-                    Text(column.wrappedValue.name)
-                }
-            }
-            .font(.system(size: 11 * zoom, weight: column.wrappedValue.isPrimaryKey ? .medium : .regular))
+            text(column.name, in: cell(.name), width: nil)
+                .font(.system(size: 11 * zoom, weight: column.isPrimaryKey ? .medium : .regular))
+                .overlay { cursorBorder(cell(.name)) }
             Theme.cardBorder.frame(width: hairline)
-            cell(width: Metrics.typeColumnWidth * zoom) {
-                if isEditing {
-                    TypeField(column: column, focus: focus) { submit(.columnType(id)) }
-                } else {
-                    Text(column.wrappedValue.typeLabel)
-                }
-            }
-            .font(.system(size: 10 * zoom, design: .monospaced))
-            .foregroundStyle(.secondary)
+            text(column.typeLabel, in: cell(.type), width: Metrics.typeColumnWidth * zoom, completesTypes: true)
+                .font(.system(size: 10 * zoom, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .overlay { cursorBorder(cell(.type)) }
         }
         .frame(height: Metrics.rowHeight * zoom)
     }
 
     /// PK, or FK in the color of the table it references.
-    @ViewBuilder
-    private func keyCell(_ column: Binding<Column>, showsLabel: Bool) -> some View {
-        let label = keyLabel(Group {
-            if column.wrappedValue.isPrimaryKey {
+    private func keyCell(_ column: Column, showsLabel: Bool) -> some View {
+        keyLabel(Group {
+            if column.isPrimaryKey {
                 Text("PK").foregroundStyle(.secondary)
-            } else if let color = foreignKeys[column.wrappedValue.id] {
+            } else if let color = foreignKeys[column.id] {
                 Text("FK").foregroundStyle(color)
             } else {
                 Text("·").foregroundStyle(.quaternary)
             }
         })
         .opacity(showsLabel ? 1 : 0)
-        if isEditing {
-            Button { column.wrappedValue.isPrimaryKey.toggle() } label: { label.contentShape(.rect) }
-                .buttonStyle(.plain)
-                .help("Primary key (⇧⌘K)")
-        } else {
-            label
-        }
     }
 
     private func keyLabel(_ text: some View) -> some View {
@@ -165,43 +136,50 @@ struct TableCard: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func cell(width: CGFloat?, inset: CGFloat = Metrics.cellInset,
-                      @ViewBuilder content: () -> some View) -> some View {
-        content()
-            .textFieldStyle(.plain)
-            .lineLimit(1)
-            .padding(.leading, inset * zoom)
-            .padding(.trailing, Metrics.cellInset * zoom)
-            .frame(maxWidth: width ?? .infinity, alignment: .leading)
-            .frame(width: width)
+    /// A cell's text, or if it's the one being edited, the editor in its place.
+    private func text(_ value: String, in cell: CanvasController.Cell, width: CGFloat?, completesTypes: Bool = false) -> some View {
+        Group {
+            if isEditing && cursor == cell {
+                CellEditor(text: $draft, selectsAll: selectsAllDraft, completesTypes: completesTypes, lostFocus: editorLostFocus)
+            } else {
+                Text(value)
+            }
+        }
+        .lineLimit(1)
+        .padding(.horizontal, Metrics.cellInset * zoom)
+        .frame(maxWidth: width ?? .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(width: width)
+    }
+
+    /// The grid cursor: a border just inside the cell, as in a spreadsheet.
+    @ViewBuilder
+    private func cursorBorder(_ cell: CanvasController.Cell) -> some View {
+        if cursor == cell {
+            RoundedRectangle(cornerRadius: 2 * zoom)
+                .strokeBorder(Color.accentColor, lineWidth: max(2 * zoom, 1.5))
+                .padding(1)
+                .allowsHitTesting(false)
+        }
     }
 }
 
-/// Where a type is typed: "int", "ts", "text?" and so on, read when it's committed (Return, Tab, or leaving the
-/// field). While typing, the rest of the type it'll become shows faded after the text.
-private struct TypeField: View {
-    @Binding var column: Column
-    var focus: FocusState<CanvasController.Field?>.Binding
-    let onSubmit: () -> Void
-    @State private var text = ""
+/// The one live text field: it takes focus as it appears, with the caret at the end or everything selected. For a
+/// type, the rest of the type the text so far would become shows faded after it ("ti" → "mestamp").
+private struct CellEditor: View {
+    @Binding var text: String
+    let selectsAll: Bool
+    let completesTypes: Bool
+    let lostFocus: () -> Void
+    @FocusState private var isFocused: Bool
+    @State private var selection: TextSelection?
 
     var body: some View {
-        TextField("type", text: $text)
-            .focused(focus, equals: .columnType(column.id))
-            .onAppear { text = column.typeLabel }
-            // Escape ends editing by removing the field, before any focus change reaches it.
-            .onDisappear { commit() }
-            .onChange(of: focus.wrappedValue) { old, new in
-                if old == .columnType(column.id), new != old { commit() }
-            }
-            .onSubmit {
-                commit()
-                onSubmit()
-            }
-            // Inline rather than a suggestion list: that list takes the keyboard while it's open, so ⌘⌫ and ⇧⌘K
-            // wouldn't reach the table. The text is monospaced, so the hidden copy lines the rest up exactly.
+        TextField("", text: $text, selection: $selection)
+            .textFieldStyle(.plain)
+            .focused($isFocused)
             .overlay(alignment: .leading) {
-                if focus.wrappedValue == .columnType(column.id) {
+                if completesTypes {
+                    // Monospaced, so a hidden copy of the text lines the rest up exactly.
                     HStack(spacing: 0) {
                         Text(text).hidden()
                         Text(completion).foregroundStyle(.tertiary)
@@ -209,24 +187,32 @@ private struct TypeField: View {
                     .allowsHitTesting(false)
                 }
             }
-            .help("A type, or the start of one (int, ts, bool); end with ? for nullable")
+            .onAppear {
+                placeCaret()
+                isFocused = true
+            }
+            // Keys typed before it had focus were added to the text for it; the caret goes after them.
+            .onChange(of: text) { if !isFocused { selection = TextSelection(insertionPoint: text.endIndex) } }
+            .onChange(of: isFocused) {
+                guard isFocused else { return lostFocus() }
+                // A text field selects all its text as it takes focus, after anything set before; set it again once
+                // focus has arrived, and once more after AppKit finishes, or the next key would replace the first.
+                placeCaret()
+                DispatchQueue.main.async { placeCaret() }
+            }
     }
 
-    /// What's left of the type the text so far would become: "mestamp" after "ti".
+    /// Typing over a cell wants the caret after what was typed; a double-click, everything selected.
+    private func placeCaret() {
+        selection = selectsAll ? TextSelection(range: text.startIndex..<text.endIndex) : TextSelection(insertionPoint: text.endIndex)
+    }
+
     private var completion: String {
         let word = text.lowercased()
         guard !word.isEmpty, !word.hasSuffix("?"), let parsed = DataType.parse(word), parsed.type.rawValue.hasPrefix(word) else {
             return ""
         }
         return String(parsed.type.rawValue.dropFirst(word.count))
-    }
-
-    private func commit() {
-        if let parsed = DataType.parse(text), parsed.type != column.type || parsed.isNullable != column.isNullable {
-            column.type = parsed.type
-            column.isNullable = parsed.isNullable
-        }
-        text = column.typeLabel
     }
 }
 

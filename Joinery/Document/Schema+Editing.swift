@@ -201,13 +201,13 @@ extension Schema {
         for index in zipTies.indices where ties.contains(zipTies[index].id) { zipTies[index].position += delta }
     }
 
-    /// Adds an empty column after `column`, or at the end, and returns it.
+    /// Adds an empty column after `column`, or first for nil, and returns it.
     @discardableResult
-    mutating func addColumn(to table: Table.ID, after column: Column.ID? = nil) -> Column.ID? {
+    mutating func addColumn(to table: Table.ID, after column: Column.ID?) -> Column.ID? {
         guard let index = tables.firstIndex(where: { $0.id == table }) else { return nil }
         let new = Column(name: "", type: .text)
         let position = column.flatMap { id in tables[index].columns.firstIndex { $0.id == id } }.map { $0 + 1 }
-        tables[index].columns.insert(new, at: position ?? tables[index].columns.endIndex)
+        tables[index].columns.insert(new, at: position ?? 0)
         return new.id
     }
 

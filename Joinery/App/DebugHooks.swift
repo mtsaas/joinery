@@ -68,7 +68,7 @@ enum DebugHooks {
             case "select" where table != nil:
                 canvas.selection = [.table(document.wrappedValue.tables[table!].id)]
             case "edit" where table != nil:
-                canvas.edit(.tableName(document.wrappedValue.tables[table!].id))
+                canvas.edit(.name(of: document.wrappedValue.tables[table!].id))
             case "click" where numbers.count == 2:
                 NotificationCenter.default.post(name: .click, object: canvas, userInfo: ["point": CGPoint(x: numbers[0], y: numbers[1])])
             case "place" where numbers.count == 2:
@@ -84,7 +84,9 @@ enum DebugHooks {
                 // A named key, or ⌘ plus a letter as "cmd+k".
                 let codes: [String: (UInt16, String)] = ["tab": (48, "\t"), "return": (36, "\r"), "escape": (53, "\u{1b}"),
                                                           "delete": (51, "\u{7f}"),
-                                                          "down": (125, "\u{F701}"), "up": (126, "\u{F700}")]
+                                                          "down": (125, "\u{F701}"), "up": (126, "\u{F700}"),
+                                                          "left": (123, "\u{F702}"), "right": (124, "\u{F703}"), "f2": (120, "\u{F705}"),
+                                                          "space": (49, " ")]
                 if let (code, characters) = codes[words[1]] {
                     await press(characters, keyCode: code)
                 } else if words[1] == "cmd+delete" {
@@ -96,6 +98,18 @@ enum DebugHooks {
                 canvas.togglePalette()
             case "windows":
                 print("windows:", NSApp.windows.filter(\.isVisible).map { String(describing: type(of: $0)) })
+            case "cell":
+                let schema = document.wrappedValue
+                let row: String = switch canvas.cell?.row {
+                case .header?: "header"
+                case .column(let id)?: schema.columnLocations[id].map { $0.table.columns[$0.row].name } ?? "?"
+                case nil: "none"
+                }
+                print("cell \(row).\(canvas.cell.map { "\($0.part)" } ?? "-") editing=\(canvas.isEditingCell) draft=\"\(canvas.draft)\"")
+            case "routings":
+                print("routings built: \(Routing.built)")
+            case "clock":
+                print(String(format: "clock %.3f s", ProcessInfo.processInfo.systemUptime))
             case "counts":
                 let schema = document.wrappedValue
                 print("tables \(schema.tables.count), foreign keys \(schema.relationships.count), ties \(schema.zipTies.count),",

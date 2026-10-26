@@ -48,12 +48,20 @@ struct Routing {
     /// The sockets each wire is plugged into: its foreign key's, then the referenced column's.
     private(set) var sockets: [Relationship.ID: (from: Socket, to: Socket)] = [:]
 
+    #if DEBUG
+    /// How many routings have been worked out, to check redraws aren't redoing it needlessly.
+    nonisolated(unsafe) static var built = 0
+    #endif
+
     /// - Parameters:
     ///   - tableOffsets: How far tables being dragged have moved, not yet saved to `schema`.
     ///   - tieOffsets: The same for zip ties.
     ///   - avoidingTables: Whether wires bend around tables in their way rather than running under them.
     init(schema: Schema, tableOffsets: [Table.ID: CGPoint] = [:], tieOffsets: [ZipTie.ID: CGPoint] = [:],
          avoidingTables: Bool = false) {
+        #if DEBUG
+        Self.built += 1
+        #endif
         var frames: [Table.ID: CGRect] = [:]
         var rows: [Column.ID: (table: Table.ID, row: Int)] = [:]
         for table in schema.tables {

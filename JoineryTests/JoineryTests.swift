@@ -291,4 +291,31 @@ struct JoineryTests {
         #expect(crossing(CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0), CGPoint(x: 5, y: -5), CGPoint(x: 5, y: 5)) == 0.5)
         #expect(crossing(CGPoint(x: 0, y: 0), CGPoint(x: 10, y: 0), CGPoint(x: 11, y: -5), CGPoint(x: 11, y: 5)) == nil)
     }
+
+    @Test func gridCursorMovesLikeASpreadsheet() {
+        let orders = storefront().tables[1]  // id, user_id
+        let (id, userID) = (orders.columns[0].id, orders.columns[1].id)
+        func cell(_ row: CanvasController.Cell.Row, _ part: Metrics.GridColumn) -> CanvasController.Cell {
+            CanvasController.Cell(table: orders.id, row: row, part: part)
+        }
+        func after(_ from: CanvasController.Cell, _ move: CanvasController.CellMove) -> CanvasController.Cell? {
+            CanvasController.cell(after: from, move, in: orders)
+        }
+        let header = CanvasController.Cell.name(of: orders.id)
+        #expect(after(header, .down) == cell(.column(id), .name))
+        #expect(after(header, .up) == header)
+        #expect(after(header, .right) == header)
+        #expect(after(cell(.column(id), .type), .up) == header)
+        #expect(after(cell(.column(id), .type), .down) == cell(.column(userID), .type))
+        #expect(after(cell(.column(userID), .type), .down) == cell(.column(userID), .type), "clamps at the bottom")
+        #expect(after(cell(.column(userID), .name), .downOrNew) == nil, "past the end, a new column")
+        #expect(after(cell(.column(id), .key), .left) == cell(.column(id), .key))
+        #expect(after(cell(.column(id), .name), .right) == cell(.column(id), .type))
+        // Tab goes along a row, then to the next row's name; Shift-Tab back, to the header at the top.
+        #expect(after(header, .next) == cell(.column(id), .name))
+        #expect(after(cell(.column(id), .type), .next) == cell(.column(userID), .name))
+        #expect(after(cell(.column(userID), .type), .next) == nil)
+        #expect(after(cell(.column(userID), .key), .previous) == cell(.column(id), .type))
+        #expect(after(cell(.column(id), .key), .previous) == header)
+    }
 }

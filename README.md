@@ -21,11 +21,11 @@ Schemas live in a library shown in the sidebar. Each schema is a plain `.joinery
 | Command palette | ⌘K: every command, plus each table to jump to; arrows, Return, Escape |
 | Align / distribute | With tables selected, ⌘K then Align Left Edges, Align Centers, … Distribute Horizontally |
 | Add a table | **T**, the toolbar table button, or Insert ▸ Table (⌥⌘T); type its name straight away |
-| Edit cells | Double-click a cell, or press Return with a table selected |
-| Move between cells | Tab / Shift-Tab; Return goes name → type → new column; Tab past the last cell adds a column |
-| Set a type | Type it or its start: `int`, `ts`, `bool`, `jsonb`; end with `?` for nullable |
-| Primary key / delete column | ⇧⌘K / ⌘⌫ while editing, or double-click the key cell to toggle PK |
-| Finish editing | Escape (a first Escape closes the type suggestions) |
+| Edit cells | Tables are grids, like a spreadsheet: click a cell to put the cursor there and just type to replace it; double-click or F2 edits it in place. Return on a selected table renames it |
+| Move between cells | Arrow keys; Tab / Shift-Tab along the row; Return goes down, and past the last row adds a column; Delete clears a cell |
+| Set a type | Type it or its start: `int`, `ts`, `bool`, `jsonb`, and the rest shows faded; end with `?` for nullable |
+| Primary key / columns | Space (or ⇧⌘K) toggles the key; ⌘↩ inserts a column below, ⌘⌫ deletes one |
+| Finish editing | Escape cancels a cell's edit; Escape again leaves the grid |
 | Add a foreign key | Drag from a socket onto another column; if one end is a primary key, it's the one referenced |
 | Add a column for a key | Drag from a socket onto a table's header: it gets a column named for yours (`users.id` gives `user_id`), of its type, referencing it |
 | Wires avoid tables | View ▸ Wires Avoid Tables, or from the palette: wires bend around tables in their way |

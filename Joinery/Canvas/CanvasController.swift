@@ -10,11 +10,40 @@ final class CanvasController {
         case zipTie(ZipTie.ID)
     }
 
-    /// A text field on a table card being edited.
-    enum Field: Hashable {
-        case tableName(Table.ID)
-        case columnName(Column.ID)
-        case columnType(Column.ID)
+    /// A cell of a table's grid: its name, or a column's key, name or type.
+    struct Cell: Hashable {
+        enum Row: Hashable { case header, column(Column.ID) }
+        var table: Table.ID
+        var row: Row
+        /// `.name` for the header.
+        var part: Metrics.GridColumn
+
+        static func name(of table: Table.ID) -> Cell { Cell(table: table, row: .header, part: .name) }
+    }
+
+    /// What a key pressed on the grid asks for; the view carries it out against the schema.
+    enum CellCommand: Equatable {
+        case move(CellMove)
+        /// Starts editing, with the text replaced by this (typing over the cell) or kept, caret at the end (F2).
+        case edit(replacingWith: String?)
+        /// Keeps what was typed, then moves.
+        case commit(then: CellMove?)
+        /// Drops what was typed.
+        case cancel
+        case clear
+        /// Toggles a key cell's primary key; elsewhere, starts typing with a space.
+        case space
+        case insertColumn, deleteColumn, toggleKey
+        /// Off the grid, leaving the table selected.
+        case leave
+    }
+
+    enum CellMove: Equatable {
+        case up, down, left, right
+        /// Tab order: across a row, then on to the next row's name.
+        case next, previous
+        /// Down a row; past the last, a new column.
+        case downOrNew
     }
 
     /// A wire being dragged out of a socket, in canvas points.
@@ -40,10 +69,16 @@ final class CanvasController {
     private(set) var isFitted = true
     private(set) var viewSize = CGSize.zero
     var selection: Set<Item> = []
-    /// The table whose cells are text fields. Only one at a time.
-    var editingTable: Table.ID?
-    /// A field to focus as soon as the view can, set by things outside the view such as menu commands.
-    var requestedFocus: Field?
+    /// The grid's cursor, as in a spreadsheet: the cell that typing goes to.
+    var cell: Cell?
+    var isEditingCell = false
+    /// The edited cell's text. Only its editor reads it, so typing redraws that one cell, not the canvas.
+    var draft = ""
+    /// Whether editing starts with all of the cell's text selected (double-click) or the caret at the end.
+    var selectsAllDraft = false
+    var cellCommand: CellCommand?
+    /// A cell to start editing as soon as the view can, from outside it (a new table, a menu).
+    var editRequest: Cell?
     var isSpaceHeld = false
     #if DEBUG
     /// Clicking a wire starts a correction to it instead of selecting it.
@@ -53,10 +88,6 @@ final class CanvasController {
     var showsPalette = false
     /// Which of the palette's matches is highlighted.
     var paletteHighlight = 0
-    /// A key pressed in a cell that the table handles, for the view to act on.
-    var fieldKey: FieldKey?
-
-    enum FieldKey { case next, previous, done, deleteColumn, togglePrimaryKey }
 
     /// How far the selected tables and ties have been dragged, not yet saved to the document.
     var dragOffset: CGPoint?
@@ -164,11 +195,39 @@ final class CanvasController {
         while schema.tables.contains(where: { $0.position.distance(to: position) < 8 }) { position += CGPoint(x: 24, y: 24) }
         let id = schema.addTable(at: position)
         selection = [.table(id)]
-        edit(.tableName(id))
+        edit(.name(of: id))
     }
 
-    func edit(_ field: Field) {
-        requestedFocus = field
+    func edit(_ cell: Cell) {
+        editRequest = cell
+    }
+
+    /// Where `move` takes the cursor from `cell` in `table`, or nil past the last row (for Tab or Return, a new one).
+    /// The header has only its name; rows have key, name and type. Tab goes across a row, then to the next row's name.
+    static func cell(after cell: Cell, _ move: CellMove, in table: Table) -> Cell? {
+        let rows: [Cell.Row] = [.header] + table.columns.map { .column($0.id) }
+        guard let row = rows.firstIndex(of: cell.row) else { return nil }
+        let parts: [Metrics.GridColumn] = [.key, .name, .type]
+        let part = parts.firstIndex(of: cell.part) ?? 1
+        func at(_ row: Int, _ part: Metrics.GridColumn) -> Cell {
+            Cell(table: table.id, row: rows[row], part: row == 0 ? .name : part)
+        }
+        // Into the rows from the header, the name; back up to it, the header.
+        let downPart = row == 0 ? Metrics.GridColumn.name : cell.part
+        switch move {
+        case .up: return at(max(row - 1, 0), cell.part)
+        case .down: return at(min(row + 1, rows.count - 1), downPart)
+        case .downOrNew: return row + 1 < rows.count ? at(row + 1, downPart) : nil
+        case .left, .right:
+            guard row > 0 else { return cell }
+            return at(row, parts[min(max(part + (move == .left ? -1 : 1), 0), parts.count - 1)])
+        case .next:
+            if row > 0, part < parts.count - 1 { return at(row, parts[part + 1]) }
+            return row + 1 < rows.count ? at(row + 1, .name) : nil
+        case .previous:
+            if row > 0, part > 0 { return at(row, parts[part - 1]) }
+            return row > 1 ? at(row - 1, .type) : at(0, .name)
+        }
     }
 
     func deleteSelection(in schema: inout Schema) {

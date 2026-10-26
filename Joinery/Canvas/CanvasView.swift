@@ -18,12 +18,12 @@ struct CanvasView: View {
     /// The last click, to tell a double-click from two clicks.
     @State private var lastClick: (item: CanvasController.Item, time: TimeInterval)?
     @FocusState private var isCanvasFocused: Bool
-    @FocusState private var field: CanvasController.Field?
+    @State private var routingCache = RoutingCache()
     @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
 
     var body: some View {
-        let routing = Routing(schema: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
-                              avoidingTables: wiresAvoidTables)
+        let routing = routingCache.routing(for: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
+                                           avoidingTables: wiresAvoidTables)
         let colors = wireColors
         let foreignKeys = Dictionary(schema.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
                                      uniquingKeysWith: { first, _ in first })
@@ -59,8 +59,8 @@ struct CanvasView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if canvas.editingTable != nil {
-                EditingHints(togglePrimaryKey: togglePrimaryKey, deleteColumn: deleteFocusedColumn)
+            if canvas.cell != nil {
+                GridHints { canvas.cellCommand = $0 }
                     .padding(.bottom, 20)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
@@ -86,7 +86,7 @@ struct CanvasView: View {
             }
         }
         #endif
-        .animation(.smooth(duration: 0.2), value: canvas.editingTable != nil)
+        .animation(.smooth(duration: 0.2), value: canvas.cell != nil)
         .animation(.smooth(duration: 0.15), value: canvas.showsPalette)
         .onChange(of: canvas.showsPalette) { if !canvas.showsPalette { isCanvasFocused = true } }
         .focusable()
@@ -101,7 +101,7 @@ struct CanvasView: View {
         }
         .onKeyPress(.return) {
             guard isCanvasKeyTarget, canvas.selection.count == 1, case .table(let id)? = canvas.selection.first else { return .ignored }
-            canvas.edit(.tableName(id))
+            canvas.edit(.name(of: id))
             return .handled
         }
         .onKeyPress(keys: [.upArrow, .downArrow, .leftArrow, .rightArrow]) { press in
@@ -119,26 +119,19 @@ struct CanvasView: View {
             #endif
             canvas.selection = []
         }
-        .onChange(of: canvas.requestedFocus) { _, requested in
-            guard let requested else { return }
-            canvas.editingTable = owner(of: requested)
-            // The fields exist only once the table has redrawn as being edited.
-            DispatchQueue.main.async {
-                field = requested
-                canvas.requestedFocus = nil
-            }
+        .onChange(of: canvas.cellCommand) { _, command in
+            guard let command else { return }
+            canvas.cellCommand = nil
+            perform(command)
         }
-        .onChange(of: field) { old, new in
-            if let new {
-                canvas.editingTable = owner(of: new)
-            } else if old != nil, canvas.requestedFocus == nil {
-                finishEditing()
-            }
+        .onChange(of: canvas.editRequest) { _, request in
+            guard let request else { return }
+            canvas.editRequest = nil
+            begin(request, replacingWith: nil, selectingAll: true)
         }
-        .onChange(of: canvas.fieldKey) { _, key in
-            guard let key else { return }
-            canvas.fieldKey = nil
-            step(key)
+        // Selecting something else takes the cursor off the table.
+        .onChange(of: canvas.selection) {
+            if let cell = canvas.cell, !canvas.selection.contains(.table(cell.table)) { leaveGrid() }
         }
         .onChange(of: canvas.isSpaceHeld) { if !canvas.isSpaceHeld { canvas.panOrigin = nil } }
         .onChange(of: canvas.isStrokeFinished) {
@@ -169,7 +162,7 @@ struct CanvasView: View {
                     addColumn(to: id, after: table.columns.last?.id)
                 },
                 PaletteCommand(id: "rename", title: "Rename Table", subtitle: table.name, symbol: "pencil", shortcut: "⏎") {
-                    canvas.edit(.tableName(id))
+                    canvas.edit(.name(of: id))
                 },
             ]
         }
@@ -231,7 +224,7 @@ struct CanvasView: View {
     }
 
     /// Whether keys are for the canvas itself rather than a cell being edited.
-    private var isCanvasKeyTarget: Bool { isCanvasFocused && field == nil }
+    private var isCanvasKeyTarget: Bool { isCanvasFocused && !canvas.isEditingCell }
 
     // MARK: Wires
 
@@ -344,15 +337,14 @@ struct CanvasView: View {
         let offset = canvas.tableOffsets[table.id] ?? .zero
         let frame = Metrics.frame(of: table).offsetBy(dx: offset.x, dy: offset.y)
         let origin = canvas.viewPoint(frame.origin)
-        let isEditing = canvas.editingTable == table.id
         return ZStack(alignment: .topLeading) {
-            TableCard(table: binding(for: table.id), zoom: canvas.zoom,
+            TableCard(table: table, zoom: canvas.zoom,
                       isSelected: canvas.selection.contains(.table(table.id)) || canvas.connection?.target == .table(table.id),
-                      isEditing: isEditing, targetColumn: targetColumn, foreignKeys: foreignKeys,
-                      focus: $field, submit: submit)
+                      cursor: canvas.cell?.table == table.id ? canvas.cell : nil, isEditing: canvas.isEditingCell,
+                      draft: $canvas.draft, selectsAllDraft: canvas.selectsAllDraft, targetColumn: targetColumn,
+                      foreignKeys: foreignKeys, editorLostFocus: { canvas.cellCommand = .commit(then: nil) })
                 .position(x: origin.x + frame.width * canvas.zoom / 2, y: origin.y + frame.height * canvas.zoom / 2)
-                // While editing, clicks belong to the cells.
-                .gesture(itemGesture(.table(table.id)) { beginEditing(table, at: $0) }, including: isEditing ? .subviews : .all)
+                .gesture(itemGesture(.table(table.id), click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) })
                 .contextMenu { tableMenu(table) }
             ForEach(Array(table.columns.enumerated()), id: \.element.id) { row, column in
                 ForEach(Side.allCases, id: \.self) { side in
@@ -373,7 +365,7 @@ struct CanvasView: View {
 
     @ViewBuilder
     private func tableMenu(_ table: Table) -> some View {
-        Button("Rename", systemImage: "pencil") { canvas.edit(.tableName(table.id)) }
+        Button("Rename", systemImage: "pencil") { canvas.edit(.name(of: table.id)) }
         Button("Add Column", systemImage: "plus") { addColumn(to: table.id, after: table.columns.last?.id) }
         Picker("Color", selection: binding(for: table.id).color) {
             ForEach(TableColor.allCases) { color in
@@ -396,9 +388,10 @@ struct CanvasView: View {
         }
     }
 
-    /// Clicking selects, Shift-clicking adds; dragging moves everything selected; double-clicking calls `doubleClick`
-    /// with where, in canvas points.
-    private func itemGesture(_ item: CanvasController.Item, doubleClick: @escaping (CGPoint) -> Void) -> some Gesture {
+    /// Clicking selects, Shift-clicking adds; dragging moves everything selected. A click (without a drag) also calls
+    /// `click`, and a double-click `doubleClick`, with where, in canvas points.
+    private func itemGesture(_ item: CanvasController.Item, click: ((CGPoint) -> Void)? = nil,
+                             doubleClick: @escaping (CGPoint) -> Void) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .canvas)
             .onChanged { value in
                 if canvas.dragOffset == nil {
@@ -415,6 +408,7 @@ struct CanvasView: View {
                     lastClick = nil
                     return
                 }
+                click?(canvas.canvasPoint(value.location))
                 let now = ProcessInfo.processInfo.systemUptime
                 if let last = lastClick, last.item == item, now - last.time < NSEvent.doubleClickInterval {
                     lastClick = nil
@@ -441,94 +435,145 @@ struct CanvasView: View {
             }
     }
 
-    // MARK: Editing
+    // MARK: The grid
 
-    /// Edits the cell double-clicked; the key cell toggles the primary key instead.
-    private func beginEditing(_ table: Table, at point: CGPoint) {
+    /// Which cell of `table` is under `point`, in canvas points.
+    private func cell(at point: CGPoint, in table: Table) -> CanvasController.Cell {
         let local = point - table.position
         let row = Int(((local.y - Metrics.headerHeight) / Metrics.rowHeight).rounded(.down))
-        guard local.y >= Metrics.headerHeight, table.columns.indices.contains(row) else {
-            return canvas.edit(.tableName(table.id))
-        }
-        let column = table.columns[row].id
-        switch Metrics.gridColumn(atX: local.x) {
-        case .key: togglePrimaryKey(column)
-        case .name: canvas.edit(.columnName(column))
-        case .type: canvas.edit(.columnType(column))
-        }
+        guard local.y >= Metrics.headerHeight, table.columns.indices.contains(row) else { return .name(of: table.id) }
+        return CanvasController.Cell(table: table.id, row: .column(table.columns[row].id), part: Metrics.gridColumn(atX: local.x))
     }
 
-    /// Return: from the table's name to its first column, from a name to its type, from a type to a new column.
-    private func submit(_ submitted: CanvasController.Field) {
-        guard let tableID = owner(of: submitted), let table = schema.table(tableID) else { return }
-        switch submitted {
-        case .tableName:
-            if let first = table.columns.first { field = .columnName(first.id) } else { addColumn(to: tableID, after: nil) }
-        case .columnName(let id):
-            field = .columnType(id)
-        case .columnType(let id):
-            addColumn(to: tableID, after: id)
-        }
+    private func selectCell(at point: CGPoint, in table: Table) {
+        commitDraft()
+        canvas.cell = cell(at: point, in: table)
     }
 
-    /// Tab and Shift-Tab through the table's cells in reading order; Tab past the last adds a column.
-    private func step(_ key: CanvasController.FieldKey) {
-        guard let current = field, let id = canvas.editingTable, let table = schema.table(id) else { return }
-        let order = [CanvasController.Field.tableName(id)] + table.columns.flatMap { [.columnName($0.id), .columnType($0.id)] }
-        let index = order.firstIndex(of: current) ?? 0
-        switch key {
-        case .next where index == order.count - 1: addColumn(to: id, after: table.columns.last?.id)
-        case .next: field = order[index + 1]
-        case .previous: field = order[max(index - 1, 0)]
-        case .done: isCanvasFocused = true
-        case .deleteColumn: deleteFocusedColumn()
-        case .togglePrimaryKey: togglePrimaryKey()
-        }
+    /// Double-clicking a cell edits it with its text selected; on a key cell, it toggles the primary key.
+    private func doubleClickCell(at point: CGPoint, in table: Table) {
+        let target = cell(at: point, in: table)
+        guard target.part != .key else { return togglePrimaryKey(target) }
+        begin(target, replacingWith: nil, selectingAll: true)
     }
 
-    private func addColumn(to table: Table.ID, after column: Column.ID?) {
-        if let id = schema.addColumn(to: table, after: column) { canvas.edit(.columnName(id)) }
-    }
-
-    /// The column whose cell has focus.
-    private var focusedColumn: Column.ID? {
-        switch field {
-        case .columnName(let id), .columnType(let id): id
-        default: nil
+    private func perform(_ command: CanvasController.CellCommand) {
+        guard let cell = canvas.cell else { return }
+        switch command {
+        case .move(let move):
+            moveCursor(move)
+        case .edit(let replacement):
+            if cell.part != .key { begin(cell, replacingWith: replacement) } else if replacement == nil { togglePrimaryKey(cell) }
+        case .commit(let move):
+            commitDraft()
+            if let move { moveCursor(move) }
+        case .cancel:
+            canvas.isEditingCell = false
+            isCanvasFocused = true
+        case .clear:
+            if cell.part == .key { setPrimaryKey(cell, to: false) } else { begin(cell, replacingWith: "") }
+        case .space:
+            if cell.part == .key { togglePrimaryKey(cell) } else { begin(cell, replacingWith: " ") }
+        case .insertColumn:
+            if case .column(let id) = cell.row { addColumn(to: cell.table, after: id) } else { addColumn(to: cell.table, after: nil) }
+        case .deleteColumn:
+            deleteColumn(at: cell)
+        case .toggleKey:
+            togglePrimaryKey(cell)
+        case .leave:
+            leaveGrid()
         }
     }
 
-    private func togglePrimaryKey() {
-        if let column = focusedColumn { togglePrimaryKey(column) }
+    /// Moves the cursor; Tab or Return past the last row goes on into a new column.
+    private func moveCursor(_ move: CanvasController.CellMove) {
+        guard let cell = canvas.cell, let table = schema.table(cell.table) else { return }
+        isCanvasFocused = true
+        if let next = CanvasController.cell(after: cell, move, in: table) {
+            canvas.cell = next
+        } else if move == .next || move == .downOrNew {
+            addColumn(to: table.id, after: table.columns.last?.id)
+        }
     }
 
-    private func togglePrimaryKey(_ column: Column.ID) {
-        guard let (table, row) = schema.columnLocations[column],
-              let index = schema.tables.firstIndex(where: { $0.id == table.id }) else { return }
-        schema.tables[index].columns[row].isPrimaryKey.toggle()
+    /// Starts editing `cell`, its text replaced by `replacement` (typing over it) or kept.
+    private func begin(_ cell: CanvasController.Cell, replacingWith replacement: String?, selectingAll: Bool = false) {
+        guard cell.part != .key else { return }
+        commitDraft()
+        canvas.cell = cell
+        canvas.draft = replacement ?? text(of: cell)
+        canvas.selectsAllDraft = replacement == nil && selectingAll
+        canvas.isEditingCell = true
     }
 
-    /// Deletes the focused column and moves up to the cell above.
-    private func deleteFocusedColumn() {
-        guard let column = focusedColumn, let (table, row) = schema.columnLocations[column] else { return }
-        field = row > 0 ? .columnName(table.columns[row - 1].id) : .tableName(table.id)
-        schema.removeColumn(column)
+    private func text(of cell: CanvasController.Cell) -> String {
+        guard let table = schema.table(cell.table) else { return "" }
+        guard case .column(let id) = cell.row else { return table.name }
+        guard let column = table.columns.first(where: { $0.id == id }) else { return "" }
+        return cell.part == .type ? column.typeLabel : column.name
     }
 
-    /// Ends editing: columns left without a name are dropped.
-    private func finishEditing() {
-        guard let id = canvas.editingTable else { return }
-        canvas.editingTable = nil
-        for column in schema.table(id)?.columns ?? [] where column.name.trimmingCharacters(in: .whitespaces).isEmpty {
+    /// Puts what was typed into the schema, as one change (one undo). A type is read as typed ("int?", "ts"), and
+    /// left as it was if it reads as nothing; a table keeps its name rather than lose it.
+    private func commitDraft() {
+        guard canvas.isEditingCell else { return }
+        canvas.isEditingCell = false
+        isCanvasFocused = true
+        guard let cell = canvas.cell, let index = schema.tables.firstIndex(where: { $0.id == cell.table }) else { return }
+        let text = canvas.draft.trimmingCharacters(in: .whitespaces)
+        guard case .column(let id) = cell.row else {
+            if !text.isEmpty, text != schema.tables[index].name { schema.tables[index].name = text }
+            return
+        }
+        guard let row = schema.tables[index].columns.firstIndex(where: { $0.id == id }) else { return }
+        var column = schema.tables[index].columns[row]
+        if cell.part == .type {
+            guard let parsed = DataType.parse(text) else { return }
+            (column.type, column.isNullable) = (parsed.type, parsed.isNullable)
+        } else {
+            column.name = text
+        }
+        if column != schema.tables[index].columns[row] { schema.tables[index].columns[row] = column }
+    }
+
+    /// Takes the cursor off the grid. Columns left without a name are dropped.
+    private func leaveGrid() {
+        commitDraft()
+        guard let cell = canvas.cell else { return }
+        canvas.cell = nil
+        for column in schema.table(cell.table)?.columns ?? [] where column.name.trimmingCharacters(in: .whitespaces).isEmpty {
             schema.removeColumn(column.id)
         }
     }
 
-    private func owner(of field: CanvasController.Field) -> Table.ID? {
-        switch field {
-        case .tableName(let id): id
-        case .columnName(let id), .columnType(let id): schema.columnLocations[id]?.table.id
+    /// Adds a column after `column` (at the top for nil) and starts typing its name.
+    private func addColumn(to table: Table.ID, after column: Column.ID?) {
+        commitDraft()
+        if let id = schema.addColumn(to: table, after: column) {
+            begin(CanvasController.Cell(table: table, row: .column(id), part: .name), replacingWith: "")
         }
+    }
+
+    /// Deletes the cursor's column; the cursor goes to the row above.
+    private func deleteColumn(at cell: CanvasController.Cell) {
+        guard case .column(let id) = cell.row, let table = schema.table(cell.table),
+              let row = table.columns.firstIndex(where: { $0.id == id }) else { return }
+        canvas.isEditingCell = false
+        canvas.cell = row > 0 ? CanvasController.Cell(table: table.id, row: .column(table.columns[row - 1].id), part: cell.part)
+            : .name(of: table.id)
+        schema.removeColumn(id)
+    }
+
+    private func togglePrimaryKey(_ cell: CanvasController.Cell) {
+        guard case .column(let id) = cell.row, let column = schema.table(cell.table)?.columns.first(where: { $0.id == id }) else { return }
+        setPrimaryKey(cell, to: !column.isPrimaryKey)
+    }
+
+    private func setPrimaryKey(_ cell: CanvasController.Cell, to isKey: Bool) {
+        guard case .column(let id) = cell.row, let index = schema.tables.firstIndex(where: { $0.id == cell.table }),
+              let row = schema.tables[index].columns.firstIndex(where: { $0.id == id }),
+              schema.tables[index].columns[row].isPrimaryKey != isKey else { return }
+        schema.tables[index].columns[row].isPrimaryKey = isKey
     }
 
     // MARK: Zip ties and bend points
@@ -836,19 +881,19 @@ private struct FeedbackBar: View {
 }
 #endif
 
-/// Shortcuts while editing a table, in a capsule at the bottom of the canvas. The keys themselves are caught by the
-/// event monitor; the ⌘ ones here are also buttons, for the mouse.
-private struct EditingHints: View {
-    let togglePrimaryKey: () -> Void
-    let deleteColumn: () -> Void
+/// The grid's keys, in a capsule at the bottom of the canvas while its cursor is on a table. Those that change the
+/// table are also buttons.
+private struct GridHints: View {
+    let perform: (CanvasController.CellCommand) -> Void
 
     var body: some View {
         HStack(spacing: 16) {
+            hint("Type", "to edit")
             hint("⇥", "Next")
-            hint("⏎", "New column")
-            Button(action: togglePrimaryKey) { hint("⇧⌘K", "Primary key") }
-            Button(action: deleteColumn) { hint("⌘⌫", "Delete column") }
-            hint("?", "Nullable")
+            hint("↩", "Down")
+            Button { perform(.toggleKey) } label: { hint("Space", "Key") }
+            Button { perform(.insertColumn) } label: { hint("⌘↩", "Insert") }
+            Button { perform(.deleteColumn) } label: { hint("⌘⌫", "Delete") }
             hint("⎋", "Done")
         }
         .buttonStyle(.plain)
@@ -863,6 +908,25 @@ private struct EditingHints: View {
             Text(keys).fontWeight(.semibold)
             Text(label).foregroundStyle(.secondary)
         }
+    }
+}
+
+/// The last routing worked out, kept while nothing it depends on changes: a redraw that only moves the grid cursor or
+/// the selection needn't route every wire again.
+private final class RoutingCache {
+    private var inputs: (schema: Schema, tables: [Table.ID: CGPoint], ties: [ZipTie.ID: CGPoint], avoiding: Bool)?
+    private var routing: Routing?
+
+    func routing(for schema: Schema, tableOffsets: [Table.ID: CGPoint], tieOffsets: [ZipTie.ID: CGPoint],
+                 avoidingTables: Bool) -> Routing {
+        if let inputs, let routing, inputs.avoiding == avoidingTables, inputs.tables == tableOffsets,
+           inputs.ties == tieOffsets, inputs.schema == schema {
+            return routing
+        }
+        let routing = Routing(schema: schema, tableOffsets: tableOffsets, tieOffsets: tieOffsets, avoidingTables: avoidingTables)
+        inputs = (schema, tableOffsets, tieOffsets, avoidingTables)
+        self.routing = routing
+        return routing
     }
 }
 
