@@ -196,7 +196,8 @@ enum DebugHooks {
                 print("windows:", NSApp.windows.filter(\.isVisible).map { "\($0.identifier?.rawValue ?? "?") \($0.title)" })
             case "view":
                 print(String(format: "view offset %.0f, %.0f zoom %.2f, tying %@", canvas.offset.x, canvas.offset.y, canvas.zoom,
-                             canvas.isTying ? "on" : "off"))
+                             canvas.isTying ? "on" : "off"),
+                      "focus:", canvas.focus.map { focus in document.wrappedValue.tables.filter { focus.contains($0.id) }.map(\.name) } ?? ["off"])
             case "hold-drag" where table != nil && numbers.count == 2:
                 // A table dragged this far (view points) and held there, through the real drag, snapping and all.
                 NotificationCenter.default.post(name: .holdDrag, object: canvas, userInfo: [

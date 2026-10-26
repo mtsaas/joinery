@@ -85,8 +85,10 @@ struct ModelEditor: View {
                     .help("Lay every table out afresh; ⌘Z puts them back")
                     Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)
                         .help("Zip-tie tool: drag across wires to tie them (Z)")
-                    Toggle("Focus", systemImage: "scope", isOn: Bindable(canvas).isFocusing)
-                        .help("Focus mode: fade everything but the selection and what it's joined to (F)")
+                    Toggle("Focus", systemImage: "scope", isOn: Binding { canvas.isFocusing } set: { _ in
+                        canvas.toggleFocus(in: model.wrappedValue)
+                    })
+                    .help("Focus mode: fade everything but the selection and what it's joined to, until turned off (F)")
                 }
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)

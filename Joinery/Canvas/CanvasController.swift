@@ -252,8 +252,30 @@ final class CanvasController {
     var stroke: Stroke?
     /// The zip-tie tool: while it's on, every drag on the canvas draws a line that ties the wires it crosses.
     var isTying = false
-    /// Focus mode: everything but the selection and what it's joined to fades.
-    var isFocusing = false
+    /// Focus mode's tables, nil while it's off: everything but them and what they're joined to fades. Chosen from the
+    /// selection when it's turned on (or the first thing selected after, if nothing was), and kept however the selection
+    /// changes after, so a part of the model can be worked on in focus; tables made meanwhile join it.
+    var focus: Set<Table.ID>?
+
+    var isFocusing: Bool { focus != nil }
+
+    /// The selected tables, a selected group's included.
+    func selectedTablesAndMembers(in model: DataModel) -> Set<Table.ID> {
+        selectedTables.union(selectedGroups.flatMap { model.members(of: $0).map(\.id) })
+    }
+
+    func toggleFocus(in model: DataModel) {
+        focus = focus == nil ? selectedTablesAndMembers(in: model) : nil
+    }
+
+    /// Focus on what's selected instead, turning focus on if it's off.
+    func focusOnSelection(in model: DataModel) {
+        focus = selectedTablesAndMembers(in: model)
+    }
+
+    func addSelectionToFocus(in model: DataModel) {
+        focus = (focus ?? []).union(selectedTablesAndMembers(in: model))
+    }
     /// How many times what was last copied has been pasted, to set each paste a little further along.
     var pastes = 0
     /// Set when the right-drag drawing `stroke` ends, for the view to tie the wires it crossed.

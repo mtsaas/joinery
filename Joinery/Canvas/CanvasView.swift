@@ -131,9 +131,10 @@ struct CanvasView: View {
         .focusEffectDisabled()
         // Key presses reach these even while a cell has focus, so each checks that none does. (`isCanvasFocused` won't
         // do: it's true while anything inside the canvas has focus, cells included.)
-        .onKeyPress("f") {
-            guard isCanvasKeyTarget else { return .ignored }
-            canvas.isFocusing.toggle()
+        // F turns focus mode on and off; ⇧F focuses on the selection instead.
+        .onKeyPress(characters: CharacterSet(charactersIn: "fF")) { press in
+            guard isCanvasKeyTarget, press.modifiers.isDisjoint(with: [.command, .control, .option]) else { return .ignored }
+            if press.modifiers.contains(.shift) { canvas.focusOnSelection(in: model) } else { canvas.toggleFocus(in: model) }
             return .handled
         }
         .onKeyPress("z") {
@@ -174,6 +175,15 @@ struct CanvasView: View {
             guard let request else { return }
             canvas.editRequest = nil
             begin(request, replacingWith: nil, selectingAll: true)
+        }
+        // Focus on with nothing in it yet takes the first tables selected.
+        .onChange(of: canvas.selection) {
+            if canvas.focus?.isEmpty == true { canvas.focus = canvas.selectedTablesAndMembers(in: model) }
+        }
+        // Tables made in focus mode are in focus.
+        .onChange(of: model.tables.map(\.id)) { old, new in
+            guard canvas.focus != nil else { return }
+            canvas.focus?.formUnion(Set(new).subtracting(old))
         }
         // Selecting something else takes the cursor off the table.
         .onChange(of: canvas.selection) {
@@ -245,6 +255,16 @@ struct CanvasView: View {
             commands.append(PaletteCommand(id: "group", title: "Group Tables", subtitle: tables.count == 1 ? "1 table" : "\(tables.count) tables",
                                            symbol: "rectangle.dashed", shortcut: "⌘G") { canvas.groupSelection(in: &model) })
         }
+        if !tables.isEmpty || !canvas.selectedGroups.isEmpty {
+            commands.append(PaletteCommand(id: "focus-selection", title: "Focus on Selection", symbol: "scope", shortcut: "⇧F") {
+                canvas.focusOnSelection(in: model)
+            })
+            if canvas.isFocusing {
+                commands.append(PaletteCommand(id: "focus-add", title: "Add Selection to Focus", symbol: "plus.viewfinder") {
+                    canvas.addSelectionToFocus(in: model)
+                })
+            }
+        }
         if !canvas.selectedGroups.isEmpty {
             commands.append(PaletteCommand(id: "ungroup", title: "Ungroup", symbol: "rectangle.dashed", shortcut: "⇧⌘G") {
                 canvas.ungroupSelection(in: &model)
@@ -270,6 +290,8 @@ struct CanvasView: View {
             })
         }
         commands += [
+            PaletteCommand(id: "focus", title: "Focus Mode", subtitle: canvas.isFocusing ? "On" : "Off", symbol: "scope",
+                           shortcut: "F") { canvas.toggleFocus(in: model) },
             PaletteCommand(id: "tie", title: "Zip Tie Tool", subtitle: canvas.isTying ? "On" : "Off",
                            symbol: "arrow.triangle.merge", shortcut: "Z") { canvas.isTying.toggle() },
             PaletteCommand(id: "avoid", title: "Wires Avoid Tables", subtitle: wiresAvoidTables ? "On" : "Off",
@@ -478,6 +500,8 @@ struct CanvasView: View {
     private func wireLayer(_ routing: Routing, colors: [Relationship.ID: Color]) -> some View {
         // Read here, not in the renderer, so changes redraw the canvas.
         let zoom = canvas.zoom, offset = canvas.offset, highlighted = highlightedRelationships
+        // In focus mode, ties none of whose wires are in focus fade with them.
+        let isFocused = focusedTables != nil
         let tieCrossings = canvas.stroke.map { Set(simulation.crossings(from: $0.start, to: $0.end).map(\.relationship)) } ?? []
         let selectedTies = canvas.selectedTies, hoveredTie = canvas.hoveredTie
         let selectedWires = Set(canvas.selection.compactMap { if case .relationship(let id) = $0 { id } else { nil } })
@@ -512,6 +536,7 @@ struct CanvasView: View {
                 for (id, tie) in routing.ties {
                     drawTie(tie, id: id, isSelected: selectedTies.contains(id), isHovered: id == hoveredTie,
                             color: tie.relationships.first.flatMap { colors[$0] } ?? .gray,
+                            isFaded: isFocused && !tie.relationships.contains { highlighted?.contains($0) == true },
                             relationships: relationships, in: context)
                 }
             }
@@ -521,7 +546,7 @@ struct CanvasView: View {
     }
 
     /// Drawn where its wires actually are, so it rides along as they spring into place. A bend point is a dot.
-    private func drawTie(_ tie: Routing.Tie, id: ZipTie.ID, isSelected: Bool, isHovered: Bool, color: Color,
+    private func drawTie(_ tie: Routing.Tie, id: ZipTie.ID, isSelected: Bool, isHovered: Bool, color: Color, isFaded: Bool,
                          relationships: [Relationship], in context: GraphicsContext) {
         let slots = tie.relationships.compactMap { wireID -> CGPoint? in
             guard let wire = simulation.wires[wireID],
@@ -531,6 +556,7 @@ struct CanvasView: View {
         }
         guard !slots.isEmpty else { return }
         var context = context
+        if isFaded { context.opacity = TableLayer.fadedOpacity }
         let center = slots.reduce(.zero, +) / CGFloat(slots.count)
         context.translateBy(x: center.x, y: center.y)
         if tie.relationships.count == 1 {
@@ -578,12 +604,11 @@ struct CanvasView: View {
 
     // MARK: Tables
 
-    /// In focus mode with something selected: the selected tables (a selected group's included) and every table a
-    /// foreign key joins them to. Everything else fades. Nil otherwise.
+    /// In focus mode: the tables in focus and every table a foreign key joins them to; everything else fades. Nil while
+    /// focus is off, or on with nothing chosen yet.
     private var focusedTables: Set<Table.ID>? {
-        guard canvas.isFocusing else { return nil }
-        let selected = canvas.selectedTables.union(canvas.selectedGroups.flatMap { model.members(of: $0).map(\.id) })
-        return selected.isEmpty ? nil : model.neighborhood(of: selected)
+        guard let focus = canvas.focus, !focus.isEmpty else { return nil }
+        return model.neighborhood(of: focus)
     }
 
     /// Every table, and the presses on them and on the empty canvas around them.
