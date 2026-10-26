@@ -50,6 +50,12 @@ struct LibraryCommands: Commands {
             Button("Add Examples") { try? library.addExamples() }
             Button("Show Library in Finder") { library.showInFinder(library.root) }
         }
+        CommandGroup(replacing: .saveItem) {
+            // Changes save themselves; this keeps the data model as it is in its version history.
+            Button("Save Version") { library.open?.saveVersionNow() }
+                .keyboardShortcut("s")
+                .disabled(library.open == nil)
+        }
     }
 
     private func importModel() {

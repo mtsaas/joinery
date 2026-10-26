@@ -111,10 +111,14 @@ struct ModelEditor: View {
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             .navigationTitle(open.name)
             .overlay(alignment: .top) {
-                if let preview {
+                if preview != nil || open.notice != nil {
                     HStack(spacing: 8) {
                         Image(systemName: "clock.arrow.circlepath")
-                        Text("\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened)), read-only")
+                        if let preview {
+                            Text("\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened)), read-only")
+                        } else if let notice = open.notice {
+                            Text(notice)
+                        }
                     }
                     .font(.callout)
                     .padding(.horizontal, 16)

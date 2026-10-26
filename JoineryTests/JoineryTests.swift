@@ -654,4 +654,39 @@ struct JoineryTests {
         model.repair()
         #expect(model.groups[0].ports.isEmpty)
     }
+
+    @Test func assistantsTablesLandInOpenSpaceBesideTheirCompany() throws {
+        var model = DataModel()
+        let table = { (name: String, schema: String, references: String?) -> [String: Any] in
+            var columns: [[String: Any]] = [["name": "id", "type": "uuid", "primary_key": true]]
+            if let references { columns.append(["name": references + "_id", "type": "uuid", "references": references]) }
+            return ["name": name, "schema": schema, "columns": columns]
+        }
+        _ = try ModelTools.call("create_tables", ["tables": [
+            table("users", "auth", nil), table("sessions", "auth", "users"), table("tokens", "auth", "users"),
+        ]], on: &model)
+        // A new schema's tables, referencing users, then one more for auth.
+        _ = try ModelTools.call("create_tables", ["tables": [
+            table("orders", "shop", "users"), table("items", "shop", "orders"), table("carts", "shop", "users"),
+        ]], on: &model)
+        _ = try ModelTools.call("create_tables", ["tables": [table("devices", "auth", "users")]], on: &model)
+
+        func isClear() -> Bool {
+            let frames = model.tables.map(Metrics.frame)
+            let tablesApart = frames.indices.allSatisfy { i in frames.indices.allSatisfy { $0 == i || !frames[i].intersects(frames[$0]) } }
+            return tablesApart && model.groups.allSatisfy { !model.isCrowded($0.id) }
+        }
+        #expect(isClear(), "no table on another, no schema over anything not in it")
+        let auth = try #require(model.groups.first { $0.name == "auth" }), shop = try #require(model.groups.first { $0.name == "shop" })
+        let authFrame = try #require(model.frame(of: auth.id)), shopFrame = try #require(model.frame(of: shop.id))
+        #expect(shopFrame.minX - authFrame.maxX < 400 || shopFrame.minY - authFrame.maxY < 400, "beside what it references")
+
+        // Moving tables beside another puts them in the open next to it; the layout is there to read.
+        _ = try ModelTools.call("set_schema", ["schema": "shop", "tables": ["devices"]], on: &model)
+        #expect(isClear(), "a table joining a schema from across the canvas is brought beside it")
+        _ = try ModelTools.call("move_tables", ["tables": ["carts"], "near": "users"], on: &model)
+        #expect(isClear())
+        let description = try ModelTools.call("get_model", [:], on: &model)
+        #expect(description.contains("\"frame\"") && description.contains("\"bounds\""))
+    }
 }

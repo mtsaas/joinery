@@ -32,13 +32,13 @@ enum ModelTools {
     static let definitions: [[String: Any]] = [
         [
             "name": "get_model",
-            "description": "The open data model: its schemas, and every table with its schema, its columns (type, primary key, nullable, unique) and the foreign keys between them. Columns not marked nullable are required. Read this before changing anything.",
+            "description": "The open data model: its schemas, and every table with its schema, its columns (type, primary key, nullable, unique) and the foreign keys between them. Columns not marked nullable are required. Also where everything is on the canvas, in points (y grows downward): each table's and schema's frame [x, y, width, height], and the bounds of it all. Read this before changing anything.",
             "inputSchema": ["type": "object", "properties": [String: Any]()],
             "annotations": ["readOnlyHint": true],
         ],
         [
             "name": "create_tables",
-            "description": "Adds one or more tables, placed clear of the others. Columns can reference tables created in the same call, so a whole data model can be made at once.",
+            "description": "Adds one or more tables. Columns can reference tables created in the same call, so a whole data model can be made at once. They're placed for you, clear of every other table and schema: a schema's new tables together, beside the rest of that schema; otherwise beside the tables they reference; otherwise beside everything. Use move_tables to put them somewhere else.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -104,7 +104,7 @@ enum ModelTools {
         ],
         [
             "name": "set_schema",
-            "description": "Makes or changes a schema, drawn as a group around its tables: puts tables in it (out of any other), renames or recolors it.",
+            "description": "Makes or changes a schema, drawn as a group around its tables: puts tables in it (out of any other), renames or recolors it. Tables that would stretch the schema over others are moved beside the rest of it.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -128,6 +128,20 @@ enum ModelTools {
                 "type": "object",
                 "properties": ["layout": ["type": "string", "enum": ["orthogonal_groups", "hierarchical"]]],
                 "required": ["layout"],
+            ],
+        ],
+        [
+            "name": "move_tables",
+            "description": "Moves tables, together as a compact block in rows. Give `near` (a table or schema) to put them in the nearest open space beside it, clear of everything else; or `x` and `y` for the block's top left, in canvas points (y grows downward), as get_model reports them.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "tables": ["type": "array", "items": tableReference],
+                    "near": ["type": "string", "description": "A table or schema to put them beside."],
+                    "x": ["type": "number"],
+                    "y": ["type": "number"],
+                ],
+                "required": ["tables"],
             ],
         ],
         [
@@ -165,6 +179,7 @@ enum ModelTools {
         case "alter_table": result = try alterTable(arguments, in: &draft)
         case "drop_tables": result = try dropTables(arguments, in: &draft)
         case "set_schema": result = try setSchema(arguments, in: &draft)
+        case "move_tables": result = try moveTables(arguments, in: &draft)
         case "arrange":
             let name = try string("layout", in: arguments)
             guard let layout = DataModel.Layout.allCases.first(where: { $0.rawValue == name.replacingOccurrences(of: "_g", with: "G") })
@@ -199,13 +214,15 @@ enum ModelTools {
                                     uniquingKeysWith: { first, _ in first })
         let groupNames = Dictionary(model.groups.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         let schemas: [[String: Any]] = model.groups.map { group in
-            ["name": group.name, "color": group.color.rawValue, "tables": model.members(of: group.id).map(\.name)]
+            ["name": group.name, "color": group.color.rawValue, "tables": model.members(of: group.id).map(\.name),
+             "frame": model.frame(of: group.id).map(frame) ?? NSNull()]
         }
         let tables: [[String: Any]] = model.tables.map { table in
             [
                 "name": table.name,
                 "schema": table.group.flatMap { groupNames[$0] } ?? NSNull(),
                 "color": table.color.rawValue,
+                "frame": frame(Metrics.frame(of: table)),
                 "columns": table.columns.map { column -> [String: Any] in
                     var description: [String: Any] = ["name": column.name, "type": column.type.rawValue]
                     if column.isPrimaryKey { description["primary_key"] = true }
@@ -216,7 +233,8 @@ enum ModelTools {
                 },
             ]
         }
-        let data = try JSONSerialization.data(withJSONObject: ["schemas": schemas, "tables": tables], options: [.prettyPrinted, .sortedKeys])
+        let data = try JSONSerialization.data(withJSONObject: ["schemas": schemas, "tables": tables, "bounds": model.bounds.map(frame) ?? NSNull()],
+                                              options: [.prettyPrinted, .sortedKeys])
         return String(decoding: data, as: UTF8.self)
     }
 
@@ -224,7 +242,7 @@ enum ModelTools {
         guard let specs = arguments["tables"] as? [[String: Any]], !specs.isEmpty else { throw Failure("Give at least one table.") }
         // Every table first, so columns can reference any of them.
         var pending: [(column: Column.ID, references: String)] = []
-        var names: [String] = []
+        var names: [String] = [], created: [Table.ID] = []
         for spec in specs {
             let name = try string("name", in: spec)
             guard model.tables.allSatisfy({ $0.name.lowercased() != name.lowercased() }) else {
@@ -238,20 +256,52 @@ enum ModelTools {
             if !columns.isEmpty { model.tables[index].columns = columns.map(\.column) }
             try requireUniqueColumns(model.tables[index])
             pending += columns.compactMap { column in column.references.map { (column.column.id, $0) } }
-            var near: CGRect?
-            if let schema = spec["schema"] as? String, !schema.isEmpty {
-                let group = assign([id], toSchema: schema, in: &model)
-                // Beside the rest of its schema.
-                near = model.members(of: group).filter { $0.id != id }.map(Metrics.frame).reduce(nil) { $0?.union($1) ?? $1 }
-            }
-            model.tables[index].position = model.openSpot(for: model.tables[index], excluding: id, near: near)
+            if let schema = spec["schema"] as? String, !schema.isEmpty { assign([id], toSchema: schema, in: &model) }
+            created.append(id)
             names.append(name)
         }
         for (column, reference) in pending {
             model.connect(column, to: try self.column(named: reference, in: model))
         }
+        // Each schema's new tables together, beside the rest of the schema; or beside the tables they're joined to;
+        // or beside everything. Clear of the rest either way.
+        var unplaced = Set(created)
+        let batches = Dictionary(grouping: created) { model.table($0)?.group }
+        for (group, batch) in batches.sorted(by: { ($0.key?.uuidString ?? "") < ($1.key?.uuidString ?? "") }) {
+            unplaced.subtract(batch)
+            let placed = Set(created).subtracting(unplaced)
+            let company = group.map { group in model.members(of: group).filter { !placed.contains($0.id) && !unplaced.contains($0.id) } } ?? []
+            let joined = model.neighborhood(of: Set(batch)).subtracting(created).compactMap { model.table($0) }
+            let anchor = (company.isEmpty ? joined : company).map(Metrics.frame).reduce(nil) { $0?.union($1) ?? $1 }
+            model.place(batch, near: anchor, ignoring: unplaced)
+        }
         let keys = pending.count
         return "Created \(names.joined(separator: ", "))" + (keys > 0 ? " with \(keys) foreign key\(keys == 1 ? "" : "s")." : ".")
+    }
+
+    private static func moveTables(_ arguments: [String: Any], in model: inout DataModel) throws -> String {
+        let ids = try (arguments["tables"] as? [String] ?? []).map { try table(named: $0, in: model).id }
+        guard !ids.isEmpty else { throw Failure("Give at least one table.") }
+        if let near = arguments["near"] as? String, !near.isEmpty {
+            let frames: [CGRect]
+            if let table = model.tables.first(where: { $0.name.lowercased() == near.lowercased() }) {
+                frames = [Metrics.frame(of: table)]
+            } else {
+                frames = try model.members(of: group(named: near, in: model).id).filter { !ids.contains($0.id) }.map(Metrics.frame)
+            }
+            model.place(ids, near: frames.reduce(nil) { $0?.union($1) ?? $1 })
+        } else if let x = arguments["x"] as? Double, let y = arguments["y"] as? Double {
+            model.place(ids, at: CGPoint(x: x, y: y))
+        } else {
+            throw Failure("Give `near`, or `x` and `y`.")
+        }
+        let frame = ids.compactMap { model.table($0) }.map(Metrics.frame).reduce(nil) { $0?.union($1) ?? $1 } ?? .zero
+        return "Moved \(ids.count) table\(ids.count == 1 ? "" : "s") to \(Self.frame(frame))."
+    }
+
+    /// A frame as get_model gives it: [x, y, width, height], whole points.
+    private static func frame(_ rect: CGRect) -> [Int] {
+        [Int(rect.minX.rounded()), Int(rect.minY.rounded()), Int(rect.width.rounded()), Int(rect.height.rounded())]
     }
 
     private static func alterTable(_ arguments: [String: Any], in model: inout DataModel) throws -> String {
@@ -325,7 +375,15 @@ enum ModelTools {
         let tables = try (arguments["tables"] as? [String] ?? []).map { try table(named: $0, in: model).id }
         let existing = model.groups.first { $0.name.lowercased() == name.lowercased() }
         guard existing != nil || !tables.isEmpty else { throw Failure("There's no schema called \(name); give tables to make it with.") }
+        let before = existing.map { model.members(of: $0.id).map(\.id) } ?? []
         let id = assign(Set(tables), toSchema: name, in: &model)
+        // Tables from elsewhere would stretch it over others: they're brought beside the rest of it, clear of the others.
+        if model.isCrowded(id) {
+            let joining = tables.filter { !before.contains($0) }
+            let company = before.compactMap { model.table($0) }.map(Metrics.frame).reduce(nil) { $0?.union($1) ?? $1 }
+            let moving = company == nil ? model.members(of: id).map(\.id) : joining
+            model.place(moving, near: company ?? moving.compactMap { model.table($0) }.map(Metrics.frame).reduce(nil) { $0?.union($1) ?? $1 })
+        }
         let index = model.groups.firstIndex { $0.id == id }!
         if let color = arguments["color"] as? String { model.groups[index].color = try tableColor(color) }
         if let rename = arguments["rename_to"] as? String, !rename.isEmpty {
@@ -425,25 +483,5 @@ enum ModelTools {
         for column in table.columns where !seen.insert(column.name.lowercased()).inserted {
             throw Failure("\(table.name) would have two columns called \(column.name).")
         }
-    }
-}
-
-extension DataModel {
-    /// Where `table` can go without crowding the others: the first gap, reading left to right in rows over the area
-    /// they cover (or `near` covers, to keep it beside some tables), or below them all.
-    func openSpot(for table: Table, excluding id: Table.ID, near: CGRect? = nil) -> CGPoint {
-        let others = tables.filter { $0.id != id }.map(Metrics.frame)
-        guard let bounds = near ?? others.reduce(nil, { $0?.union($1) ?? $1 }) else { return .zero }
-        let gap: CGFloat = 80, size = Metrics.size(of: table)
-        let step = Metrics.tableWidth + gap
-        let columns = max(4, Int((bounds.width + gap) / step))
-        for row in 0... {
-            for column in 0..<columns {
-                let origin = CGPoint(x: bounds.minX + CGFloat(column) * step, y: bounds.minY + CGFloat(row) * 40)
-                let room = CGRect(origin: origin, size: size).insetBy(dx: -gap / 2, dy: -gap / 2)
-                if !others.contains(where: { $0.intersects(room) }) { return origin }
-            }
-        }
-        return .zero
     }
 }

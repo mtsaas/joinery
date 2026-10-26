@@ -305,6 +305,28 @@ final class OpenModel {
         try? history.save(model, reason: reason)
     }
 
+    /// Briefly shown over the canvas: what ⌘S did.
+    private(set) var notice: String?
+    @ObservationIgnored private var noticeTask: Task<Void, Never>?
+
+    /// ⌘S: writes it out and keeps it as a version, one never thinned out, saying which.
+    func saveVersionNow() {
+        saveNow()
+        let saved: Bool
+        do {
+            saved = try history.save(model, reason: History.savedReason)
+        } catch {
+            Library.shared.failure = "Couldn't save a version: \(error.localizedDescription)"
+            return
+        }
+        notice = saved ? "Version saved" : "No changes since the last version"
+        noticeTask?.cancel()
+        noticeTask = Task {
+            try? await Task.sleep(for: .seconds(1.6))
+            if !Task.isCancelled { notice = nil }
+        }
+    }
+
     /// Changes it to `new`, undoably, first saving a version if it's an assistant's first change in a while or one
     /// likely to be regretted: deleting tables, or rearranging many (a layout, untangling, aligning lots: moved by
     /// different amounts, unlike dragging a few together). And hourly while editing, so a long session has some.

@@ -199,6 +199,11 @@ enum DebugHooks {
             case "library":
                 let library = Library.shared
                 print("library open: \(library.open?.name ?? "none"), recents: \(library.recents.map(Library.name(of:)).prefix(3))")
+            case "mcp" where words.count > 2:
+                // An assistant's tool call, as the MCP server would make it: "mcp create_tables {json}".
+                let json = words.dropFirst(2).joined(separator: " ")
+                let arguments = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
+                do { print("mcp:", try ModelTools.call(words[1], arguments, on: &document.wrappedValue)) } catch { print("mcp failed:", error.localizedDescription) }
             case "bundle":
                 // Every group's shared wires bundled into ports.
                 var model = document.wrappedValue

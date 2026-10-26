@@ -150,4 +150,22 @@ struct LibraryTests {
         library.duplicate(try #require(library.selection))
         #expect(library.open?.history.versions.dropFirst().map(\.url.lastPathComponent) == versions, "and one for opening it")
     }
+
+    @Test func savingAVersionKeepsItForGood() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "JoineryTests-\(UUID().uuidString).joinery", directoryHint: .isDirectory)
+        try DataModel().write(to: folder)
+        let history = History(of: folder)
+        let old = Date.now.addingTimeInterval(-10 * 24 * 3600)
+        var model = DataModel()
+        try history.save(model, reason: "Opened", now: old)
+        model.addTable(at: .zero)
+        #expect(try history.save(model, reason: History.savedReason, now: old.addingTimeInterval(60)))
+        #expect(try !history.save(model, reason: History.savedReason, now: old.addingTimeInterval(120)), "the same again isn't kept twice")
+        model.addTable(at: CGPoint(x: 400, y: 0))
+        try history.save(model, reason: "Opened", now: old.addingTimeInterval(180))
+        model.addTable(at: CGPoint(x: 800, y: 0))
+        try history.save(model, reason: "While editing")
+        // Ten days old, only the day's earliest stays, and the one saved with ⌘S, though it isn't the earliest.
+        #expect(history.versions.map(\.reason) == ["While editing", "Saved", "Opened"])
+    }
 }

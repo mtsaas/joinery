@@ -2,8 +2,8 @@ import Foundation
 
 /// Earlier states of a data model to go back to: not one per change, but the ones most likely wanted. The model as it
 /// was opened (and so as each day's work left it), before an AI assistant's changes, before a change that deletes or
-/// rearranges tables, and hourly while editing. Thinned as they age: everything from the last two days, then one a day
-/// for a month, then one a week.
+/// rearranges tables, and hourly while editing; and whenever saved with ⌘S. Thinned as they age: everything from the
+/// last two days, then one a day for a month, then one a week, but never those saved with ⌘S.
 ///
 /// They're kept in the model's `.joinery` package, in `Versions`, so they go wherever it goes: renamed, moved, copied,
 /// sent. Each is the model's JSON, named for when it was saved and why.
@@ -34,11 +34,16 @@ struct History {
         .sorted { $0.date > $1.date }
     }
 
+    /// Why a version saved with ⌘S was: those are never thinned out.
+    static let savedReason = "Saved"
+
     /// Saves `model` as a version, unless it's the same as the latest, then thins out old ones.
-    func save(_ model: DataModel, reason: String, now: Date = .now) throws {
+    /// - Returns: Whether it was saved.
+    @discardableResult
+    func save(_ model: DataModel, reason: String, now: Date = .now) throws -> Bool {
         let data = try model.fileData
         let latest = versions.first
-        if let latest, (try? Data(contentsOf: latest.url)) == data { return }
+        if let latest, (try? Data(contentsOf: latest.url)) == data { return false }
         // Always after the latest, so they sort in the order they were saved, even within a millisecond.
         let now = max(now, (latest?.date ?? .distantPast).addingTimeInterval(0.001))
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -46,9 +51,10 @@ struct History {
         try data.write(to: folder.appending(path: "\(Self.stamp.string(from: now)) \(reason).json"), options: .atomic)
         let versions = versions
         let kept = Self.kept(versions.map(\.date), now: now)
-        for (index, version) in versions.enumerated() where !kept.contains(index) {
+        for (index, version) in versions.enumerated() where !kept.contains(index) && version.reason != Self.savedReason {
             try? FileManager.default.removeItem(at: version.url)
         }
+        return true
     }
 
     /// Which of `dates` (newest first) to keep: all from the last two days; then the earliest of each day for a month,

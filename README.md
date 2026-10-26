@@ -12,7 +12,7 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
 - **New:** ⌘N or the toolbar's compose button makes a data model, in the collection being shown, and opens it. ⇧⌘N or the folder button makes a collection, which you can name straight away.
 - **Rename, duplicate, favorite, move, delete:** right-click a data model or collection. You can also drag data models onto a collection in the sidebar. Delete moves the clicked data model to the Trash, from where it can be put back. Favorites and when a data model was last opened are kept on the file itself, so they follow it through renames and moves.
 - **Saving and undo:** changes save themselves, half a second after you stop and whenever you switch data models. Undo (⌘Z) covers the open data model.
-- **Version history:** the clock button opens a popover of earlier versions, by day. Arrow through them and each shows on the canvas, read-only; Restore This Version brings one back (undoably). Versions aren't kept for every change. They're kept when you open a data model (so each day's work is there to go back to), before an AI assistant's first change in a while, before deleting tables or rearranging many (layouts, untangling), and hourly while editing. Everything from the last two days is kept, then one a day for a month, then one a week. They live in the `.joinery` package, so they go wherever the file goes.
+- **Version history:** the clock button opens a popover of earlier versions, by day. Arrow through them and each shows on the canvas, read-only; Restore This Version brings one back (undoably). ⌘S saves a version whenever you like; those are never thinned out. Versions aren't kept for every change. They're kept when you open a data model (so each day's work is there to go back to), before an AI assistant's first change in a while, before deleting tables or rearranging many (layouts, untangling), and hourly while editing. Everything from the last two days is kept, then one a day for a month, then one a week. They live in the `.joinery` package, so they go wherever the file goes.
 - **Opening and importing:** double-clicking a `.joinery` file in Finder, or File ▸ Import Data Model… (⌘O), copies it into the library and opens it.
 - **Examples:** a new library starts with an Examples collection containing Chinook, Northwind, Sakila, the Stack Overflow data dump, and Storefront. File ▸ Add Examples puts back any you've deleted. `scripts/make_examples.py` generates them.
 
@@ -65,11 +65,12 @@ Other assistants can use the same URL. Those that only run local commands can br
 | Tool | Does |
 | --- | --- |
 | `list_models`, `open_model`, `new_model` | Choose what to work on |
-| `get_model` | Every table, column, type, key and foreign key |
-| `create_tables` | Adds tables, placed clear of the others (beside the rest of their schema, given one). A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole data model can be made in one call |
+| `get_model` | Every table, column, type, key and foreign key, and where everything is: each table's and schema's frame, and the bounds of it all |
+| `create_tables` | Adds tables. A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole data model can be made in one call. They're placed in open space, clear of every table and schema: a schema's new tables as a compact block beside the rest of it, otherwise beside the tables they reference, otherwise beside everything |
+| `move_tables` | Moves tables as a block: beside a table or schema, in the nearest open space, or to given coordinates |
 | `alter_table` | Renames, recolors, moves to another schema, adds, drops or changes columns |
 | `arrange` | Lays every table out afresh: `orthogonal_groups` or `hierarchical`; removes zip ties |
-| `set_schema`, `drop_schema` | Make, fill, rename or recolor a schema, drawn as a group around its tables; or remove it, keeping the tables |
+| `set_schema`, `drop_schema` | Make, fill, rename or recolor a schema, drawn as a group around its tables (tables that would stretch it over others are brought beside the rest); or remove it, keeping the tables |
 | `drop_tables`, `add_foreign_key`, `remove_foreign_key` | What they say |
 
 Tables take `schema`, the group they're drawn in. Columns take `primary_key`, `nullable` (or `required`), `unique` and `references`. Types accept SQL spellings, such as `varchar(255)`, `decimal(10,2)`, `bigserial` and `timestamp with time zone`. Each call applies completely or not at all.
