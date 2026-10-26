@@ -334,4 +334,13 @@ struct JoineryTests {
         #expect(after(cell(.column(userID), .key), .previous) == cell(.column(id), .type))
         #expect(after(cell(.column(id), .key), .previous) == header)
     }
+
+    @Test func commandWheelPicksByDirection() {
+        #expect(CommandWheel.direction(of: CGPoint(x: 5, y: 3)) == nil, "the middle picks nothing")
+        #expect(CommandWheel.direction(of: CGPoint(x: -80, y: 10)) == .west)
+        #expect(CommandWheel.direction(of: CGPoint(x: 0, y: -30)) == .north, "y runs down")
+        #expect(CommandWheel.direction(of: CGPoint(x: 40, y: 38)) == .southEast)
+        #expect(CommandWheel.direction(of: CGPoint(x: 50, y: -1)) == .east)
+        #expect(CommandWheel.direction(of: CGPoint(x: -50, y: -1)) == .west, "either side of ±180°")
+    }
 }

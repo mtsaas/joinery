@@ -64,6 +64,14 @@ struct CanvasView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
+        .overlay {
+            if let wheel = canvas.wheel {
+                let contents = wheelContents(wheel)
+                CommandWheel(center: wheel.center, slots: contents.slots, extras: contents.extras, color: contents.color) {
+                    canvas.wheel = nil
+                }
+            }
+        }
         .overlay(alignment: .top) {
             if canvas.showsPalette {
                 // Clicking anywhere else closes it.
@@ -133,6 +141,11 @@ struct CanvasView: View {
         .onChange(of: canvas.selection) {
             if let cell = canvas.cell, !canvas.selection.contains(.table(cell.table)) { leaveGrid() }
         }
+        .onChange(of: canvas.wheelRequest) { _, request in
+            guard let request else { return }
+            canvas.wheelRequest = nil
+            openWheel(at: request)
+        }
         .onChange(of: canvas.isSpaceHeld) { if !canvas.isSpaceHeld { canvas.panOrigin = nil } }
         .onChange(of: canvas.isStrokeFinished) {
             guard canvas.isStrokeFinished else { return }
@@ -142,6 +155,12 @@ struct CanvasView: View {
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: .saveFeedback)) { note in
             if note.object as AnyObject? === canvas { saveFeedback() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .pickFromWheel)) { note in
+            guard note.object as AnyObject? === canvas, let wheel = canvas.wheel,
+                  let direction = note.userInfo?["direction"] as? CommandWheel.Direction else { return }
+            canvas.wheel = nil
+            wheelContents(wheel).slots[direction]?.action()
         }
         .onReceive(NotificationCenter.default.publisher(for: .click)) { note in
             if note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint { click(at: point) }
@@ -170,13 +189,10 @@ struct CanvasView: View {
         if tables.count + ties.count >= 2 {
             let count = [(tables.count, "table"), (ties.count, "tie")].filter { $0.0 > 0 }
                 .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }.formatted()
-            let alignments: [(String, String, Schema.Alignment)] = [
-                ("Align Left Edges", "align.horizontal.left", .left), ("Align Centers", "align.horizontal.center", .center),
-                ("Align Right Edges", "align.horizontal.right", .right), ("Align Top Edges", "align.vertical.top", .top),
-                ("Align Middles", "align.vertical.center", .middle), ("Align Bottom Edges", "align.vertical.bottom", .bottom),
-            ]
-            commands += alignments.map { title, symbol, alignment in
-                PaletteCommand(id: title, title: title, subtitle: count, symbol: symbol) { schema.align(tables, ties: ties, alignment) }
+            commands += Schema.Alignment.allCases.map { alignment in
+                PaletteCommand(id: alignment.title, title: alignment.title, subtitle: count, symbol: alignment.symbol) {
+                    schema.align(tables, ties: ties, alignment)
+                }
             }
         }
         if tables.count >= 3 {
@@ -224,8 +240,124 @@ struct CanvasView: View {
         return commands
     }
 
-    /// Whether keys are for the canvas itself rather than a cell being edited.
-    private var isCanvasKeyTarget: Bool { isCanvasFocused && !canvas.isEditingCell }
+    // MARK: Command wheel
+
+    /// Opens the wheel for whatever's under `viewPoint`. Right-clicking something not selected selects it alone, as in
+    /// Finder; right-clicking empty canvas keeps the selection, so it can be aligned from anywhere.
+    private func openWheel(at viewPoint: CGPoint) {
+        isCanvasFocused = true
+        let point = canvas.canvasPoint(viewPoint)
+        let routing = routingCache.routing(for: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
+                                           avoidingTables: wiresAvoidTables)
+        let reach = Metrics.wireHitRadius / canvas.zoom
+        let target: CanvasController.Wheel.Target
+        if let (id, _) = routing.ties.first(where: { _, tie in
+            tie.center.distance(to: point) <= Metrics.tieHalfLength(holding: tie.relationships.count) + reach
+        }) {
+            target = .tie(id)
+            if !canvas.selection.contains(.zipTie(id)) { canvas.selection = [.zipTie(id)] }
+        } else if let table = schema.tables.last(where: { Metrics.frame(of: $0).contains(point) }) {
+            target = .table(table.id)
+            if !canvas.selection.contains(.table(table.id)) { canvas.selection = [.table(table.id)] }
+        } else if let hit = simulation.hit(near: point, within: reach) {
+            target = .wire(hit)
+            if !canvas.selection.contains(.relationship(hit.relationship)) { canvas.selection = [.relationship(hit.relationship)] }
+        } else {
+            target = .canvas
+        }
+        // Kept clear of the edges, so every label shows.
+        let size = canvas.viewSize
+        let center = CGPoint(x: min(max(viewPoint.x, 190), max(size.width - 190, 190)),
+                             y: min(max(viewPoint.y, 110), max(size.height - 150, 110)))
+        canvas.wheel = .init(center: center, point: point, target: target)
+    }
+
+    /// What the wheel offers. With two or more tables or ties selected, aligning, each way pointing where things go:
+    /// left edges to the west, top edges to the north. Otherwise, what suits what was right-clicked.
+    private func wheelContents(_ wheel: CanvasController.Wheel) -> (slots: [CommandWheel.Direction: PaletteCommand],
+                                                                   extras: [PaletteCommand],
+                                                                   color: (current: TableColor, set: (TableColor) -> Void)?) {
+        let tables = canvas.selectedTables, ties = canvas.selectedTies
+        var slots: [CommandWheel.Direction: PaletteCommand] = [:], extras: [PaletteCommand] = []
+        var color: (current: TableColor, set: (TableColor) -> Void)?
+        let deleteSelection = PaletteCommand(id: "delete", title: "Delete", symbol: "trash", shortcut: "⌫", isDestructive: true) {
+            canvas.deleteSelection(in: &schema)
+        }
+        if tables.count + ties.count >= 2 {
+            let directions: [Schema.Alignment: CommandWheel.Direction] = [.left: .west, .right: .east, .top: .north,
+                                                                           .bottom: .south, .center: .northWest, .middle: .southWest]
+            for (alignment, direction) in directions {
+                slots[direction] = PaletteCommand(id: alignment.title, title: alignment.title, symbol: alignment.symbol) {
+                    schema.align(tables, ties: ties, alignment)
+                }
+            }
+            if tables.count >= 3 {
+                slots[.northEast] = PaletteCommand(id: "distribute-h", title: "Distribute Horizontally",
+                                                   symbol: "distribute.horizontal.center") { schema.distribute(tables, horizontally: true) }
+                slots[.southEast] = PaletteCommand(id: "distribute-v", title: "Distribute Vertically",
+                                                   symbol: "distribute.vertical.center") { schema.distribute(tables, horizontally: false) }
+            }
+            extras = [deleteSelection]
+            return (slots, extras, nil)
+        }
+        switch wheel.target {
+        case .table(let id):
+            guard let table = schema.table(id) else { break }
+            slots[.north] = PaletteCommand(id: "rename", title: "Rename", symbol: "pencil", shortcut: "⏎") { canvas.edit(.name(of: id)) }
+            slots[.east] = PaletteCommand(id: "add-column", title: "Add Column", symbol: "plus") {
+                addColumn(to: id, after: table.columns.last?.id)
+            }
+            slots[.south] = PaletteCommand(id: "delete", title: "Delete Table", symbol: "trash", isDestructive: true) {
+                schema.removeTable(id)
+            }
+            color = (table.color, { binding(for: id).wrappedValue.color = $0 })
+        case .tie(let id):
+            guard let tie = schema.zipTies.first(where: { $0.id == id }) else { break }
+            if tie.relationships.count == 1 {
+                slots[.north] = PaletteCommand(id: "remove-bend", title: "Remove Bend Point",
+                                               symbol: "point.topleft.down.to.point.bottomright.curvepath") { schema.removeZipTie(id) }
+                slots[.south] = PaletteCommand(id: "delete-key", title: "Delete Foreign Key", symbol: "trash", isDestructive: true) {
+                    schema.removeRelationships { $0.id == tie.relationships[0] }
+                }
+            } else {
+                slots[.south] = PaletteCommand(id: "cut", title: "Cut Zip Tie", symbol: "scissors", isDestructive: true) {
+                    schema.removeZipTie(id)
+                }
+                if tie.heldDirection != nil {
+                    slots[.north] = PaletteCommand(id: "turn", title: "Turn with Wires", symbol: "arrow.triangle.2.circlepath") { release(id) }
+                }
+            }
+        case .wire(let hit):
+            slots[.north] = PaletteCommand(id: "bend", title: "Add Bend Point", symbol: "point.topleft.down.to.point.bottomright.curvepath") {
+                if let bend = schema.addBendPoint(on: hit.relationship, at: hit.point, direction: hit.tangent, segment: hit.segment) {
+                    canvas.selection = [.zipTie(bend)]
+                }
+            }
+            slots[.south] = PaletteCommand(id: "delete-key", title: "Delete Foreign Key", symbol: "trash", isDestructive: true) {
+                schema.removeRelationships { $0.id == hit.relationship }
+            }
+        case .canvas:
+            slots[.north] = PaletteCommand(id: "new-table", title: "New Table", symbol: "plus.rectangle", shortcut: "T") {
+                canvas.addTable(to: &schema, at: wheel.point)
+            }
+            slots[.east] = PaletteCommand(id: "fit", title: "Zoom to Fit", symbol: "arrow.up.left.and.arrow.down.right") {
+                canvas.zoomToFit(schema.bounds)
+            }
+            slots[.west] = PaletteCommand(id: "select-all", title: "Select All", symbol: "checkmark.rectangle.stack") {
+                canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })
+            }
+            slots[.south] = PaletteCommand(id: "palette", title: "All Commands", symbol: "command", shortcut: "⌘K") {
+                canvas.togglePalette()
+            }
+            slots[.northEast] = PaletteCommand(id: "avoid", title: "Wires Avoid Tables", subtitle: wiresAvoidTables ? "On" : "Off",
+                                               symbol: "point.topleft.down.to.point.bottomright.curvepath") { wiresAvoidTables.toggle() }
+            if !canvas.selection.isEmpty { extras = [deleteSelection] }
+        }
+        return (slots, extras, color)
+    }
+
+    /// Whether keys are for the canvas itself rather than a cell being edited or the palette's search.
+    private var isCanvasKeyTarget: Bool { isCanvasFocused && !canvas.isEditingCell && !canvas.showsPalette }
 
     // MARK: Wires
 
@@ -399,7 +531,6 @@ struct CanvasView: View {
                 .equatable()
                 .position(x: origin.x + frame.width * zoom / 2, y: origin.y + frame.height * zoom / 2)
                 .gesture(itemGesture(.table(table.id), click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) })
-                .contextMenu { tableMenu(table) }
             ForEach(Array(table.columns.enumerated()), id: \.element.id) { row, column in
                 ForEach(Side.allCases, id: \.self) { side in
                     let socket = Metrics.socket(row: row, side: side, in: frame)
@@ -420,21 +551,6 @@ struct CanvasView: View {
     /// The row a wire being dragged would connect to.
     private var targetColumn: Column.ID? {
         if case .column(let id)? = canvas.connection?.target { id } else { nil }
-    }
-
-    @ViewBuilder
-    private func tableMenu(_ table: Table) -> some View {
-        Button("Rename", systemImage: "pencil") { canvas.edit(.name(of: table.id)) }
-        Button("Add Column", systemImage: "plus") { addColumn(to: table.id, after: table.columns.last?.id) }
-        Picker("Color", selection: binding(for: table.id).color) {
-            ForEach(TableColor.allCases) { color in
-                Label(color.rawValue.capitalized, systemImage: "circle.fill")
-                    .tint(color.color)
-                    .tag(color)
-            }
-        }
-        Divider()
-        Button("Delete Table", systemImage: "trash", role: .destructive) { schema.removeTable(table.id) }
     }
 
     /// Looks the table up on every access, so a binding a text field holds after its table is deleted can't index past
@@ -649,21 +765,6 @@ struct CanvasView: View {
             .position(canvas.viewPoint(frame.center))
             // Double-clicking a bend point straightens the wire again.
             .gesture(itemGesture(.zipTie(tie.id)) { _ in if isBendPoint { schema.removeZipTie(tie.id) } })
-            .contextMenu {
-                if isBendPoint {
-                    Button("Remove Bend Point", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
-                        schema.removeZipTie(tie.id)
-                    }
-                    Button("Delete Foreign Key", systemImage: "trash", role: .destructive) {
-                        schema.removeRelationships { $0.id == tie.relationships[0] }
-                    }
-                } else {
-                    if tie.heldDirection != nil {
-                        Button("Turn with Wires", systemImage: "arrow.triangle.2.circlepath") { release(tie.id) }
-                    }
-                    Button("Cut Zip Tie", systemImage: "scissors", role: .destructive) { schema.removeZipTie(tie.id) }
-                }
-            }
             .onHover { isHovered in
                 if isHovered { canvas.hoveredTie = tie.id } else if canvas.hoveredTie == tie.id { canvas.hoveredTie = nil }
             }

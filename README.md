@@ -18,8 +18,9 @@ Schemas live in a library shown in the sidebar. Each schema is a plain `.joinery
 
 | Action | How |
 | --- | --- |
+| Command wheel | Right-click: commands in a ring around the pointer. Move toward one and click. With tables or ties selected, aligning points the way things go: left edges west, top edges north; on a table, rename, add a column, delete or recolor; on a wire, add a bend point or delete it |
 | Command palette | ⌘K: every command, plus each table to jump to; arrows, Return, Escape |
-| Align / distribute | With tables or zip ties selected, ⌘K then Align Left Edges, Align Centers, … Distribute Horizontally (tables). Aligned ties stand on the line and are held square to it; right-click one and choose Turn with Wires to free it |
+| Align / distribute | With tables or zip ties selected, right-click for the wheel, or ⌘K then Align Left Edges, Align Centers, … Distribute Horizontally (tables). Aligned ties stand on the line and are held square to it; right-click one for Turn with Wires to free it |
 | Add a table | **T**, the toolbar table button, or Insert ▸ Table (⌥⌘T); type its name straight away |
 | Edit cells | Tables are grids, like a spreadsheet: click a cell to put the cursor there and just type to replace it; double-click or F2 edits it in place. Return on a selected table renames it |
 | Move between cells | Arrow keys; Tab / Shift-Tab along the row; Return goes down, and past the last row adds a column; Delete clears a cell |
@@ -33,7 +34,7 @@ Schemas live in a library shown in the sidebar. Each schema is a plain `.joinery
 | Zip-tie wires | Right-drag (or Option-drag) a line across two or more wires, starting off a table |
 | Select | Click tables, wires, ties; Shift-click to add; drag a box over tables and wires; ⌘A for everything |
 | Move | Drag anything selected to move the whole selection; arrow keys nudge (Shift for 10 points) |
-| Delete | Delete removes the selection; right-click tables, ties and bend points for more |
+| Delete | Delete removes the selection, or from the wheel |
 | Pan / zoom | Scroll, or hold Space and drag / pinch, ⌘-scroll, ⌘+ ⌘- ⌘0, Zoom to Fit ⌘1 |
 
 Each wire takes the color of the table it references, and FK cells match it. Wires leave sockets and pass through

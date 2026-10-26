@@ -7,6 +7,7 @@ struct PaletteCommand: Identifiable {
     let symbol: String
     /// Shown at the trailing edge, as on a menu item.
     var shortcut: String?
+    var isDestructive = false
     let action: () -> Void
 
     /// How well `query` matches `text` as letters in order, higher being better: consecutive letters and letters
@@ -67,7 +68,8 @@ struct CommandPalette: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 17))
                     .focused($isFocused)
-                    .onSubmit { if let selected { run(matches[selected]) } }
+                    // Worked out now, not when the field was set up: it keeps its first submit action.
+                    .onSubmit(runHighlighted)
             }
             .padding(.horizontal, 16)
             .frame(height: 52)
@@ -122,6 +124,12 @@ struct CommandPalette: View {
         .foregroundStyle(isHighlighted ? .white : .primary)
         .background(isHighlighted ? Color.accentColor : .clear, in: .rect(cornerRadius: Self.cornerRadius - Self.inset))
         .contentShape(.rect)
+    }
+
+    private func runHighlighted() {
+        let matches = matches
+        guard !matches.isEmpty else { return }
+        run(matches[min(max(highlight, 0), matches.count - 1)])
     }
 
     private func run(_ command: PaletteCommand) {

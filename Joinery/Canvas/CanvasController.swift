@@ -86,6 +86,20 @@ final class CanvasController {
     var feedback: FeedbackEdit?
     #endif
     var showsPalette = false
+
+    /// The right-click command wheel, while it's open.
+    struct Wheel {
+        enum Target { case canvas, table(Table.ID), tie(ZipTie.ID), wire(WireSimulation.Hit) }
+        /// In view points.
+        var center: CGPoint
+        /// What was right-clicked, and where, in canvas points.
+        var point: CGPoint
+        var target: Target
+    }
+
+    var wheel: Wheel?
+    /// A right-click to open the wheel for, in view points; the view works out what's under it.
+    var wheelRequest: CGPoint?
     /// Which of the palette's matches is highlighted.
     var paletteHighlight = 0
 
@@ -189,9 +203,10 @@ final class CanvasController {
     }
 
     /// Adds a table in the middle of the view, stepped down and right from any already there, and starts naming it.
-    func addTable(to schema: inout Schema) {
-        let middle = canvasPoint(CGPoint(x: viewSize.width / 2, y: viewSize.height / 2))
-        var position = CGPoint(x: (middle.x - Metrics.tableWidth / 2).rounded(), y: (middle.y - 80).rounded())
+    /// Adds a table around `point` (in canvas points), or mid-view, and starts naming it.
+    func addTable(to schema: inout Schema, at point: CGPoint? = nil) {
+        let middle = point ?? canvasPoint(CGPoint(x: viewSize.width / 2, y: viewSize.height / 2))
+        var position = CGPoint(x: (middle.x - Metrics.tableWidth / 2).rounded(), y: (middle.y - (point == nil ? 80 : 12)).rounded())
         while schema.tables.contains(where: { $0.position.distance(to: position) < 8 }) { position += CGPoint(x: 24, y: 24) }
         let id = schema.addTable(at: position)
         selection = [.table(id)]

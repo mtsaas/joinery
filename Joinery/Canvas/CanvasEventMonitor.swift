@@ -4,8 +4,8 @@ import SwiftUI
 /// Input SwiftUI has no gesture or key handler for, watched in the window over the canvas's frame:
 /// - Two-finger scrolling or the mouse wheel pans; pinching or ⌘-scrolling zooms, around the pointer.
 /// - Holding Space turns dragging anywhere into panning.
-/// - Right-dragging from empty canvas or a wire draws a line that zip-ties the wires it crosses. Right-clicks pass
-///   through untouched, so tables and ties still get their context menus; a drag can't start while one is open.
+/// - Right-dragging from empty canvas or a wire draws a line that zip-ties the wires it crosses; a right-click without
+///   dragging opens the command wheel there instead of a context menu. Escape closes it.
 /// - In the command palette, the arrow keys move through the matches and Escape closes it.
 /// - On a table's grid, the spreadsheet keys: arrows, Tab and Return move the cursor; typing, F2, Delete and Space
 ///   edit; Escape cancels, then leaves. While a cell is being edited these are caught before its text field, which
@@ -28,8 +28,6 @@ struct CanvasEventMonitor: NSViewRepresentable {
         private var monitor: Any?
         /// Where a right-button press started, while it might become a drag.
         private var rightClick: NSEvent?
-        private var isMenuOpen = false
-        private var menuObservers: [Any] = []
 
         override var isFlipped: Bool { true }
 
@@ -40,18 +38,7 @@ struct CanvasEventMonitor: NSViewRepresentable {
             super.viewDidMoveToWindow()
             if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
-            menuObservers.forEach(NotificationCenter.default.removeObserver)
-            menuObservers = []
             guard window != nil else { return }
-            menuObservers = [NSMenu.didBeginTrackingNotification, NSMenu.didEndTrackingNotification].map { name in
-                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                    let isOpen = name == NSMenu.didBeginTrackingNotification
-                    MainActor.assumeIsolated {
-                        self?.isMenuOpen = isOpen
-                        self?.rightClick = nil
-                    }
-                }
-            }
             monitor = NSEvent.addLocalMonitorForEvents(matching: [.scrollWheel, .magnify, .keyDown, .keyUp,
                                                                       .rightMouseDown, .rightMouseDragged, .rightMouseUp]) { [weak self] event in
                 let isHandled = MainActor.assumeIsolated { self?.handle(event) == true }
@@ -109,6 +96,8 @@ struct CanvasEventMonitor: NSViewRepresentable {
             guard let canvas, let window, event.window === window else { return false }
             let isTyping = window.firstResponder is NSTextView
             switch event.type {
+            case .keyDown where canvas.wheel != nil && event.keyCode == Key.escape:
+                canvas.wheel = nil
             case .keyDown where isTyping && canvas.showsPalette:
                 switch event.keyCode {
                 case Key.down: canvas.paletteHighlight += 1
@@ -130,10 +119,20 @@ struct CanvasEventMonitor: NSViewRepresentable {
                       event.modifierFlags.isDisjoint(with: [.command, .option, .control]) else { return false }
                 canvas.isSpaceHeld = event.type == .keyDown
             case .rightMouseDown:
-                rightClick = bounds.contains(convert(event.locationInWindow, from: nil)) ? event : nil
-                return false
+                // Text being edited keeps its own menu, as do the feedback handles.
+                #if DEBUG
+                let isCorrecting = canvas.isFeedbackMode
+                #else
+                let isCorrecting = false
+                #endif
+                guard bounds.contains(convert(event.locationInWindow, from: nil)), !isTyping, !isCorrecting else {
+                    rightClick = nil
+                    return false
+                }
+                canvas.wheel = nil
+                rightClick = event
             case .rightMouseDragged:
-                guard let down = rightClick, !isMenuOpen else { return false }
+                guard let down = rightClick else { return false }
                 let start = convert(down.locationInWindow, from: nil), location = convert(event.locationInWindow, from: nil)
                 if canvas.stroke == nil {
                     guard start.distance(to: location) > 3 else { return true }
@@ -141,10 +140,14 @@ struct CanvasEventMonitor: NSViewRepresentable {
                 }
                 canvas.stroke = .init(start: canvas.canvasPoint(start), end: canvas.canvasPoint(location))
             case .rightMouseUp:
+                guard let down = rightClick else { return false }
                 rightClick = nil
-                guard canvas.stroke != nil else { return false }
-                NSCursor.pop()
-                canvas.isStrokeFinished = true
+                if canvas.stroke != nil {
+                    NSCursor.pop()
+                    canvas.isStrokeFinished = true
+                } else {
+                    canvas.wheelRequest = convert(down.locationInWindow, from: nil)
+                }
             case .magnify, .scrollWheel:
                 let location = convert(event.locationInWindow, from: nil)
                 guard bounds.contains(location) else { return false }

@@ -108,7 +108,31 @@ extension Schema {
         }
     }
 
-    enum Alignment { case left, center, right, top, middle, bottom }
+    enum Alignment: CaseIterable {
+        case left, center, right, top, middle, bottom
+
+        var title: String {
+            switch self {
+            case .left: "Align Left Edges"
+            case .center: "Align Centers"
+            case .right: "Align Right Edges"
+            case .top: "Align Top Edges"
+            case .middle: "Align Middles"
+            case .bottom: "Align Bottom Edges"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .left: "align.horizontal.left"
+            case .center: "align.horizontal.center"
+            case .right: "align.horizontal.right"
+            case .top: "align.vertical.top"
+            case .middle: "align.vertical.center"
+            case .bottom: "align.vertical.bottom"
+            }
+        }
+    }
 
     /// Lines tables and ties up along an edge or center of the box around them all. Ties go on the line itself, and
     /// are held across it, so the wires through them run square to it and they stay that way as tables move.
