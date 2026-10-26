@@ -1,6 +1,24 @@
 import CoreGraphics
 import Foundation
 
+extension Table {
+    /// Runs of two or more primary key columns next to each other, by row: the parts of a compound key that can be
+    /// shown as one.
+    var compoundPrimaryKeyRuns: [ClosedRange<Int>] {
+        var runs: [ClosedRange<Int>] = [], start: Int?
+        for (row, column) in columns.enumerated() {
+            if column.isPrimaryKey {
+                start = start ?? row
+            } else if let first = start {
+                if row - first > 1 { runs.append(first...(row - 1)) }
+                start = nil
+            }
+        }
+        if let first = start, columns.count - first > 1 { runs.append(first...(columns.count - 1)) }
+        return runs
+    }
+}
+
 extension Schema {
     func table(_ id: Table.ID) -> Table? {
         tables.first { $0.id == id }

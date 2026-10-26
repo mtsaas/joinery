@@ -21,18 +21,38 @@ struct TableCard: View {
 
     var body: some View {
         let size = Metrics.size(of: table)
+        let compoundKeys = table.compoundPrimaryKeyRuns
         VStack(spacing: 0) {
             header
-            ForEach(table.columns) { column in
-                row(binding(for: column.id))
+            ForEach(Array(table.columns.enumerated()), id: \.element.id) { index, column in
+                let inCompoundKey = compoundKeys.contains { $0.contains(index) }
+                row(binding(for: column.id), showsKey: !inCompoundKey)
                     .background(column.id == targetColumn ? Color.accentColor.opacity(0.14) : .clear)
-                    // Between rows; the header's own edge is the line above the first.
+                    // Between rows; the header's own edge is the line above the first. Within a compound key the
+                    // key cells are one, so the line stops short of them.
                     .overlay(alignment: .top) {
-                        if column.id != table.columns.first?.id { Theme.cardBorder.frame(height: hairline) }
+                        if index > 0 {
+                            HStack(spacing: 0) {
+                                if compoundKeys.contains(where: { $0.contains(index) && $0.lowerBound < index }) {
+                                    Color.clear.frame(width: Metrics.keyColumnWidth * zoom + hairline)
+                                }
+                                Theme.cardBorder
+                            }
+                            .frame(height: hairline)
+                        }
                     }
             }
         }
         .frame(width: size.width * zoom, height: size.height * zoom, alignment: .top)
+        // One PK for each compound key, in the middle of its merged cell.
+        .overlay(alignment: .topLeading) {
+            ForEach(compoundKeys, id: \.lowerBound) { run in
+                keyLabel(Text("PK").foregroundStyle(.secondary))
+                    .frame(width: Metrics.keyColumnWidth * zoom, height: CGFloat(run.count) * Metrics.rowHeight * zoom)
+                    .offset(y: (Metrics.headerHeight + CGFloat(run.lowerBound) * Metrics.rowHeight) * zoom)
+                    .allowsHitTesting(false)
+            }
+        }
         .background(Theme.card)
         .clipShape(.rect(cornerRadius: Metrics.cornerRadius * zoom, style: .circular))
         .overlay {
@@ -87,10 +107,10 @@ struct TableCard: View {
         .background(table.color.headerFill)
     }
 
-    private func row(_ column: Binding<Column>) -> some View {
+    private func row(_ column: Binding<Column>, showsKey: Bool) -> some View {
         let id = column.wrappedValue.id
         return HStack(spacing: 0) {
-            keyCell(column)
+            keyCell(column, showsLabel: showsKey)
                 .frame(width: Metrics.keyColumnWidth * zoom)
             Theme.cardBorder.frame(width: hairline)
             cell(width: nil) {
@@ -119,8 +139,8 @@ struct TableCard: View {
 
     /// PK, or FK in the color of the table it references.
     @ViewBuilder
-    private func keyCell(_ column: Binding<Column>) -> some View {
-        let label = Group {
+    private func keyCell(_ column: Binding<Column>, showsLabel: Bool) -> some View {
+        let label = keyLabel(Group {
             if column.wrappedValue.isPrimaryKey {
                 Text("PK").foregroundStyle(.secondary)
             } else if let color = foreignKeys[column.wrappedValue.id] {
@@ -128,9 +148,8 @@ struct TableCard: View {
             } else {
                 Text("·").foregroundStyle(.quaternary)
             }
-        }
-        .font(.system(size: 9 * zoom, weight: .bold, design: .rounded))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        })
+        .opacity(showsLabel ? 1 : 0)
         if isEditing {
             Button { column.wrappedValue.isPrimaryKey.toggle() } label: { label.contentShape(.rect) }
                 .buttonStyle(.plain)
@@ -138,6 +157,12 @@ struct TableCard: View {
         } else {
             label
         }
+    }
+
+    private func keyLabel(_ text: some View) -> some View {
+        text
+            .font(.system(size: 9 * zoom, weight: .bold, design: .rounded))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func cell(width: CGFloat?, inset: CGFloat = Metrics.cellInset,

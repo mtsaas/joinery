@@ -256,6 +256,17 @@ struct JoineryTests {
         #expect(CanvasController.boxSelection(tables: [], ties: [], wires: []).isEmpty)
     }
 
+    @Test func adjacentPrimaryKeyColumnsMakeOneCompoundKey() {
+        func table(_ keys: [Bool]) -> Table {
+            Table(name: "t", position: .zero, color: .blue,
+                  columns: keys.enumerated().map { Column(name: "c\($0.offset)", type: .integer, isPrimaryKey: $0.element) })
+        }
+        #expect(table([true, true, false]).compoundPrimaryKeyRuns == [0...1])
+        #expect(table([false, true, true, true]).compoundPrimaryKeyRuns == [1...3])
+        #expect(table([true, false, true]).compoundPrimaryKeyRuns.isEmpty, "apart, each shows its own PK")
+        #expect(table([true]).compoundPrimaryKeyRuns.isEmpty)
+    }
+
     @Test func typingNonsenseKeepsNothing() {
         #expect(DataType.parse("zzz") == nil)
         #expect(DataType.parse("?") == nil)
