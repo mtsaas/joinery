@@ -32,24 +32,43 @@ extension DataModel {
     /// Room between blocks of tables, groups' labels and padding included.
     private static let blockGap: CGFloat = 120
 
-    /// Moves every table to where `layout` puts it, starting from where the tables are now, and takes away every zip tie
-    /// and bend point: they were placed for the old layout, and would only knot the wires in the new one. One change, so
-    /// undoing it brings them back with the tables where they were.
-    mutating func arrange(_ layout: Layout) {
-        guard !tables.isEmpty else { return }
-        let origin = bounds.map { CGPoint(x: $0.minX, y: $0.minY) } ?? .zero
+    /// Moves every table, or only `ids`, to where `layout` puts it, starting from where they are now, and takes away the
+    /// zip ties and bend points on their wires: they were placed for the old layout, and would only knot the wires in
+    /// the new one. Only some, they're laid out where they were, moved together into the nearest open space if they now
+    /// need more room than they had. One change, so undoing it brings everything back.
+    mutating func arrange(_ layout: Layout, only ids: Set<Table.ID>? = nil) {
+        let arranged = ids.map { ids in tables.filter { ids.contains($0.id) } } ?? tables
+        guard !arranged.isEmpty else { return }
+        let before = arranged.map(Metrics.frame).reduce(CGRect.null) { $0.union($1) }
         let neighbors = adjacency()
         // Either way, each group's tables (or each set of joined ones) together as a block, so groups stay apart.
         let positions = switch layout {
-        case .orthogonalGroups: packedBlocks { Self.block($0, neighbors: neighbors) }
-        case .hierarchical: packedBlocks(hierarchical)
+        case .orthogonalGroups: packedBlocks(of: arranged) { Self.block($0, neighbors: neighbors) }
+        case .hierarchical: packedBlocks(of: arranged, hierarchical)
         }
         for index in tables.indices {
-            if let position = positions[tables[index].id] { tables[index].position = origin + position }
+            if let position = positions[tables[index].id] { tables[index].position = before.origin + position }
         }
-        zipTies = []
-        for index in relationships.indices { relationships[index].zipTies = [] }
-        for group in groups.indices { for port in groups[group].ports.indices { groups[group].ports[port].zipTies = [] } }
+        if let ids {
+            // Where they were, unless that's now on something else; then as near as there's room.
+            let moved = arranged.map(\.id)
+            if overlapsOthers(Set(moved)) { place(moved, near: before, keepingArrangement: true) }
+            let columns = Set(arranged.flatMap(\.columns).map(\.id))
+            let wires = Set(relationships.filter { columns.contains($0.from) || columns.contains($0.to) }.map(\.id))
+            for tie in zipTies where tie.relationships.contains(where: wires.contains) { removeZipTie(tie.id) }
+        } else {
+            zipTies = []
+            for index in relationships.indices { relationships[index].zipTies = [] }
+            for group in groups.indices { for port in groups[group].ports.indices { groups[group].ports[port].zipTies = [] } }
+        }
+    }
+
+    /// Whether any of `ids` overlaps a table not among them, or the boundary of a group none of them are in.
+    private func overlapsOthers(_ ids: Set<Table.ID>) -> Bool {
+        let frames = tables.filter { ids.contains($0.id) }.map(Metrics.frame)
+        let own = Set(tables.filter { ids.contains($0.id) }.compactMap(\.group))
+        return tables.contains { !ids.contains($0.id) && frames.contains(where: Metrics.frame(of: $0).intersects) }
+            || groups.contains { !own.contains($0.id) && frame(of: $0.id).map { group in frames.contains(where: group.intersects) } == true }
     }
 
     // MARK: Blocks
@@ -57,10 +76,11 @@ extension DataModel {
     /// The tables in blocks: each group's; then the rest, by what joins them; then those joined to nothing, together.
     /// Each block is laid out by `arrange`, then the blocks are packed in rows, tallest first, about twice as wide as
     /// tall, with room for groups' boundaries and names.
-    private func packedBlocks(_ arrange: ([Table]) -> (positions: [Table.ID: CGPoint], size: CGSize)) -> [Table.ID: CGPoint] {
+    private func packedBlocks(of tables: [Table], _ arrange: ([Table]) -> (positions: [Table.ID: CGPoint], size: CGSize)) -> [Table.ID: CGPoint] {
         let neighbors = adjacency()
         // Blocks: each group's tables; then the rest, by what joins them; then those joined to nothing, together.
-        var blocks: [(tables: [Table], isGroup: Bool)] = groups.map { (members(of: $0.id), true) }.filter { !$0.tables.isEmpty }
+        var blocks: [(tables: [Table], isGroup: Bool)] = groups.map { group in (tables.filter { $0.group == group.id }, true) }
+            .filter { !$0.tables.isEmpty }
         let loose = tables.filter { $0.group == nil }
         let looseByID = Dictionary(uniqueKeysWithValues: loose.map { ($0.id, $0) })
         var seen = Set<Table.ID>(), alone: [Table] = []

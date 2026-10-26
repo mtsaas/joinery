@@ -87,10 +87,12 @@ struct ModelEditor: View {
                     Button("Table", systemImage: "tablecells") { canvas.addTable(to: &model.wrappedValue) }
                         .help("Add a table (T)")
                     Menu("Layout", systemImage: "rectangle.3.group") {
+                        // The selection, if there is one; otherwise everything.
+                        let selected = canvas.selectedTablesAndMembers(in: model.wrappedValue)
                         ForEach(DataModel.Layout.allCases) { layout in
-                            Button(layout.title, systemImage: layout.symbol) {
-                                model.wrappedValue.arrange(layout)
-                                canvas.zoomToFit(model.wrappedValue.bounds)
+                            Button(selected.isEmpty ? layout.title : "\(layout.title) (Selection)", systemImage: layout.symbol) {
+                                model.wrappedValue.arrange(layout, only: selected.isEmpty ? nil : selected)
+                                if selected.isEmpty { canvas.zoomToFit(model.wrappedValue.bounds) }
                             }
                         }
                         Divider()
@@ -99,7 +101,7 @@ struct ModelEditor: View {
                         }
                         .disabled(canvas.selectedTablesAndMembers(in: model.wrappedValue).isEmpty)
                     }
-                    .help("Lay every table out afresh; ⌘Z puts them back")
+                    .help("Lay the selected tables out afresh, or every table with none selected; ⌘Z puts them back")
                     Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)
                         .help("Zip-tie tool: drag across wires to tie them (Z)")
                     Toggle("Focus", systemImage: "scope", isOn: Binding { canvas.isFocusing } set: { _ in

@@ -123,10 +123,11 @@ enum ModelTools {
         ],
         [
             "name": "arrange",
-            "description": "Lays every table out afresh: orthogonal_groups packs each schema (and each set of joined tables) as a compact block, as DataGrip does; hierarchical puts referenced tables left of those referencing them. Removes zip ties and bend points, which the old positions placed. Good after making many tables.",
+            "description": "Lays tables out afresh: every table, or only `tables` (kept where they were, clear of the rest). orthogonal_groups packs each schema (and each set of joined tables) as a compact block, as DataGrip does; hierarchical puts referenced tables left of those referencing them. Removes the zip ties and bend points on their wires, which the old positions placed. Good after making many tables.",
             "inputSchema": [
                 "type": "object",
-                "properties": ["layout": ["type": "string", "enum": ["orthogonal_groups", "hierarchical"]]],
+                "properties": ["layout": ["type": "string", "enum": ["orthogonal_groups", "hierarchical"]],
+                               "tables": ["type": "array", "items": tableReference]],
                 "required": ["layout"],
             ],
         ],
@@ -184,8 +185,9 @@ enum ModelTools {
             let name = try string("layout", in: arguments)
             guard let layout = DataModel.Layout.allCases.first(where: { $0.rawValue == name.replacingOccurrences(of: "_g", with: "G") })
             else { throw Failure("Unknown layout “\(name)”: use orthogonal_groups or hierarchical.") }
-            draft.arrange(layout)
-            result = "Laid out \(draft.tables.count) tables, \(layout.title.lowercased())."
+            let only = try (arguments["tables"] as? [String]).map { try Set($0.map { try table(named: $0, in: draft).id }) }
+            draft.arrange(layout, only: only)
+            result = "Laid out \(only?.count ?? draft.tables.count) tables, \(layout.title.lowercased())."
         case "drop_schema":
             let name = try string("schema", in: arguments)
             draft.ungroup(try group(named: name, in: draft).id)

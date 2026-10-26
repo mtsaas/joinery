@@ -290,6 +290,10 @@ enum DebugHooks {
                 let names = Set(words.dropFirst())
                 canvas.selection = Set(document.wrappedValue.tables.filter { names.contains($0.name) }.map { .table($0.id) })
                 canvas.groupSelection(in: &document.wrappedValue)
+            case "select-group" where words.count == 2:
+                if let group = document.wrappedValue.groups.first(where: { $0.name == words[1] }) {
+                    canvas.selectGroup(group.id, in: document.wrappedValue, extending: false)
+                }
             case "groups":
                 let model = document.wrappedValue
                 for group in model.groups {
@@ -297,7 +301,8 @@ enum DebugHooks {
                 }
             case "arrange" where words.count == 2:
                 if let layout = DataModel.Layout(rawValue: words[1]) {
-                    document.wrappedValue.arrange(layout)
+                    let selected = canvas.selectedTablesAndMembers(in: document.wrappedValue)
+                    document.wrappedValue.arrange(layout, only: selected.isEmpty ? nil : selected)
                     canvas.zoomToFit(document.wrappedValue.bounds)
                 }
             case "clipboard" where words.count == 2:

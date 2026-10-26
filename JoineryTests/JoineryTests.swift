@@ -775,4 +775,27 @@ struct JoineryTests {
         canvas.deleteSelection(in: &model)
         #expect(model.groups[0].ports.isEmpty && model.relationships.count == 2)
     }
+
+    @Test func aLayoutOfSomeTablesLeavesTheRestAlone() throws {
+        var model = DataModel.synthetic(tables: 24, foreignKeys: 36)
+        let picked = Set(model.tables.prefix(8).map(\.id))
+        // A bend point on a wire between two tables not picked, which should stay.
+        let columns = Set(model.tables.filter { picked.contains($0.id) }.flatMap(\.columns).map(\.id))
+        let elsewhere = try #require(model.relationships.first { !columns.contains($0.from) && !columns.contains($0.to) })
+        let bent = model.addBendPoint(on: elsewhere.id, at: CGPoint(x: -500, y: -500), direction: CGPoint(x: 1, y: 0), segment: 0)
+        let bend = try #require(bent)
+        let before = model
+
+        for layout in DataModel.Layout.allCases {
+            model = before
+            model.arrange(layout, only: picked)
+            for table in model.tables where !picked.contains(table.id) {
+                #expect(table.position == before.table(table.id)?.position, "\(layout): \(table.name) stays put")
+            }
+            #expect(model.tables.contains { picked.contains($0.id) && $0.position != before.table($0.id)?.position })
+            #expect(model.zipTies.contains { $0.id == bend }, "\(layout): ties elsewhere stay")
+            let frames = model.tables.map(Metrics.frame)
+            for (i, a) in frames.enumerated() { for b in frames[(i + 1)...] { #expect(!a.intersects(b), "\(layout): no overlaps") } }
+        }
+    }
 }

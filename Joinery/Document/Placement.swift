@@ -8,11 +8,12 @@ extension DataModel {
     /// (all the other tables, if nil), preferring right of it and below. Clear of every other table and of groups
     /// the block isn't in, by enough that a group of its own wouldn't touch them either. `ignoring` tables, not yet
     /// placed, aren't in the way.
-    mutating func place(_ ids: [Table.ID], near anchor: CGRect?, ignoring: Set<Table.ID> = []) {
+    /// `keepingArrangement`, they're moved together as they are, not laid out afresh in rows.
+    mutating func place(_ ids: [Table.ID], near anchor: CGRect?, ignoring: Set<Table.ID> = [], keepingArrangement: Bool = false) {
         let block = Set(ids)
         let others = tables.filter { !block.contains($0.id) && !ignoring.contains($0.id) }
         let fallback = others.map(Metrics.frame).reduce(nil) { $0?.union($1) ?? $1 }
-        let layout = blockLayout(ids)
+        let layout = keepingArrangement ? currentLayout(ids) : blockLayout(ids)
         guard let anchor = anchor ?? fallback else { return arrangeBlock(layout, at: .zero) }
 
         // The block's group, if it's all in one, keeps its tables' company; the rest is in the way.
@@ -70,6 +71,13 @@ extension DataModel {
         guard let frame = frame(of: group) else { return false }
         return tables.contains { $0.group != group && Metrics.frame(of: $0).intersects(frame) }
             || groups.contains { $0.id != group && self.frame(of: $0.id)?.intersects(frame) == true }
+    }
+
+    /// `ids` as they are: where each is in the box around them all, and its size.
+    private func currentLayout(_ ids: [Table.ID]) -> (positions: [(Table.ID, CGPoint)], size: CGSize) {
+        let frames = ids.compactMap { id in table(id).map { (id, Metrics.frame(of: $0)) } }
+        let bounds = frames.map(\.1).reduce(CGRect.null) { $0.union($1) }
+        return (frames.map { ($0.0, $0.1.origin - bounds.origin) }, bounds.size)
     }
 
     private func blockLayout(_ ids: [Table.ID]) -> (positions: [(Table.ID, CGPoint)], size: CGSize) {
