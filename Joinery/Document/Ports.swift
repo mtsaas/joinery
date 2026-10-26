@@ -157,14 +157,15 @@ extension DataModel {
         }
     }
 
-    /// The port under `point`, with tables moved by `offsets`.
-    func port(at point: CGPoint, offsets: [Table.ID: CGPoint] = [:]) -> GroupPort.ID? {
-        portPlacements(offsets: offsets).first { $0.value.contains(point) }?.key
+    /// The port under `point`, among `placements` (by default, worked out afresh).
+    func port(at point: CGPoint, in placements: [GroupPort.ID: PortPlacement]? = nil) -> GroupPort.ID? {
+        (placements ?? portPlacements()).first { $0.value.contains(point) }?.key
     }
 
     /// A port's socket within `reach` of `point`: its outside one, or its inside.
-    func portSocket(at point: CGPoint, within reach: CGFloat, offsets: [Table.ID: CGPoint] = [:]) -> (port: GroupPort.ID, isOutside: Bool, center: CGPoint)? {
-        for (id, port) in portPlacements(offsets: offsets) {
+    func portSocket(at point: CGPoint, within reach: CGFloat, in placements: [GroupPort.ID: PortPlacement]? = nil)
+        -> (port: GroupPort.ID, isOutside: Bool, center: CGPoint)? {
+        for (id, port) in placements ?? portPlacements() {
             if port.outside.distance(to: point) <= reach { return (id, true, port.outside) }
             if port.inside.distance(to: point) <= reach { return (id, false, port.inside) }
         }

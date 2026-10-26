@@ -83,6 +83,8 @@ The bottom-left corner shows frames per second while anything moves, and what th
 
 `scripts/scale-test.sh` builds an optimized copy with the debug hooks. For data models of 10 to 200 made-up tables (the same each run), it drags a table about, zoomed to fit and at 50%, with wires running under tables and then avoiding them. It prints frames per second, our own work per frame (routing and drawing wires), and the whole view update each move causes. Give it other sizes as `scripts/scale-test.sh <derived-data-dir> "300:450 500:800"`.
 
+`scripts/routing-bench.sh [-Onone] [model.joinery …]` times routing alone, as a whole and per frame of dragging a table, on big made-up models and any files given, with groups' shared wires bundled into ports. Unoptimized, as a Debug build used to be, routing is 15 to 30 times slower (about 100 ms to route 160 tables and 500 keys afresh, avoiding tables, against 3 ms), so the app's Debug configuration is optimized (`-O`) too, keeping the debug hooks; set it back to `-Onone` in the target's build settings to step through code in the debugger.
+
 At 200 tables and 300 foreign keys, with wires avoiding tables, a drag holds 120 fps, and our work plus the view update takes about 6 ms of the 8.3 ms a frame allows.
 
 ## Routing feedback (Debug builds)

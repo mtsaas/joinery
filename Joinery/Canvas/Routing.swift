@@ -139,15 +139,15 @@ struct Routing {
         }
         // A port's wires plug in side by side across its inside end, in the order they come from across it, so none
         // cross on the way in.
+        let referenced = Dictionary(model.relationships.map { ($0.id, $0.to) }, uniquingKeysWith: { first, _ in first })
         for port in ports.values where port.wires.count > 1 {
             let across = port.normal.perpendicular
-            let ordered = port.wires.sorted { a, b in
-                let from = { (wire: Relationship.ID) -> CGFloat in
-                    guard let ends = ends[wire] else { return 0 }
-                    return (port.column == model.relationships.first { $0.id == wire }?.to ? ends.start : ends.end).point.dot(across)
-                }
-                return (from(a), a.uuidString) < (from(b), b.uuidString)
-            }
+            // Where each comes from, across the port: its far end's place along it.
+            let from = Dictionary(uniqueKeysWithValues: port.wires.map { wire -> (Relationship.ID, CGFloat) in
+                guard let ends = ends[wire] else { return (wire, 0) }
+                return (wire, (port.column == referenced[wire] ? ends.start : ends.end).point.dot(across))
+            })
+            let ordered = port.wires.sorted { a, b in (from[a] ?? 0, a.uuidString) < (from[b] ?? 0, b.uuidString) }
             for (index, wire) in ordered.enumerated() {
                 let slot = port.insideSlot(index, of: ordered.count)
                 if ends[wire]?.end.point == port.inside { ends[wire]?.end.point = slot } else { ends[wire]?.start.point = slot }

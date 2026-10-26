@@ -754,7 +754,7 @@ struct CanvasView: View {
             case .relationship(let id):
                 wires.insert(id)
                 // A port's bus, with the wires through it.
-                if model.isBus(id) { wires.formUnion(model.portPlacements()[id]?.wires ?? []) }
+                if model.isBus(id) { wires.formUnion(currentPorts[id]?.wires ?? []) }
             case .zipTie(let id): wires.formUnion(model.zipTies.first { $0.id == id }?.relationships ?? [])
             case .table, .group: break
             }
@@ -786,9 +786,10 @@ struct CanvasView: View {
                 if case .active(let location) = phase {
                     let point = canvas.canvasPoint(location)
                     socket = self.socket(at: point)?.socket
-                    let portSocket = socket == nil ? model.portSocket(at: point, within: Metrics.socketReach(zoom: canvas.zoom), offsets: canvas.tableOffsets) : nil
+                    let ports = currentPorts
+                    let portSocket = socket == nil ? model.portSocket(at: point, within: Metrics.socketReach(zoom: canvas.zoom), in: ports) : nil
                     if (portSocket != nil) != isHoveringPortSocket { isHoveringPortSocket = portSocket != nil }
-                    isOverPort = socket == nil && portSocket == nil && model.port(at: point, offsets: canvas.tableOffsets) != nil
+                    isOverPort = socket == nil && portSocket == nil && model.port(at: point, in: ports) != nil
                     if socket == nil && !isOverPort && press == nil { hint = portHint(near: point) }
                 }
                 if socket != hoveredSocket { hoveredSocket = socket }
@@ -800,6 +801,11 @@ struct CanvasView: View {
             .help(hoveredSocket != nil ? "Drag to another column to add a foreign key"
                   : isHoveringPortSocket ? "Outside: drag to the column the port stands for. Inside: drag to a column in the group to reference it"
                   : isHoveringPort ? "Drag along the group's edge to move it; double-click to put it back facing its column" : "")
+    }
+
+    /// Where every port is now, as last routed: worked out once a change, not again for every hover and press.
+    private var currentPorts: [GroupPort.ID: DataModel.PortPlacement] {
+        routingCache.current?.ports ?? routedModel.portPlacements(offsets: canvas.tableOffsets)
     }
 
     /// The model the wires are routed for: with a port being dragged where it's got to.
@@ -828,10 +834,11 @@ struct CanvasView: View {
 
     private func press(at point: CGPoint) -> Press {
         if let (column, socket, _) = socket(at: point) { return .socket(column, at: socket) }
-        if let socket = model.portSocket(at: point, within: Metrics.socketReach(zoom: canvas.zoom), offsets: canvas.tableOffsets) {
+        let ports = currentPorts
+        if let socket = model.portSocket(at: point, within: Metrics.socketReach(zoom: canvas.zoom), in: ports) {
             return .portSocket(socket.port, isOutside: socket.isOutside, at: socket.center)
         }
-        if let port = model.port(at: point, offsets: canvas.tableOffsets) { return .port(port) }
+        if let port = model.port(at: point, in: ports) { return .port(port) }
         // By a group's edge, where the + follows the pointer: worked out here from where the press is, as the hover
         // does, not taken from the hover, which may have ended as the button went down, or never come.
         if let hint = portHint(near: point) { return .newPort(hint.group, side: hint.spot.side, along: hint.spot.along) }
@@ -859,7 +866,7 @@ struct CanvasView: View {
         let reach = Metrics.portHintRadius * 1.5 / canvas.zoom
         guard !model.tables.contains(where: { Metrics.frame(of: $0).offsetBy(dx: canvas.tableOffsets[$0.id]?.x ?? 0, dy: canvas.tableOffsets[$0.id]?.y ?? 0).contains(point) })
         else { return nil }
-        let ports = model.portPlacements(offsets: canvas.tableOffsets).values
+        let ports = currentPorts.values
         for group in model.groups.reversed() {
             guard let frame = model.frame(of: group.id, offsets: canvas.tableOffsets),
                   frame.insetBy(dx: -reach, dy: -reach).contains(point), !frame.insetBy(dx: reach, dy: reach).contains(point),
