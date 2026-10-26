@@ -49,6 +49,7 @@ extension DataModel {
         }
         zipTies = []
         for index in relationships.indices { relationships[index].zipTies = [] }
+        for group in groups.indices { for port in groups[group].ports.indices { groups[group].ports[port].zipTies = [] } }
     }
 
     // MARK: Blocks

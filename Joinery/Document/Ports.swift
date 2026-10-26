@@ -6,17 +6,46 @@ extension DataModel {
     /// Where a port sits and what runs through it.
     struct PortPlacement: Equatable {
         var group: TableGroup.ID
-        /// The column outside the group it stands for.
-        var column: Column.ID
+        /// The column outside the group it stands for, if it's plugged into one.
+        var column: Column.ID?
         /// On the group's edge.
         var point: CGPoint
         /// Out of the group, square to its edge.
         var normal: CGPoint
-        /// The column's name, with its table's: `entity.id`.
+        /// The column's name, with its table's: `entity.id`; empty while it's plugged into none.
         var label: String
         /// The wires bundled through it.
         var wires: [Relationship.ID]
+
+        /// How big its pill is: as long as its name, along the edge.
+        var size: CGSize { Metrics.portSize(label: label) }
+        /// Its sockets, just past the ends of its pill square to the edge: the inside one, for the group's tables'
+        /// wires, and the outside one, for its bus.
+        var inside: CGPoint { point - normal * socketDistance }
+        var outside: CGPoint { point + normal * socketDistance }
+        private var socketDistance: CGFloat { (normal.x == 0 ? size.height : size.width) / 2 + Metrics.socketDiameter / 2 + 1 }
     }
+
+    // MARK: Cables
+
+    /// Every cable: each foreign key's wire, and each port's bus, by the port's ID. Zip ties and bend points hold
+    /// either.
+    var cableIDs: [UUID] { relationships.map(\.id) + groups.flatMap(\.ports).map(\.id) }
+
+    /// The ties a cable runs through, in order from its start; nil if there's no such cable.
+    func zipTies(onCable id: UUID) -> [ZipTie.ID]? {
+        relationships.first { $0.id == id }?.zipTies ?? groups.lazy.flatMap(\.ports).first { $0.id == id }?.zipTies
+    }
+
+    mutating func setZipTies(onCable id: UUID, _ ties: [ZipTie.ID]) {
+        if let index = relationships.firstIndex(where: { $0.id == id }) { return relationships[index].zipTies = ties }
+        for group in groups.indices {
+            if let port = groups[group].ports.firstIndex(where: { $0.id == id }) { groups[group].ports[port].zipTies = ties }
+        }
+    }
+
+    /// Whether a cable is a port's bus.
+    func isBus(_ id: UUID) -> Bool { groups.contains { $0.ports.contains { $0.id == id } } }
 
     /// Every port's place, with tables moved by `offsets`: on the edge of its group facing its column, as near the
     /// column as the edge reaches, kept clear of the corners and of the other ports on that edge.
@@ -30,22 +59,25 @@ extension DataModel {
             // Ports on each side, with where along it they'd like to be.
             var sides: [Side4: [(id: GroupPort.ID, along: CGFloat, placement: PortPlacement)]] = [:]
             for port in group.ports {
-                guard let target = locations[port.column], target.table.group != group.id else { continue }
-                let targetFrame = frameOf(target.table)
-                let aim = CGPoint(x: targetFrame.midX, y: targetFrame.minY + Metrics.headerHeight + (CGFloat(target.row) + 0.5) * Metrics.rowHeight)
-                // The side the column is beyond, by which way out of the middle it's furthest, for the group's shape.
+                let target = port.column.flatMap { locations[$0] }.flatMap { $0.table.group == group.id ? nil : $0 }
+                // Toward its column, if it has one: the side the column is beyond, by which way out of the middle it's
+                // furthest, for the group's shape.
+                let aim = target.map { target in
+                    let frame = frameOf(target.table)
+                    return CGPoint(x: frame.midX, y: frame.minY + Metrics.headerHeight + (CGFloat(target.row) + 0.5) * Metrics.rowHeight)
+                } ?? CGPoint(x: frame.maxX, y: frame.midY)
                 let dx = (aim.x - frame.midX) / frame.width, dy = (aim.y - frame.midY) / frame.height
                 let side: Side4 = port.side ?? (abs(dx) >= abs(dy) ? (dx < 0 ? .left : .right) : (dy < 0 ? .top : .bottom))
                 // Put somewhere, it stays that far along its side; otherwise it's as near the column as the side reaches.
                 let span = Self.span(of: side, in: frame)
                 let along = port.along.map { span.lowerBound + $0 * (span.upperBound - span.lowerBound) }
                     ?? (side.isVertical ? aim.y : aim.x)
-                let wires = relationships.filter { wire in
+                let wires = target == nil ? [] : relationships.filter { wire in
                     let other = wire.to == port.column ? wire.from : wire.from == port.column ? wire.to : nil
                     return other.flatMap { locations[$0] }?.table.group == group.id
                 }.map(\.id)
-                let placement = PortPlacement(group: group.id, column: port.column, point: .zero, normal: side.normal,
-                                              label: "\(target.table.name).\(target.table.columns[target.row].name)", wires: wires)
+                let placement = PortPlacement(group: group.id, column: target == nil ? nil : port.column, point: .zero, normal: side.normal,
+                                              label: target.map { "\($0.table.name).\($0.table.columns[$0.row].name)" } ?? "", wires: wires)
                 sides[side, default: []].append((port.id, along, placement))
             }
             for (side, ports) in sides {
@@ -84,8 +116,8 @@ extension DataModel {
     }
 
     /// The spot on `group`'s edge nearest `point`, for a port dragged there: its side, and how far along.
-    func portSpot(nearest point: CGPoint, on group: TableGroup.ID) -> (side: Side4, along: CGFloat)? {
-        guard let frame = frame(of: group) else { return nil }
+    func portSpot(nearest point: CGPoint, on group: TableGroup.ID, offsets: [Table.ID: CGPoint] = [:]) -> (side: Side4, along: CGFloat)? {
+        guard let frame = frame(of: group, offsets: offsets) else { return nil }
         let spots = [Side4.left, .right, .top, .bottom].map { side -> (side: Side4, along: CGFloat, distance: CGFloat) in
             let span = Self.span(of: side, in: frame)
             let along = min(max(side.isVertical ? point.y : point.x, span.lowerBound), span.upperBound)
@@ -101,12 +133,63 @@ extension DataModel {
         return spots.min { $0.distance < $1.distance }.map { ($0.side, $0.along) }
     }
 
+    /// Where on `group`'s edge a spot is.
+    func edgePoint(of group: TableGroup.ID, at spot: (side: Side4, along: CGFloat), offsets: [Table.ID: CGPoint] = [:]) -> CGPoint? {
+        guard let frame = frame(of: group, offsets: offsets) else { return nil }
+        let span = Self.span(of: spot.side, in: frame)
+        let along = span.lowerBound + spot.along * (span.upperBound - span.lowerBound)
+        return switch spot.side {
+        case .left: CGPoint(x: frame.minX, y: along)
+        case .right: CGPoint(x: frame.maxX, y: along)
+        case .top: CGPoint(x: along, y: frame.minY)
+        case .bottom: CGPoint(x: along, y: frame.maxY)
+        }
+    }
+
     /// The port whose pill is under `point`, with tables moved by `offsets`.
     func port(at point: CGPoint, offsets: [Table.ID: CGPoint] = [:]) -> GroupPort.ID? {
         portPlacements(offsets: offsets).first { _, port in
-            let size = Metrics.portSize(label: port.label)
-            return CGRect(x: port.point.x - size.width / 2, y: port.point.y - size.height / 2, width: size.width, height: size.height).contains(point)
+            CGRect(x: port.point.x - port.size.width / 2, y: port.point.y - port.size.height / 2,
+                   width: port.size.width, height: port.size.height).contains(point)
         }?.key
+    }
+
+    /// A port's socket within `reach` of `point`: its outside one, or its inside.
+    func portSocket(at point: CGPoint, within reach: CGFloat, offsets: [Table.ID: CGPoint] = [:]) -> (port: GroupPort.ID, isOutside: Bool, center: CGPoint)? {
+        for (id, port) in portPlacements(offsets: offsets) {
+            if port.outside.distance(to: point) <= reach { return (id, true, port.outside) }
+            if port.inside.distance(to: point) <= reach { return (id, false, port.inside) }
+        }
+        return nil
+    }
+
+    /// Adds a nameless port to `group`, at `spot` on its edge, plugged into nothing yet.
+    @discardableResult
+    mutating func addPort(to group: TableGroup.ID, at spot: (side: Side4, along: CGFloat)) -> GroupPort.ID? {
+        guard let index = groups.firstIndex(where: { $0.id == group }) else { return nil }
+        let port = GroupPort(column: nil, side: spot.side, along: spot.along)
+        groups[index].ports.append(port)
+        return port.id
+    }
+
+    /// Plugs a port's outside into `column`, outside its group, in place of whatever it was plugged into; the wires
+    /// it then bundles come out of their zip ties, which were placed where they ran before.
+    mutating func plug(_ id: GroupPort.ID, into column: Column.ID) {
+        guard let group = group(ofPort: id), columnLocations[column].map({ $0.table.group != group }) == true else { return }
+        for g in groups.indices {
+            guard let index = groups[g].ports.firstIndex(where: { $0.id == id }) else { continue }
+            groups[g].ports[index].column = column
+            groups[g].ports[index].zipTies = []
+        }
+        let wires = Set(portPlacements()[id]?.wires ?? [])
+        for index in relationships.indices where wires.contains(relationships[index].id) { relationships[index].zipTies = [] }
+        repair()
+    }
+
+    /// Takes a port away, so its wires run all the way again.
+    mutating func removePort(_ id: GroupPort.ID) {
+        for group in groups.indices { groups[group].ports.removeAll { $0.id == id } }
+        repair()
     }
 
     /// The group a port is on.
@@ -157,6 +240,7 @@ extension DataModel {
     mutating func removePorts(from group: TableGroup.ID) {
         guard let index = groups.firstIndex(where: { $0.id == group }) else { return }
         groups[index].ports = []
+        repair()
     }
 }
 

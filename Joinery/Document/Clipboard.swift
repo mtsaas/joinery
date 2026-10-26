@@ -56,8 +56,10 @@ extension DataModel {
         // Copied groups' ports, for the copied columns, or the same ones if they're here.
         for group in clip.groups {
             guard let index = groups.firstIndex(where: { $0.id == groupIDs[group.id] && $0.id != group.id }), groups[index].ports == group.ports else { continue }
-            groups[index].ports = group.ports.compactMap { port in
-                (columnIDs[port.column] ?? (here.contains(port.column) ? port.column : nil)).map { GroupPort(column: $0) }
+            // Where they were put, plugged into the copied column, or the same one if it's here; their buses' ties stay behind.
+            groups[index].ports = group.ports.map { port in
+                let column = port.column.flatMap { columnIDs[$0] ?? (here.contains($0) ? $0 : nil) }
+                return GroupPort(column: column, side: port.side, along: port.along)
             }
         }
         var wireIDs: [Relationship.ID: Relationship.ID] = [:]

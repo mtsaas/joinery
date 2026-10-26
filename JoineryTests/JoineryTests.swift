@@ -633,9 +633,9 @@ struct JoineryTests {
 
         // Each wire ends at the port; one bus runs from it to the users socket facing it.
         let routing = Routing(model: model)
-        for wire in wires { #expect(routing.routes[wire]?.points.last == port.point) }
+        for wire in wires { #expect(routing.routes[wire]?.points.last == port.inside) }
         let bus = try #require(routing.routes[id])
-        #expect(bus.points.first == port.point)
+        #expect(bus.points.first == port.outside)
         #expect(bus.points.last == Metrics.socket(row: 0, side: .trailing, in: Metrics.frame(of: users)))
 
         // Dropping a socket on the port references its column.
@@ -656,7 +656,7 @@ struct JoineryTests {
         model.movePort(id, to: spot)
         let moved = try #require(model.portPlacements()[id])
         #expect(moved.normal == CGPoint(x: 0, y: 1) && moved.point == CGPoint(x: frame.midX, y: frame.maxY))
-        #expect(Routing(model: model).routes[wires[0]]?.points.last == moved.point, "the wires follow it")
+        #expect(Routing(model: model).routes[wires[0]]?.points.last == moved.inside, "the wires follow it")
         let saved = try JSONDecoder().decode(DataModel.self, from: model.fileData)
         #expect(saved.portPlacements()[id] == moved, "and it's kept where it was put")
         model.movePort(id, to: nil)
@@ -671,13 +671,13 @@ struct JoineryTests {
         let empty = try #require(added)
         let emptyRouting = Routing(model: model)
         #expect(emptyRouting.ports[empty]?.wires.isEmpty == true)
-        #expect(emptyRouting.routes[empty]?.points.first == emptyRouting.ports[empty]?.point)
+        #expect(emptyRouting.routes[empty]?.points.first == emptyRouting.ports[empty]?.outside)
         #expect(emptyRouting.sockets[empty]?.to.column == usersID)
 
-        // Once users joins the group, there's nothing outside to stand for.
+        // Once users joins the group, there's nothing outside to stand for: the port's left unplugged, where it was.
         model.tables[0].group = group
         model.repair()
-        #expect(model.groups.first { $0.id == group }?.ports.isEmpty == true)
+        #expect(model.groups.first { $0.id == group }?.ports.allSatisfy { $0.column == nil } == true)
     }
 
     @Test func assistantsTablesLandInOpenSpaceBesideTheirCompany() throws {
@@ -713,5 +713,43 @@ struct JoineryTests {
         #expect(isClear())
         let description = try ModelTools.call("get_model", [:], on: &model)
         #expect(description.contains("\"frame\"") && description.contains("\"bounds\""))
+    }
+
+    @Test func aPortMadeOnAGroupsEdgeIsNamedForWhatItsPluggedIntoAndItsBusIsACable() throws {
+        var model = storefront()
+        let usersID = model.tables[0].columns[0].id
+        let group = model.group([model.tables[1].id, model.tables[2].id], named: "shop")
+        // The + clicked on the left edge: a nameless port, sockets either side, no bus yet.
+        let added = model.addPort(to: group, at: (.left, 0.5))
+        let id = try #require(added)
+        var port = try #require(model.portPlacements()[id])
+        #expect(port.label.isEmpty && port.column == nil && Routing(model: model).routes[id] == nil)
+        #expect(port.inside.x > port.point.x && port.outside.x < port.point.x, "one socket in the group, one out")
+        #expect(model.dropTarget(at: port.point) == .port(id))
+
+        // Its outside plugged into users.id, it's named for it, and bundles the group's wires to it.
+        model.plug(id, into: usersID)
+        port = try #require(model.portPlacements()[id])
+        #expect(port.label == "users.id" && port.wires.count == 2)
+        // Only one: plugged into another, that's what it stands for.
+        model.plug(id, into: model.tables[0].columns[0].id)
+        #expect(model.groups[0].ports.count == 1)
+
+        // Its bus takes bend points and ties as a wire does, and is routed through them.
+        let bus = try #require(Routing(model: model).routes[id])
+        let middle = bus.points[bus.points.count / 2]
+        let bent = model.addBendPoint(on: id, at: middle, direction: CGPoint(x: -1, y: 0), segment: 0)
+        let bend = try #require(bent)
+        model.repair()
+        #expect(model.zipTies(onCable: id) == [bend], "kept by repair")
+        #expect(Routing(model: model).routes[id]?.points.contains(middle) == true)
+        model.removeZipTie(bend)
+        #expect(model.zipTies(onCable: id)?.isEmpty == true)
+
+        // Deleting the bus deletes the port; its wires run all the way again.
+        let canvas = CanvasController()
+        canvas.selection = [.relationship(id)]
+        canvas.deleteSelection(in: &model)
+        #expect(model.groups[0].ports.isEmpty && model.relationships.count == 2)
     }
 }

@@ -49,10 +49,9 @@ extension DataModel {
         case column(Column.ID)
         /// The table's header or empty space: give it a new column to connect.
         case table(Table.ID)
-        /// A group's port: connect to the column it stands for.
+        /// A group's port: from inside the group, connect to the column it stands for; from outside, plug it into the
+        /// dragged column.
         case port(GroupPort.ID)
-        /// A group's empty space: give it a port for the dragged column, bundling its wires to it.
-        case group(TableGroup.ID)
     }
 
     func dropTarget(at point: CGPoint) -> DropTarget? {
@@ -63,8 +62,7 @@ extension DataModel {
             return point.y >= frame.minY + Metrics.headerHeight && table.columns.indices.contains(row)
                 ? .column(table.columns[row].id) : .table(table.id)
         }
-        if let port = port(at: point) { return .port(port) }
-        return groups.reversed().first { frame(of: $0.id)?.contains(point) == true }.map { .group($0.id) }
+        return port(at: point).map { .port($0) }
     }
 
     /// What to call a new column in `table` that references `column`: its name, but `<table>_id` for an `id` column
@@ -111,11 +109,12 @@ extension DataModel {
             tables[index].columns.append(new)
             return connect(new.id, to: column)
         case .port(let id):
-            guard let port = groups.lazy.flatMap(\.ports).first(where: { $0.id == id }) else { return nil }
-            return connect(dragging: column, onto: .column(port.column))
-        case .group(let id):
-            addPort(to: id, for: column)
-            return nil
+            guard let group = group(ofPort: id), let port = groups.lazy.flatMap(\.ports).first(where: { $0.id == id }) else { return nil }
+            guard columnLocations[column]?.table.group == group else {
+                plug(id, into: column)
+                return nil
+            }
+            return port.column.flatMap { connect(dragging: column, onto: .column($0)) }
         }
     }
 
@@ -238,10 +237,11 @@ extension DataModel {
     /// - Parameter direction: The way the wire runs there.
     @discardableResult
     mutating func addBendPoint(on relationship: Relationship.ID, at point: CGPoint, direction: CGPoint, segment: Int) -> ZipTie.ID? {
-        guard let index = relationships.firstIndex(where: { $0.id == relationship }) else { return nil }
+        guard var ties = zipTies(onCable: relationship) else { return nil }
         let bend = ZipTie(position: point, direction: direction, relationships: [relationship])
         zipTies.append(bend)
-        relationships[index].zipTies.insert(bend.id, at: min(max(segment, 0), relationships[index].zipTies.count))
+        ties.insert(bend.id, at: min(max(segment, 0), ties.count))
+        setZipTies(onCable: relationship, ties)
         return bend.id
     }
 
@@ -264,6 +264,7 @@ extension DataModel {
     mutating func removeZipTie(_ id: ZipTie.ID) {
         zipTies.removeAll { $0.id == id }
         for index in relationships.indices { relationships[index].zipTies.removeAll { $0 == id } }
+        for group in groups.indices { for port in groups[group].ports.indices { groups[group].ports[port].zipTies.removeAll { $0 == id } } }
     }
 
     /// Drops references to anything that isn't there, so a hand-edited or damaged file can't make the canvas draw
@@ -370,7 +371,15 @@ extension DataModel {
     mutating func repair() {
         let columns = Set(tables.flatMap(\.columns).map(\.id))
         relationships.removeAll { !columns.contains($0.from) || !columns.contains($0.to) }
-        let tiesOf = Dictionary(relationships.map { ($0.id, Set($0.zipTies)) }, uniquingKeysWith: { first, _ in first })
+        // A port stands for a column outside its group; one that's gone, or now in it, leaves the port unplugged.
+        let owner = columnLocations
+        for group in groups.indices {
+            for port in groups[group].ports.indices {
+                guard let column = groups[group].ports[port].column else { continue }
+                if owner[column].map({ $0.table.group == groups[group].id }) ?? true { groups[group].ports[port].column = nil }
+            }
+        }
+        let tiesOf = Dictionary(cableIDs.map { ($0, Set(zipTies(onCable: $0) ?? [])) }, uniquingKeysWith: { first, _ in first })
         let wiresOf = Dictionary(zipTies.map { ($0.id, Set($0.relationships)) }, uniquingKeysWith: { first, _ in first })
         for index in zipTies.indices {
             let tie = zipTies[index].id
@@ -381,15 +390,16 @@ extension DataModel {
             let wire = relationships[index].id
             relationships[index].zipTies = relationships[index].zipTies.uniqued.filter { wiresOf[$0]?.contains(wire) == true }
         }
+        for group in groups.indices {
+            for port in groups[group].ports.indices {
+                let bus = groups[group].ports[port].id
+                groups[group].ports[port].zipTies = groups[group].ports[port].zipTies.uniqued.filter { wiresOf[$0]?.contains(bus) == true }
+            }
+        }
         for tie in zipTies where tie.relationships.isEmpty { removeZipTie(tie.id) }
         let groupIDs = Set(groups.map(\.id))
         for index in tables.indices where tables[index].group.map(groupIDs.contains) == false { tables[index].group = nil }
-        // A port stands for a column outside its group.
-        let owner = columnLocations
-        for index in groups.indices {
-            let group = groups[index].id
-            groups[index].ports.removeAll { port in owner[port.column].map { $0.table.group == group } ?? true }
-        }
+
         removeEmptyGroups()
     }
 }

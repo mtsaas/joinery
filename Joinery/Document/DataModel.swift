@@ -43,16 +43,32 @@ extension TableGroup {
     }
 }
 
-/// A socket on a group's edge standing for a column outside it, such as a much-referenced `entity.id`: every wire
-/// between that column and the group's tables runs to the port instead, and one cable, a bus, from the port to the
-/// column. It sits on the edge facing the column, wherever that is, unless it's been put somewhere on the edge.
+/// A socket on a group's edge, with one side in the group and one out, standing for a column outside it, such as a
+/// much-referenced `entity.id`: every wire between that column and the group's tables runs to the port's inside
+/// instead, and one cable, a bus, from its outside to the column. Named for the column; nameless until it has one. It
+/// sits where it's been put on the edge, or facing its column.
 struct GroupPort: Codable, Identifiable, Equatable {
     var id = UUID()
-    var column: Column.ID
+    /// What its outside is plugged into: one column, outside the group.
+    var column: Column.ID?
     /// Where it's been put: on which side, and how far along it, from 0 at the top or left end to 1 at the other.
     /// Nil, it faces its column.
     var side: Side4?
     var along: CGFloat?
+    /// The zip ties and bend points its bus runs through, from the port to the column, as a wire's.
+    var zipTies: [ZipTie.ID] = []
+}
+
+extension GroupPort {
+    /// What a file from before something existed leaves out is empty.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        column = try container.decodeIfPresent(Column.ID.self, forKey: .column)
+        side = try container.decodeIfPresent(Side4.self, forKey: .side)
+        along = try container.decodeIfPresent(CGFloat.self, forKey: .along)
+        zipTies = try container.decodeIfPresent([ZipTie.ID].self, forKey: .zipTies) ?? []
+    }
 }
 
 struct Table: Codable, Identifiable, Equatable {

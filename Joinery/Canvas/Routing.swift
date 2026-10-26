@@ -107,9 +107,9 @@ struct Routing {
                 // The end in the group faces the port, or its first tie; the other faces the port too, for its bus.
                 let toPort = port.column == relationship.to
                 let inside = toPort ? fromFrame : toFrame, outside = toPort ? toFrame : fromFrame
-                let toward = (toPort ? tied.first : tied.last) ?? port.point
+                let toward = (toPort ? tied.first : tied.last) ?? port.inside
                 let insideSide: Side = toward.x < inside.midX ? .leading : .trailing
-                let outsideSide: Side = port.point.x < outside.midX ? .leading : .trailing
+                let outsideSide: Side = port.outside.x < outside.midX ? .leading : .trailing
                 (startSide, endSide) = toPort ? (insideSide, outsideSide) : (outsideSide, insideSide)
             } else if let first = tied.first, let last = tied.last {
                 startSide = first.x < fromFrame.midX ? .leading : .trailing
@@ -128,32 +128,38 @@ struct Routing {
                 Waypoint(point: Metrics.socket(row: from.row, side: startSide, in: fromFrame), tangent: startSide.outward),
                 Waypoint(point: Metrics.socket(row: to.row, side: endSide, in: toFrame), tangent: -endSide.outward)
             )
-            // Into the port, square to the group's edge, heading out.
+            // Into the port's inside socket, square to the group's edge, heading out.
             if let port {
                 if port.column == relationship.to {
-                    ends[relationship.id]?.end = Waypoint(point: port.point, tangent: port.normal)
+                    ends[relationship.id]?.end = Waypoint(point: port.inside, tangent: port.normal)
                 } else {
-                    ends[relationship.id]?.start = Waypoint(point: port.point, tangent: -port.normal)
+                    ends[relationship.id]?.start = Waypoint(point: port.inside, tangent: -port.normal)
                 }
             }
         }
-        // Each port's bus: out of the port, square to the edge, into its column's socket on the side facing it. There
-        // even before any wire runs through it, as a socket for the group's tables to plug into.
-        var buses: [(id: GroupPort.ID, waypoints: [Waypoint], column: Column.ID)] = []
+        // Each port's bus, a cable like any wire, through its own ties: out of the port's outside socket, square to the
+        // edge, into its column's socket on the side facing it (or its last tie). There even before any wire runs
+        // through the port, as a socket for the group's tables to plug into.
+        let busTies = Dictionary(model.groups.flatMap(\.ports).map { ($0.id, $0.zipTies) }, uniquingKeysWith: { first, _ in first })
+        var buses: [(id: GroupPort.ID, column: Column.ID)] = []
         for (id, port) in ports.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
-            guard let row = rows[port.column], let frame = frames[row.table] else { continue }
-            let side: Side = port.point.x < frame.midX ? .leading : .trailing
-            let socket = Socket(column: port.column, side: side)
+            guard let column = port.column, let row = rows[column], let frame = frames[row.table] else { continue }
+            let toward = busTies[id]?.last.flatMap { tiePositions[$0] } ?? port.outside
+            let side: Side = toward.x < frame.midX ? .leading : .trailing
+            let socket = Socket(column: column, side: side)
             sockets[id] = (socket, socket)
-            buses.append((id, [Waypoint(point: port.point, tangent: port.normal),
-                               Waypoint(point: Metrics.socket(row: row.row, side: side, in: frame), tangent: -side.outward)], port.column))
+            ends[id] = (Waypoint(point: port.outside, tangent: port.normal),
+                        Waypoint(point: Metrics.socket(row: row.row, side: side, in: frame), tangent: -side.outward))
+            buses.append((id, column))
         }
+        // The ties on every cable, wire or bus.
+        var cableTies = Dictionary(model.relationships.map { ($0.id, $0.zipTies) }, uniquingKeysWith: { first, _ in first })
+        cableTies.merge(busTies) { first, _ in first }
 
-        // The points a wire runs between on either side of its `index`th tie. Sockets come with the way the wire
+        // The points a cable runs between on either side of its `index`th tie. Sockets come with the way the cable
         // runs through them; neighboring ties don't have one yet.
-        func neighbors(of relationship: Relationship, at index: Int) -> (previous: Waypoint, next: Waypoint)? {
-            guard let (start, end) = ends[relationship.id] else { return nil }
-            let ties = relationship.zipTies
+        func neighbors(of cable: UUID, at index: Int) -> (previous: Waypoint, next: Waypoint)? {
+            guard let (start, end) = ends[cable], let ties = cableTies[cable] else { return nil }
             let previous = index == 0 ? start : tiePositions[ties[index - 1]].map { Waypoint(point: $0, tangent: .zero) } ?? start
             let next = index == ties.count - 1 ? end : tiePositions[ties[index + 1]].map { Waypoint(point: $0, tangent: .zero) } ?? end
             return (previous, next)
@@ -161,8 +167,8 @@ struct Routing {
 
         // The way a wire runs through a tie at `center`: straight from its neighbors when it's far from them, but
         // close to a socket, the way it leaves that socket, so it doesn't have to turn hard in the gap between.
-        func flow(of relationship: Relationship, at index: Int, through center: CGPoint) -> CGPoint? {
-            guard let (previous, next) = neighbors(of: relationship, at: index),
+        func flow(of cable: UUID, at index: Int, through center: CGPoint) -> CGPoint? {
+            guard let (previous, next) = neighbors(of: cable, at: index),
                   let chord = (next.point - previous.point).normalized else { return nil }
             let before = previous.point.distance(to: center), after = center.distance(to: next.point)
             let near = before < after ? previous : next
@@ -171,13 +177,12 @@ struct Routing {
         }
 
         // A tie turns to follow its wires: along the average of the way they run through it.
-        let relationships = Dictionary(model.relationships.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         for tie in model.zipTies {
             guard let center = tiePositions[tie.id] else { continue }
             var sum = CGPoint.zero
-            for case let relationship? in tie.relationships.map({ relationships[$0] }) {
-                guard let index = relationship.zipTies.firstIndex(of: tie.id),
-                      let way = flow(of: relationship, at: index, through: center) else { continue }
+            for cable in tie.relationships {
+                guard let index = cableTies[cable]?.firstIndex(of: tie.id),
+                      let way = flow(of: cable, at: index, through: center) else { continue }
                 sum += way.dot(tie.direction) < 0 ? -way : way
             }
             ties[tie.id] = Tie(center: center, direction: tie.heldDirection ?? sum.normalized ?? tie.direction,
@@ -229,22 +234,29 @@ struct Routing {
                 toAvoid.append((id, curve, obstacles, own))
             }
         }
-        for relationship in model.relationships {
-            guard let (start, end) = ends[relationship.id] else { continue }
+        // A cable's waypoints: its start, each tie it runs through, its end.
+        func waypoints(of cable: UUID) -> [Waypoint]? {
+            guard let (start, end) = ends[cable] else { return nil }
             var waypoints = [start]
-            for (index, id) in relationship.zipTies.enumerated() {
-                guard let tie = ties[id], let slot = tie.relationships.firstIndex(of: relationship.id),
-                      let way = flow(of: relationship, at: index, through: tie.center) else { continue }
+            for (index, id) in (cableTies[cable] ?? []).enumerated() {
+                guard let tie = ties[id], let slot = tie.relationships.firstIndex(of: cable),
+                      let way = flow(of: cable, at: index, through: tie.center) else { continue }
                 let tangent = way.dot(tie.direction) < 0 ? -tie.direction : tie.direction
                 waypoints.append(Waypoint(point: tie.slot(slot), tangent: tangent, isTie: true))
             }
             waypoints.append(end)
+            return waypoints
+        }
+        for relationship in model.relationships {
+            guard let waypoints = waypoints(of: relationship.id) else { continue }
             // A bundled wire joins only its own table: the port stands in for the other.
             let port = bussed[relationship.id]
             plan(relationship.id, through: waypoints,
                  joining: port.map { [$0.column == relationship.to ? relationship.from : relationship.to] } ?? [relationship.from, relationship.to])
         }
-        for bus in buses { plan(bus.id, through: bus.waypoints, joining: [bus.column]) }
+        for bus in buses {
+            if let waypoints = waypoints(of: bus.id) { plan(bus.id, through: waypoints, joining: [bus.column]) }
+        }
 
         // Each wire bends on its own, so they're shared among the cores: dragging a table through a crowd of wires,
         // turning avoidance on, or opening a big model reroutes many at once.

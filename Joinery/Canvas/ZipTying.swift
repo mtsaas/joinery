@@ -18,8 +18,9 @@ extension DataModel {
         let tie = ZipTie(position: center, direction: direction, relationships: ordered.map(\.relationship))
         zipTies.append(tie)
         for crossing in crossings {
-            guard let index = relationships.firstIndex(where: { $0.id == crossing.relationship }) else { continue }
-            relationships[index].zipTies.insert(tie.id, at: min(crossing.segment, relationships[index].zipTies.count))
+            guard var ties = zipTies(onCable: crossing.relationship) else { continue }
+            ties.insert(tie.id, at: min(crossing.segment, ties.count))
+            setZipTies(onCable: crossing.relationship, ties)
         }
         return tie.id
     }

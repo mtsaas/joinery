@@ -122,11 +122,18 @@ final class CanvasController {
 
     /// A wire being dragged out of a socket, in canvas points.
     struct Connection {
-        var from: Column.ID
+        /// The column it's drawn for: the one dragged from, or the one a port's inside stands for; nil from a port's
+        /// outside, to be plugged into whatever it's dropped on.
+        var from: Column.ID?
+        /// The port socket it's drawn from, if it is.
+        var port: (id: GroupPort.ID, isOutside: Bool)?
         var start: CGPoint
         var end: CGPoint
         var target: DataModel.DropTarget?
     }
+
+    /// Where a port would be added, while the pointer's near a group's edge: shown as a + there.
+    var portHint: (group: TableGroup.ID, spot: (side: Side4, along: CGFloat), point: CGPoint)?
 
     /// A line being drawn across wires to tie them, in canvas points.
     struct Stroke {
@@ -499,7 +506,9 @@ final class CanvasController {
         for item in selection {
             switch item {
             case .table(let id): model.removeTable(id)
-            case .relationship(let id): model.removeRelationships { $0.id == id }
+            case .relationship(let id):
+                // A port's bus is the port.
+                if model.isBus(id) { model.removePort(id) } else { model.removeRelationships { $0.id == id } }
             case .zipTie(let id): model.removeZipTie(id)
             // Its tables go with it, being selected too; this is for one somehow left without.
             case .group(let id): model.ungroup(id)

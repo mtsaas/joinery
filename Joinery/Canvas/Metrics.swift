@@ -48,10 +48,13 @@ enum Metrics {
     /// A port's pill on a group's edge, as much as is kept clear for it (its label may make it longer).
     static let portWidth: CGFloat = 96
     static let portHeight: CGFloat = 20
+    /// The + for adding a port by a group's edge, on screen.
+    static let portHintRadius: CGFloat = 10
 
-    /// About how big a port's pill is, for its label (drawn, it's measured exactly).
+    /// How big a port's pill is, for its name: room for the name and a socket at either end; just the sockets, nameless.
     static func portSize(label: String) -> CGSize {
-        CGSize(width: max(CGFloat(label.count) * 6.6 + 20, portHeight * 2), height: portHeight)
+        label.isEmpty ? CGSize(width: portHeight * 1.6, height: portHeight)
+            : CGSize(width: CGFloat(label.count) * 6.4 + 36, height: portHeight)
     }
 
     /// Which grid column a point on a table falls in, by its distance from the table's left edge.

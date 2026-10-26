@@ -204,15 +204,33 @@ enum DebugHooks {
                 let json = words.dropFirst(2).joined(separator: " ")
                 let arguments = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
                 do { print("mcp:", try ModelTools.call(words[1], arguments, on: &document.wrappedValue)) } catch { print("mcp failed:", error.localizedDescription) }
-            case "add-port" where words.count == 3:
-                // A socket dropped on a group: "add-port hierarchy user_account.user_id".
+            case "add-port" where words.count >= 4:
+                // The + on a group's edge clicked, and the new port maybe plugged in: "add-port hierarchy left 0.2 user_account.user_id".
                 let model = document.wrappedValue
-                let parts = words[2].split(separator: ".").map(String.init)
-                guard let group = model.groups.first(where: { $0.name == words[1] }),
-                      let column = model.tables.first(where: { $0.name == parts.first })?.columns.first(where: { $0.name == parts.last })
-                else { print("add-port: no such group or column"); break }
-                print("add-port:", document.wrappedValue.connect(dragging: column.id, onto: .group(group.id)).map { "\($0)" } ?? "no wire",
-                      document.wrappedValue.portPlacements().values.map { "\($0.label) (\($0.wires.count))" })
+                guard let group = model.groups.first(where: { $0.name == words[1] }), let side = Side4(rawValue: words[2]),
+                      let port = document.wrappedValue.addPort(to: group.id, at: (side, numbers.first ?? 0.5)) else { print("add-port: no such group"); break }
+                if words.count == 5 {
+                    let parts = words[4].split(separator: ".").map(String.init)
+                    if let column = model.tables.first(where: { $0.name == parts.first })?.columns.first(where: { $0.name == parts.last }) {
+                        document.wrappedValue.plug(port, into: column.id)
+                    }
+                }
+                print("add-port:", document.wrappedValue.portPlacements().values.map { "\($0.label) (\($0.wires.count)) at \(Int($0.point.x)), \(Int($0.point.y))" })
+            case "hint" where words.count == 4:
+                // The + shown by a group's edge, as if hovered: "hint hierarchy bottom 0.5".
+                let model = document.wrappedValue
+                if let group = model.groups.first(where: { $0.name == words[1] }), let side = Side4(rawValue: words[2]),
+                   let point = model.edgePoint(of: group.id, at: (side, numbers[0])) {
+                    canvas.portHint = (group.id, (side, numbers[0]), point)
+                }
+            case "bend-bus":
+                // A bend point halfway along the first plugged port's bus.
+                let model = document.wrappedValue
+                guard let port = model.groups.lazy.flatMap(\.ports).first(where: { $0.column != nil }),
+                      let route = Routing(model: model).routes[port.id] else { break }
+                let middle = route.points[route.points.count / 2], next = route.points[route.points.count / 2 + 1]
+                print("bend-bus:", document.wrappedValue.addBendPoint(on: port.id, at: middle + CGPoint(x: 0, y: 160),
+                                                                     direction: (next - middle).normalized ?? CGPoint(x: 1, y: 0), segment: 0) != nil)
             case "port" where words.count >= 2:
                 // The first port put on a side ("port bottom 0.3"), or back facing its column ("port auto").
                 guard let id = document.wrappedValue.groups.lazy.flatMap(\.ports).first?.id else { break }
