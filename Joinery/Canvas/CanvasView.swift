@@ -912,12 +912,16 @@ struct CanvasView: View {
         canvas.backgroundDrag = nil
     }
 
-    /// What a selection rectangle picks up, of the tables and wires it touches and the ties inside it.
+    /// What a selection rectangle picks up: only what's wholly inside it, tables, ties and wires alike, so it can be
+    /// drawn across a crowded canvas without catching what it passes over.
     private func items(in rect: CGRect) -> Set<CanvasController.Item> {
         CanvasController.boxSelection(
-            tables: schema.tables.filter { Metrics.frame(of: $0).intersects(rect) }.map(\.id),
-            ties: schema.zipTies.filter { rect.contains($0.position) }.map(\.id),
-            wires: simulation.wires.filter { $0.value.points.contains(where: rect.contains) }.map(\.key))
+            tables: schema.tables.filter { rect.contains(Metrics.frame(of: $0)) }.map(\.id),
+            ties: schema.zipTies.filter { tie in
+                let reach = Metrics.tieHalfLength(holding: tie.relationships.count)
+                return rect.contains(CGRect(x: tie.position.x - reach, y: tie.position.y - reach, width: reach * 2, height: reach * 2))
+            }.map(\.id),
+            wires: simulation.wires.filter { $0.value.points.allSatisfy(rect.contains) }.map(\.key))
     }
 
     private func finishStroke() {

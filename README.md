@@ -34,7 +34,7 @@ Schemas live in a library you browse as in Freeform. The sidebar has All Schemas
 | Wires avoid tables | View ▸ Wires Avoid Tables, or from the palette: wires bend around tables in their way |
 | Reroute a wire | Double-click it to add a bend point there, then drag the point; double-click a bend point to remove it |
 | Zip-tie wires | Right-drag (or Option-drag) a line across two or more wires, starting off a table |
-| Select | Click tables, wires, ties; Shift-click to add; drag a box over tables and wires; ⌘A for everything |
+| Select | Click tables, wires, ties; Shift-click to add; drag a box around tables, ties and wires to select those wholly inside it; ⌘A for everything |
 | Move | Drag anything selected to move the whole selection; arrow keys nudge (Shift for 10 points) |
 | Delete | Delete removes the selection, or from the wheel |
 | Pan / zoom | Scroll, or hold Space and drag / pinch, ⌘-scroll, ⌘+ ⌘- ⌘0, Zoom to Fit ⌘1 |
