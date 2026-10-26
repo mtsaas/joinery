@@ -113,7 +113,7 @@ struct TableCard: View, Equatable {
                 .frame(width: Metrics.keyColumnWidth * zoom)
                 .overlay { cursorBorder(cell(.key)) }
             Theme.cardBorder.frame(width: hairline)
-            text(column.name, in: cell(.name), width: nil)
+            text(column.name, in: cell(.name), width: nil, badge: column.isUnique && !column.isPrimaryKey ? "UQ" : nil)
                 .font(.system(size: 11 * zoom, weight: column.isPrimaryKey ? .medium : .regular))
                 .overlay { cursorBorder(cell(.name)) }
             Theme.cardBorder.frame(width: hairline)
@@ -146,10 +146,24 @@ struct TableCard: View, Equatable {
     }
 
     /// A cell's text, or if it's the one being edited, the editor in its place.
-    private func text(_ value: String, in cell: CanvasController.Cell, width: CGFloat?, completesTypes: Bool = false) -> some View {
+    /// - Parameter badge: A short tag after the text, such as UQ for a unique column.
+    private func text(_ value: String, in cell: CanvasController.Cell, width: CGFloat?, completesTypes: Bool = false,
+                      badge: String? = nil) -> some View {
         Group {
             if isEditing && cursor == cell {
                 CellEditor(text: $draft, selectsAll: selectsAllDraft, completesTypes: completesTypes, lostFocus: editorLostFocus)
+            } else if let badge {
+                HStack(spacing: 4 * zoom) {
+                    Text(value)
+                    Spacer(minLength: 0)
+                    Text(badge)
+                        .font(.system(size: 8 * zoom, weight: .bold, design: .rounded))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 3.5 * zoom)
+                        .padding(.vertical, 1.5 * zoom)
+                        .background(Color.secondary.opacity(0.16), in: .capsule)
+                        .fixedSize()
+                }
             } else {
                 Text(value)
             }

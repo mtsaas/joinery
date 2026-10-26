@@ -262,7 +262,8 @@ struct CanvasView: View {
             target = .tie(id)
             if !canvas.selection.contains(.zipTie(id)) { canvas.selection = [.zipTie(id)] }
         } else if let table = schema.tables.last(where: { Metrics.frame(of: $0).contains(point) }) {
-            target = .table(table.id)
+            // Its header is the table; a row, that column.
+            if case .column(let id) = cell(at: point, in: table).row { target = .column(id, in: table.id) } else { target = .table(table.id) }
             if !canvas.selection.contains(.table(table.id)) { canvas.selection = [.table(table.id)] }
         } else if let hit = simulation.hit(near: point, within: reach) {
             target = .wire(hit)
@@ -316,6 +317,27 @@ struct CanvasView: View {
                 schema.removeTable(id)
             }
             color = (table.color, { binding(for: id).wrappedValue.color = $0 })
+        case .column(let id, let tableID):
+            guard let table = schema.table(tableID), let column = table.columns.first(where: { $0.id == id }) else { break }
+            func toggle(_ title: String, _ symbol: String, _ isOn: Bool, _ change: @escaping (inout Column) -> Void) -> PaletteCommand {
+                PaletteCommand(id: title, title: title, subtitle: isOn ? "On" : "Off", symbol: symbol) { updateColumn(id, in: tableID, change) }
+            }
+            func edit(_ part: Metrics.GridColumn) {
+                canvas.cell = CanvasController.Cell(table: tableID, row: .column(id), part: part)
+                begin(canvas.cell!, replacingWith: nil, selectingAll: true)
+            }
+            slots[.west] = toggle("Primary Key", "key", column.isPrimaryKey) { $0.isPrimaryKey.toggle() }
+            slots[.north] = toggle("Required", "asterisk", !column.isNullable) { $0.isNullable.toggle() }
+            slots[.east] = toggle("Unique", "1.circle", column.isUnique) { $0.isUnique.toggle() }
+            slots[.northWest] = PaletteCommand(id: "rename-column", title: "Rename Column", symbol: "pencil") { edit(.name) }
+            slots[.northEast] = PaletteCommand(id: "edit-type", title: "Change Type", symbol: "textformat") { edit(.type) }
+            slots[.southEast] = PaletteCommand(id: "insert-column", title: "Insert Column Below", symbol: "plus") {
+                addColumn(to: tableID, after: id)
+            }
+            slots[.south] = PaletteCommand(id: "delete-column", title: "Delete Column", symbol: "trash", isDestructive: true) {
+                deleteColumn(at: CanvasController.Cell(table: tableID, row: .column(id), part: .name))
+            }
+            color = (table.color, { binding(for: tableID).wrappedValue.color = $0 })
         case .tie(let id):
             guard let tie = schema.zipTies.first(where: { $0.id == id }) else { break }
             if tie.relationships.count == 1 {
@@ -660,6 +682,10 @@ struct CanvasView: View {
             deleteColumn(at: cell)
         case .toggleKey:
             togglePrimaryKey(cell)
+        case .toggleUnique:
+            if case .column(let id) = cell.row { updateColumn(id, in: cell.table) { $0.isUnique.toggle() } }
+        case .toggleRequired:
+            if case .column(let id) = cell.row { updateColumn(id, in: cell.table) { $0.isNullable.toggle() } }
         case .leave:
             leaveGrid()
         }
@@ -742,6 +768,12 @@ struct CanvasView: View {
         canvas.cell = row > 0 ? CanvasController.Cell(table: table.id, row: .column(table.columns[row - 1].id), part: cell.part)
             : .name(of: table.id)
         schema.removeColumn(id)
+    }
+
+    private func updateColumn(_ column: Column.ID, in table: Table.ID, _ change: (inout Column) -> Void) {
+        guard let index = schema.tables.firstIndex(where: { $0.id == table }),
+              let row = schema.tables[index].columns.firstIndex(where: { $0.id == column }) else { return }
+        change(&schema.tables[index].columns[row])
     }
 
     private func togglePrimaryKey(_ cell: CanvasController.Cell) {
@@ -1060,6 +1092,8 @@ private struct GridHints: View {
             hint("⇥", "Next")
             hint("↩", "Down")
             Button { perform(.toggleKey) } label: { hint("Space", "Key") }
+            Button { perform(.toggleRequired) } label: { hint("⇧⌘R", "Required") }
+            Button { perform(.toggleUnique) } label: { hint("⇧⌘U", "Unique") }
             Button { perform(.insertColumn) } label: { hint("⌘↩", "Insert") }
             Button { perform(.deleteColumn) } label: { hint("⌘⌫", "Delete") }
             hint("⎋", "Done")

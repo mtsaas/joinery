@@ -30,7 +30,23 @@ struct Column: Codable, Identifiable, Equatable {
     var name: String
     var type: DataType
     var isPrimaryKey = false
+    /// Required (NOT NULL) unless this is set; shown as a `?` after the type.
     var isNullable = false
+    /// No two rows may share a value. A primary key is unique anyway, without this.
+    var isUnique = false
+}
+
+extension Column {
+    /// Flags missing from a file, saved before they existed, are off.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        type = try container.decode(DataType.self, forKey: .type)
+        isPrimaryKey = try container.decodeIfPresent(Bool.self, forKey: .isPrimaryKey) ?? false
+        isNullable = try container.decodeIfPresent(Bool.self, forKey: .isNullable) ?? false
+        isUnique = try container.decodeIfPresent(Bool.self, forKey: .isUnique) ?? false
+    }
 }
 
 enum DataType: String, Codable, CaseIterable, Identifiable {

@@ -79,7 +79,14 @@ struct CanvasEventMonitor: NSViewRepresentable {
             case Key.space where !isEditing && modifiers.isEmpty:
                 return .space
             default:
-                if modifiers == [.command, .shift], event.charactersIgnoringModifiers?.lowercased() == "k" { return .toggleKey }
+                if modifiers == [.command, .shift] {
+                    switch event.charactersIgnoringModifiers?.lowercased() {
+                    case "k": return .toggleKey
+                    case "u": return .toggleUnique
+                    case "r": return .toggleRequired
+                    default: break
+                    }
+                }
                 // Typing on a cell starts editing it, with what's typed in place of what was there.
                 guard !isEditing, modifiers.isSubset(of: .shift), let text = event.characters, Self.isPrintable(text) else { return nil }
                 return .edit(replacingWith: text)

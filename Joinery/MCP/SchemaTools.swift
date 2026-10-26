@@ -19,7 +19,9 @@ enum SchemaTools {
             "name": ["type": "string"],
             "type": ["type": "string", "description": "uuid, integer, bigint, numeric, text, varchar, boolean, date, timestamp, json or bytea; SQL spellings and aliases such as int, serial, decimal(10,2), varchar(255), jsonb also work. Defaults to text."],
             "primary_key": ["type": "boolean"],
-            "nullable": ["type": "boolean"],
+            "nullable": ["type": "boolean", "description": "Columns are required (NOT NULL) unless nullable. A type ending in ? is nullable too."],
+            "required": ["type": "boolean", "description": "The opposite of nullable."],
+            "unique": ["type": "boolean"],
             "references": ["type": "string", "description": "Makes this a foreign key: \"table.column\", or just \"table\" for its primary key."],
         ],
         "required": ["name"],
@@ -30,7 +32,7 @@ enum SchemaTools {
     static let definitions: [[String: Any]] = [
         [
             "name": "get_schema",
-            "description": "The open schema: every table with its columns (type, primary key, nullable) and the foreign keys between them. Read this before changing anything.",
+            "description": "The open schema: every table with its columns (type, primary key, nullable, unique) and the foreign keys between them. Columns not marked nullable are required. Read this before changing anything.",
             "inputSchema": ["type": "object", "properties": [String: Any]()],
             "annotations": ["readOnlyHint": true],
         ],
@@ -77,6 +79,8 @@ enum SchemaTools {
                                 "type": ["type": "string"],
                                 "primary_key": ["type": "boolean"],
                                 "nullable": ["type": "boolean"],
+                                "required": ["type": "boolean"],
+                                "unique": ["type": "boolean"],
                                 "references": ["type": "string"],
                             ],
                             "required": ["name"],
@@ -160,6 +164,7 @@ enum SchemaTools {
                     var description: [String: Any] = ["name": column.name, "type": column.type.rawValue]
                     if column.isPrimaryKey { description["primary_key"] = true }
                     if column.isNullable { description["nullable"] = true }
+                    if column.isUnique { description["unique"] = true }
                     if let reference = references[column.id] { description["references"] = reference }
                     return description
                 },
@@ -227,7 +232,8 @@ enum SchemaTools {
                 if parsed.isNullable { schema.tables[index].columns[row].isNullable = true }
             }
             if let isPrimaryKey = spec["primary_key"] as? Bool { schema.tables[index].columns[row].isPrimaryKey = isPrimaryKey }
-            if let isNullable = spec["nullable"] as? Bool { schema.tables[index].columns[row].isNullable = isNullable }
+            if let isNullable = nullability(spec) { schema.tables[index].columns[row].isNullable = isNullable }
+            if let isUnique = spec["unique"] as? Bool { schema.tables[index].columns[row].isUnique = isUnique }
             if let reference = spec["references"] as? String {
                 schema.removeRelationships { $0.from == columnID }
                 if !reference.isEmpty { schema.connect(columnID, to: try column(named: reference, in: schema)) }
@@ -263,8 +269,13 @@ enum SchemaTools {
         let parsed = try dataType(spec["type"] as? String ?? "text")
         let column = Column(name: try string("name", in: spec), type: parsed.type,
                             isPrimaryKey: spec["primary_key"] as? Bool ?? false,
-                            isNullable: spec["nullable"] as? Bool ?? parsed.isNullable)
+                            isNullable: nullability(spec) ?? parsed.isNullable, isUnique: spec["unique"] as? Bool ?? false)
         return (column, (spec["references"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+    }
+
+    /// From `nullable`, or `required`, its opposite.
+    private static func nullability(_ spec: [String: Any]) -> Bool? {
+        spec["nullable"] as? Bool ?? (spec["required"] as? Bool).map { !$0 }
     }
 
     /// A type as SQL might spell it: "VARCHAR(255)", "decimal(10, 2)", "timestamp with time zone", "int?".

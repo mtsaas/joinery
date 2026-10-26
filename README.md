@@ -26,6 +26,7 @@ Schemas live in a library shown in the sidebar. Each schema is a plain `.joinery
 | Move between cells | Arrow keys; Tab / Shift-Tab along the row; Return goes down, and past the last row adds a column; Delete clears a cell |
 | Set a type | Type it or its start: `int`, `ts`, `bool`, `jsonb`, and the rest shows faded; end with `?` for nullable |
 | Primary key / columns | Space (or ⇧⌘K) toggles the key; ⌘↩ inserts a column below, ⌘⌫ deletes one |
+| Required / unique | Columns are required (NOT NULL) unless their type ends in `?`; ⇧⌘R toggles it. ⇧⌘U makes a column unique, shown as UQ after its name. Right-clicking a column row also offers both, with the primary key, rename, type, insert and delete |
 | Finish editing | Escape cancels a cell's edit; Escape again leaves the grid |
 | Add a foreign key | Drag from a socket onto another column; if one end is a primary key, it's the one referenced |
 | Add a column for a key | Drag from a socket onto a table's header: it gets a column named for yours (`users.id` gives `user_id`), of its type, referencing it |
@@ -60,7 +61,7 @@ Other assistants can use the same URL. Those that only run local commands can br
 | `alter_table` | Renames, recolors, adds, drops or changes columns |
 | `drop_tables`, `add_foreign_key`, `remove_foreign_key` | What they say |
 
-Types accept SQL spellings, such as `varchar(255)`, `decimal(10,2)`, `bigserial` and `timestamp with time zone`. Each call applies completely or not at all.
+Columns take `primary_key`, `nullable` (or `required`), `unique` and `references`. Types accept SQL spellings, such as `varchar(255)`, `decimal(10,2)`, `bigserial` and `timestamp with time zone`. Each call applies completely or not at all.
 
 ## Frame rate (Debug builds)
 

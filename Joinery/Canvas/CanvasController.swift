@@ -33,7 +33,7 @@ final class CanvasController {
         case clear
         /// Toggles a key cell's primary key; elsewhere, starts typing with a space.
         case space
-        case insertColumn, deleteColumn, toggleKey
+        case insertColumn, deleteColumn, toggleKey, toggleUnique, toggleRequired
         /// Off the grid, leaving the table selected.
         case leave
     }
@@ -89,7 +89,7 @@ final class CanvasController {
 
     /// The right-click command wheel, while it's open.
     struct Wheel {
-        enum Target { case canvas, table(Table.ID), tie(ZipTie.ID), wire(WireSimulation.Hit) }
+        enum Target { case canvas, table(Table.ID), column(Column.ID, in: Table.ID), tie(ZipTie.ID), wire(WireSimulation.Hit) }
         /// In view points.
         var center: CGPoint
         /// What was right-clicked, and where, in canvas points.

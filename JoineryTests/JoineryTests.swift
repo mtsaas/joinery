@@ -374,4 +374,18 @@ struct JoineryTests {
                                  on: &schema)
         #expect(schema.relationships.isEmpty, "an empty reference drops the foreign key")
     }
+
+    @Test func columnsReadFromOlderFilesAreNotUnique() throws {
+        let json = #"{"id": "6A2D0F0E-3B8B-4C47-9E5A-1F2E3D4C5B6A", "name": "email", "type": "text"}"#
+        let column = try JSONDecoder().decode(Column.self, from: Data(json.utf8))
+        #expect(!column.isUnique && !column.isNullable && !column.isPrimaryKey)
+
+        var schema = Schema()
+        _ = try SchemaTools.call("create_tables", ["tables": [
+            ["name": "users", "columns": [["name": "email", "type": "text", "unique": true, "required": false]]],
+        ]], on: &schema)
+        let email = schema.tables[0].columns[0]
+        #expect(email.isUnique && email.isNullable)
+        #expect(try SchemaTools.describe(schema).contains("\"unique\" : true"))
+    }
 }
