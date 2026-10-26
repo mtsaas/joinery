@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The open model's earlier versions, in a sidebar, by day: step through them with the arrow keys and each shows on the
+/// The open model's earlier versions, in a popover, by day: step through them with the arrow keys and each shows on the
 /// canvas, read-only, until one is restored or "Now" is chosen again.
 struct VersionHistory: View {
     let open: OpenModel

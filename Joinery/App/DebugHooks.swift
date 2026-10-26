@@ -44,15 +44,28 @@ enum DebugHooks {
     }
 
     /// CGWindowListCreateImage is obsoleted in the SDK, but an app may still capture its own windows without Screen
-    /// Recording permission, so it's looked up at run time.
+    /// Recording permission, so it's looked up at run time. The biggest window, with any of the app's others over it
+    /// (popovers, menus) drawn where they are.
     private static func capture(to path: String) {
         typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
-        guard let window = NSApp.windows.filter(\.isVisible).max(by: { $0.frame.width < $1.frame.width }),
-              let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage"),
-              let image = unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0)?
-                .takeRetainedValue()
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return print("snapshot failed") }
+        let image = { (window: NSWindow) in
+            unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0)?.takeRetainedValue()
+        }
+        let windows = NSApp.windows.filter(\.isVisible).sorted { $0.orderedIndex > $1.orderedIndex }
+        guard let main = windows.max(by: { $0.frame.width < $1.frame.width }), let base = image(main),
+              let context = CGContext(data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
         else { return print("snapshot failed") }
-        try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        let scale = CGFloat(base.width) / main.frame.width
+        context.draw(base, in: CGRect(x: 0, y: 0, width: base.width, height: base.height))
+        for window in windows where window !== main && window.frame.intersects(main.frame) {
+            guard let over = image(window) else { continue }
+            context.draw(over, in: CGRect(x: (window.frame.minX - main.frame.minX) * scale, y: (window.frame.minY - main.frame.minY) * scale,
+                                          width: window.frame.width * scale, height: window.frame.height * scale))
+        }
+        guard let composite = context.makeImage() else { return print("snapshot failed") }
+        try? NSBitmapImageRep(cgImage: composite).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
     }
 
     @MainActor

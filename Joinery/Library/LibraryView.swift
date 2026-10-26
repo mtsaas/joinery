@@ -78,6 +78,10 @@ struct ModelEditor: View {
                 ToolbarItem(placement: .navigation) {
                     Toggle("Version History", systemImage: "clock.arrow.circlepath", isOn: $showsHistory)
                         .help("Earlier versions of this data model: step through them with the arrow keys, and restore one")
+                        .popover(isPresented: $showsHistory, arrowEdge: .bottom) {
+                            VersionHistory(open: open, preview: $preview)
+                                .frame(width: 340, height: 520)
+                        }
                 }
                 ToolbarItemGroup(placement: .principal) {
                     Button("Table", systemImage: "tablecells") { canvas.addTable(to: &model.wrappedValue) }
@@ -106,10 +110,6 @@ struct ModelEditor: View {
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             .navigationTitle(open.name)
-            .inspector(isPresented: $showsHistory) {
-                VersionHistory(open: open, preview: $preview)
-                    .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
-            }
             .overlay(alignment: .top) {
                 if let preview {
                     HStack(spacing: 8) {
