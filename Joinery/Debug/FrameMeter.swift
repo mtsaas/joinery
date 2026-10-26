@@ -2,23 +2,33 @@
 import SwiftUI
 
 /// Counts the wire layer's frames and times the work behind them, for the readout in the canvas's corner.
-@MainActor
+@MainActor @Observable
 final class FrameMeter {
     static let shared = FrameMeter()
 
+    /// What the readout shows. Refreshed a few times a second while frames are drawn and once after they stop, never
+    /// on a timer: each refresh lays the window out again, which while idle would be all the app was doing.
+    private(set) var summary = "idle"
+
     /// When each frame in the last second was drawn.
-    private var frames: [TimeInterval] = []
-    /// Milliseconds the last routing and the last wire drawing took.
-    private(set) var routing = 0.0, drawing = 0.0
+    @ObservationIgnored private var frames: [TimeInterval] = []
+    /// Milliseconds the routing for the frame being drawn took, and the last routing and wire drawing.
+    @ObservationIgnored private var routing = 0.0
+    @ObservationIgnored private var lastRouting = 0.0
+    @ObservationIgnored private var drawing = 0.0
     /// Every frame's total, for `report`.
-    private var totals: [Double] = []
+    @ObservationIgnored private var totals: [Double] = []
+    @ObservationIgnored private var isRefreshing = false
 
     var fps: Int {
         let now = ProcessInfo.processInfo.systemUptime
         return frames.count { now - $0 <= 1 }
     }
 
-    func routed(in milliseconds: Double) { routing = milliseconds }
+    func routed(in milliseconds: Double) {
+        routing = milliseconds
+        lastRouting = milliseconds
+    }
 
     func drew(in milliseconds: Double) {
         let now = ProcessInfo.processInfo.systemUptime
@@ -27,6 +37,19 @@ final class FrameMeter {
         drawing = milliseconds
         totals.append(routing + drawing)
         routing = 0
+        refreshSoon()
+    }
+
+    private func refreshSoon() {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        Task {
+            try? await Task.sleep(for: .seconds(0.25))
+            isRefreshing = false
+            summary = String(format: "%3d fps   route %.1f ms   draw %.1f ms", fps, lastRouting, drawing)
+            // Until the count has fallen to nothing.
+            if fps > 0 { refreshSoon() }
+        }
     }
 
     /// Frames and work since the last report, for scripted checks.
@@ -48,16 +71,13 @@ final class FrameMeter {
 /// Frames per second while anything moves, and what each frame cost: routing the wires and drawing them.
 struct FrameReadout: View {
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-            let meter = FrameMeter.shared
-            Text(String(format: "%3d fps   route %.1f ms   draw %.1f ms", meter.fps, meter.routing, meter.drawing))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(.thinMaterial, in: .capsule)
-                .allowsHitTesting(false)
-        }
+        Text(FrameMeter.shared.summary)
+            .font(.system(size: 11, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.thinMaterial, in: .capsule)
+            .allowsHitTesting(false)
     }
 }
 #endif
