@@ -255,7 +255,7 @@ final class MCPServer {
             }
             var model = open.model
             let result = try ModelTools.call(name, arguments, on: &model)
-            open.change(to: model)
+            open.change(to: model, byAssistant: true)
             return result
         }
     }

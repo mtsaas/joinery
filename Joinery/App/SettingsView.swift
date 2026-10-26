@@ -25,7 +25,8 @@ private struct AIAssistantSettings: View {
                 Text("""
                     While Joinery is open, it runs an MCP server. An assistant connected to it can read the data model \
                     open in the window and make changes, which appear as they're made, save themselves and undo \
-                    with ⌘Z. Only apps on this Mac can reach it.
+                    with ⌘Z. Before an assistant's first change in a while, Joinery keeps a version to go back to \
+                    (the clock button above the canvas). Only apps on this Mac can reach it.
                     """)
                     .foregroundStyle(.secondary)
             }

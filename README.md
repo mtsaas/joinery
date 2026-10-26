@@ -6,12 +6,13 @@ Requires macOS 26 and Xcode 26 or later. Open `Joinery.xcodeproj` and press ⌘R
 
 ## Library
 
-Data models live in a library you browse as in Freeform. The sidebar has All Data Models, Recents (opened or changed in the last month), Favorites, and your collections. The main area shows the chosen group's data models as a grid of live previews, or as a list with table counts. Search matches data model and table names. Each data model is a plain `.joinery` file (readable JSON) in the app's own storage, and each collection is a folder. File ▸ Show Library in Finder shows where they are.
+Data models live in a library you browse as in Freeform. The sidebar has All Data Models, Recents (opened or changed in the last month), Favorites, and your collections. The main area shows the chosen group's data models as a grid of live previews, or as a list with table counts. Search matches data model and table names. Each data model is a `.joinery` package in the app's own storage: a folder Finder shows as one file, holding the model as readable JSON (`model.json`) and its version history (`Versions/`). Each collection is a folder. Older single-file `.joinery` models still open, and become packages the first time they're opened. File ▸ Show Library in Finder shows where they are.
 
 - **Open:** double-click a data model, or click it and press Return. It fills the window. ⌘↑ or the back button returns to the library.
 - **New:** ⌘N or the toolbar's compose button makes a data model, in the collection being shown, and opens it. ⇧⌘N or the folder button makes a collection, which you can name straight away.
 - **Rename, duplicate, favorite, move, delete:** right-click a data model or collection. You can also drag data models onto a collection in the sidebar. Delete moves the clicked data model to the Trash, from where it can be put back. Favorites and when a data model was last opened are kept on the file itself, so they follow it through renames and moves.
 - **Saving and undo:** changes save themselves, half a second after you stop and whenever you switch data models. Undo (⌘Z) covers the open data model.
+- **Version history:** the clock button opens a sidebar of earlier versions, by day. Arrow through them and each shows on the canvas, read-only; Restore This Version brings one back (undoably). Versions aren't kept for every change. They're kept when you open a data model (so each day's work is there to go back to), before an AI assistant's first change in a while, before deleting tables or rearranging many (layouts, untangling), and hourly while editing. Everything from the last two days is kept, then one a day for a month, then one a week. They live in the `.joinery` package, so they go wherever the file goes.
 - **Opening and importing:** double-clicking a `.joinery` file in Finder, or File ▸ Import Data Model… (⌘O), copies it into the library and opens it.
 - **Examples:** a new library starts with an Examples collection containing Chinook, Northwind, Sakila, the Stack Overflow data dump, and Storefront. File ▸ Add Examples puts back any you've deleted. `scripts/make_examples.py` generates them.
 
@@ -50,7 +51,7 @@ ties and bend points square to them.
 
 ## AI assistants (MCP)
 
-While Joinery is open it runs an MCP server at `http://127.0.0.1:8723/mcp`, reachable only from this Mac. An assistant connected to it can read and edit the data model open in the window. Changes show up as they're made, save themselves, and undo with ⌘Z.
+While Joinery is open it runs an MCP server at `http://127.0.0.1:8723/mcp`, reachable only from this Mac. An assistant connected to it can read and edit the data model open in the window. Changes show up as they're made, save themselves, and undo with ⌘Z. Before an assistant's first change in a while, a version is kept to go back to (see Version history).
 
 Joinery ▸ Settings (⌘,) ▸ AI Assistants shows whether the server is running, has copyable setup for each kind of assistant, and can turn the server off. "Connect an AI Assistant" in the ⌘K palette opens it. To connect Claude Code, run:
 

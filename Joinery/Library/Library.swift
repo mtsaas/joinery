@@ -87,8 +87,10 @@ final class Library {
         func contents(of folder: URL) -> [URL] {
             let items = (try? files.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.isDirectoryKey],
                                                         options: .skipsHiddenFiles)) ?? []
+            // A model is spelled as a file, package or not, so it's the same URL either way.
             return items.map { item in
-                folder.appending(path: item.lastPathComponent, directoryHint: item.hasDirectoryPath ? .isDirectory : .notDirectory)
+                let isCollection = item.hasDirectoryPath && item.pathExtension != "joinery"
+                return folder.appending(path: item.lastPathComponent, directoryHint: isCollection ? .isDirectory : .notDirectory)
             }
         }
         let top = contents(of: root)
@@ -175,7 +177,7 @@ final class Library {
             open?.saveNow()
             let copy = unique(Self.name(of: url) + " copy", extension: "joinery", in: url.deletingLastPathComponent())
             try files.copyItem(at: url, to: copy)
-            // A copy starts out ordinary, whatever the original was.
+            // A copy starts out ordinary, whatever the original was, though with its history.
             copy.setExtendedAttribute(Self.favoriteAttribute, to: nil)
             reload()
             selection = copy
@@ -283,16 +285,49 @@ final class OpenModel {
     /// The window's, set by the editor, for registering changes.
     @ObservationIgnored weak var undoManager: UndoManager?
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
+    let history: History
+    /// When an AI assistant last changed it, to save a version before the first of each spell of changes.
+    @ObservationIgnored private var lastAssistantChange: Date?
 
     init(url: URL) throws {
         self.url = url
+        history = History(of: url)
         model = try DataModel(contentsOf: url)
+        // A file from before packages becomes one, to keep versions in.
+        if !url.isPackage { try model.write(to: url) }
+        saveVersion("Opened")
     }
 
     var name: String { Library.name(of: url) }
 
-    func change(to new: DataModel) {
+    /// Saves the model as it is now as a version, to go back to. Failing to is no reason to stop the change coming.
+    func saveVersion(_ reason: String) {
+        try? history.save(model, reason: reason)
+    }
+
+    /// Changes it to `new`, undoably, first saving a version if it's an assistant's first change in a while or one
+    /// likely to be regretted: deleting tables, or rearranging many (a layout, untangling, aligning lots: moved by
+    /// different amounts, unlike dragging a few together). And hourly while editing, so a long session has some.
+    func change(to new: DataModel, byAssistant: Bool = false) {
         guard new != model else { return }
+        if byAssistant {
+            if lastAssistantChange.map({ Date.now.timeIntervalSince($0) > 10 * 60 }) ?? true { saveVersion("Before AI assistant changes") }
+            lastAssistantChange = .now
+        }
+        let kept = Set(new.tables.map(\.id))
+        let deleted = model.tables.filter { !kept.contains($0.id) }.map(\.name)
+        let positions = Dictionary(uniqueKeysWithValues: new.tables.map { ($0.id, $0.position) })
+        // Moved by how much, each way: dragging tables together moves them all alike.
+        let moves = Set(model.tables.compactMap { table in
+            positions[table.id].flatMap { $0 == table.position ? nil : [$0.x - table.position.x, $0.y - table.position.y] }
+        })
+        if !deleted.isEmpty {
+            saveVersion("Before deleting " + (deleted.count == 1 ? deleted[0] : "\(deleted.count) tables"))
+        } else if moves.count >= 4 {
+            saveVersion("Before rearranging tables")
+        } else if history.versions.first.map({ Date.now.timeIntervalSince($0.date) > 3600 }) ?? true {
+            saveVersion("While editing")
+        }
         let old = model
         model = new
         undoManager?.registerUndo(withTarget: self) { target in
@@ -303,6 +338,13 @@ final class OpenModel {
             try? await Task.sleep(for: .milliseconds(500))
             if !Task.isCancelled { saveNow() }
         }
+    }
+
+    /// Goes back to `version`, undoably, saving how it is now as a version first.
+    func restore(_ version: History.Version) throws {
+        let earlier = try DataModel(contentsOf: version.url)
+        saveVersion("Before restoring an earlier version")
+        change(to: earlier)
     }
 
     /// Writes it out now, unless the file has gone (moved or trashed), so a late save can't bring it back.

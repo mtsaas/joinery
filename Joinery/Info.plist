@@ -11,6 +11,8 @@
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
 			<string>Owner</string>
+			<key>LSTypeIsPackage</key>
+			<true/>
 			<key>LSItemContentTypes</key>
 			<array>
 				<string>com.clarkmccauley.joinery.schema</string>
@@ -26,7 +28,8 @@
 			<string>Joinery Data Model</string>
 			<key>UTTypeConformsTo</key>
 			<array>
-				<string>public.json</string>
+				<string>com.apple.package</string>
+				<string>public.composite-content</string>
 			</array>
 			<key>UTTypeTagSpecification</key>
 			<dict>

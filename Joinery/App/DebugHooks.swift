@@ -186,6 +186,11 @@ enum DebugHooks {
             case "library":
                 let library = Library.shared
                 print("library open: \(library.open?.name ?? "none"), recents: \(library.recents.map(Library.name(of:)).prefix(3))")
+            case "history":
+                // Version history open, with the version at an index selected ("history" alone: "Now").
+                NotificationCenter.default.post(name: .pickVersion, object: numbers.first.map { Int($0) })
+                try? await Task.sleep(for: .seconds(0.5))
+                NotificationCenter.default.post(name: .pickVersion, object: numbers.first.map { Int($0) })
             case "settings":
                 // Settings, alone on screen, for a snapshot to show.
                 NotificationCenter.default.post(name: .openSettings, object: canvas)

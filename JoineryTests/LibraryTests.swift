@@ -102,4 +102,52 @@ struct LibraryTests {
         #expect(copy != renamed)
         #expect(library.details[copy]?.isFavorite == false)
     }
+
+    @Test func versionsThinOutAsTheyAge() throws {
+        let calendar = Calendar.current
+        let day = { (offset: Int, hour: Int) in
+            calendar.date(byAdding: .day, value: offset, to: calendar.date(from: DateComponents(year: 2026, month: 10, day: 21, hour: hour))!)!
+        }
+        let now = day(0, 12)
+        // Newest first: kept are the last two days' and the earliest of each older day, then of each older week.
+        let dates = [now, day(0, 11), day(-3, 12), day(-3, 10), day(-40, 12), day(-40, 10)]
+        #expect(History.kept(dates, now: now) == [0, 1, 3, 5])
+    }
+
+    @Test func versionsAreKeptBeforeChangesLikelyToBeRegretted() throws {
+        let library = freshLibrary()
+        let examples = try #require(library.collections.first { $0.name == Library.examplesName })
+        library.selection = examples.models.first { Library.name(of: $0) == "Storefront" }
+        let open = try #require(library.open)
+        let reasons = { open.history.versions.map(\.reason) }
+        #expect(reasons() == ["Opened"])
+
+        var model = open.model
+        model.tables[0].position.x += 10
+        open.change(to: model)
+        for index in model.tables.indices { model.tables[index].position.x += 50 }
+        open.change(to: model)
+        #expect(reasons() == ["Opened"], "small edits and dragging tables together keep none")
+
+        for index in model.tables.indices { model.tables[index].position.x += CGFloat(index) * 100 + 10 }
+        open.change(to: model)
+        let deleted = model.tables.removeLast().name
+        model.repair()
+        open.change(to: model)
+        for name in ["a", "b"] {
+            model.tables[0].name = name
+            open.change(to: model, byAssistant: true)
+        }
+        #expect(reasons() == ["Before AI assistant changes", "Before deleting \(deleted)", "Before rearranging tables", "Opened"])
+
+        let opened = try #require(open.history.versions.last)
+        try open.restore(opened)
+        #expect(open.model == (try DataModel(contentsOf: opened.url)))
+        #expect(reasons().first?.hasPrefix("Before restoring") == true)
+
+        // Kept in the package, so they go where it goes: copied, the copy has them.
+        let versions = open.history.versions.map(\.url.lastPathComponent)
+        library.duplicate(try #require(library.selection))
+        #expect(library.open?.history.versions.dropFirst().map(\.url.lastPathComponent) == versions, "and one for opening it")
+    }
 }

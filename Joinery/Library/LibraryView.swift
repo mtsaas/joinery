@@ -55,10 +55,14 @@ struct ModelEditor: View {
     /// Back to the library.
     let close: () -> Void
     @State private var canvas = CanvasController()
+    @State private var showsHistory = false
+    /// An earlier version shown instead of the model, read-only, from the version history.
+    @State private var preview: VersionHistory.Preview?
     @Environment(\.undoManager) private var undoManager
 
     var body: some View {
-        let model = Binding { canvas.shown(open.model) } set: { open.change(to: $0) }
+        // Showing an earlier version, it can't be changed: it's only there to look at.
+        let model = Binding { preview?.model ?? canvas.shown(open.model) } set: { if preview == nil { open.change(to: $0) } }
         CanvasView(model: model, canvas: canvas)
             // Under the toolbar, which floats over it, but not the sidebar, so fitting the model fits what's visible.
             .ignoresSafeArea(edges: .top)
@@ -70,6 +74,10 @@ struct ModelEditor: View {
                 }
                 ToolbarItem(placement: .navigation) {
                     ZoomMenu(canvas: canvas, bounds: open.model.bounds)
+                }
+                ToolbarItem(placement: .navigation) {
+                    Toggle("Version History", systemImage: "clock.arrow.circlepath", isOn: $showsHistory)
+                        .help("Earlier versions of this data model: step through them with the arrow keys, and restore one")
                 }
                 ToolbarItemGroup(placement: .principal) {
                     Button("Table", systemImage: "tablecells") { canvas.addTable(to: &model.wrappedValue) }
@@ -98,12 +106,30 @@ struct ModelEditor: View {
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             .navigationTitle(open.name)
+            .inspector(isPresented: $showsHistory) {
+                VersionHistory(open: open, preview: $preview)
+                    .inspectorColumnWidth(min: 240, ideal: 300, max: 420)
+            }
+            .overlay(alignment: .top) {
+                if let preview {
+                    HStack(spacing: 8) {
+                        Image(systemName: "clock.arrow.circlepath")
+                        Text("\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened)), read-only")
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .glassEffect()
+                    .padding(.top, 64)
+                }
+            }
             .onAppear { open.undoManager = undoManager }
             .onChange(of: undoManager) { open.undoManager = undoManager }
             .focusedSceneValue(\.canvasController, canvas)
             .focusedSceneValue(\.model, model)
             #if DEBUG
             .task { await DebugHooks.script(model, canvas: canvas) }
+            .onReceive(NotificationCenter.default.publisher(for: .pickVersion)) { _ in showsHistory = true }
             #endif
     }
 }
