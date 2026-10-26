@@ -5,7 +5,8 @@ import SwiftUI
 /// Pointer: drag empty canvas to select a group, Shift-click to add to it, and drag any selected item to move them all.
 /// Scroll or hold Space and drag to pan; pinch or ⌘-scroll to zoom. Click a wire to select it; double-click to add a
 /// bend point it runs through. Drag from a socket onto another column to add a foreign key, or onto a table to give it
-/// a column for one. Right-drag (or Option-drag) across wires to zip-tie them. Double-click a cell to edit it.
+/// a column for one. With the zip-tie tool (Z) or Option, drag across wires to zip-tie them. Right-drag pans; a
+/// right-click opens the command wheel. Double-click a cell to edit it.
 ///
 /// Keyboard: T adds a table, Return edits the selected one, arrows nudge, Delete removes, ⌘A selects everything. While
 /// editing, Tab and Shift-Tab step through cells, Return adds a column, Escape finishes.
@@ -105,11 +106,18 @@ struct CanvasView: View {
         .animation(.smooth(duration: 0.2), value: canvas.cell != nil)
         .animation(.smooth(duration: 0.15), value: canvas.showsPalette)
         .onChange(of: canvas.showsPalette) { if !canvas.showsPalette { isCanvasFocused = true } }
+        // Opening a schema puts the keys straight to work on it: T, Z and the rest, without a click first.
+        .onAppear { isCanvasFocused = true }
         .focusable()
         .focused($isCanvasFocused)
         .focusEffectDisabled()
         // Key presses reach these even while a cell has focus, so each checks that none does. (`isCanvasFocused` won't
         // do: it's true while anything inside the canvas has focus, cells included.)
+        .onKeyPress("z") {
+            guard isCanvasKeyTarget else { return .ignored }
+            canvas.isTying.toggle()
+            return .handled
+        }
         .onKeyPress("t") {
             guard isCanvasKeyTarget else { return .ignored }
             canvas.addTable(to: &schema)
@@ -133,6 +141,7 @@ struct CanvasView: View {
             #if DEBUG
             if canvas.feedback != nil { return canvas.feedback = nil }
             #endif
+            if canvas.isTying { return canvas.isTying = false }
             canvas.selection = []
         }
         .onChange(of: canvas.cellCommand) { _, command in
@@ -221,6 +230,8 @@ struct CanvasView: View {
             })
         }
         commands += [
+            PaletteCommand(id: "tie", title: "Zip Tie Tool", subtitle: canvas.isTying ? "On" : "Off",
+                           symbol: "arrow.triangle.merge", shortcut: "Z") { canvas.isTying.toggle() },
             PaletteCommand(id: "avoid", title: "Wires Avoid Tables", subtitle: wiresAvoidTables ? "On" : "Off",
                            symbol: "point.topleft.down.to.point.bottomright.curvepath") { wiresAvoidTables.toggle() },
             PaletteCommand(id: "mcp", title: "Connect an AI Assistant", subtitle: "Settings", symbol: "sparkles") {
@@ -512,7 +523,7 @@ struct CanvasView: View {
                 if case .active(let location) = phase { socket = self.socket(at: canvas.canvasPoint(location))?.socket }
                 if socket != hoveredSocket { hoveredSocket = socket }
             }
-            .pointerStyle(hoveredSocket == nil ? nil : .link)
+            .pointerStyle(canvas.isTying ? .rectSelection : hoveredSocket == nil ? nil : .link)
             .help(hoveredSocket == nil ? "" : "Drag to another column to add a foreign key")
     }
 
@@ -554,7 +565,8 @@ struct CanvasView: View {
     private var surfaceGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .canvas)
             .onChanged { value in
-                let press = self.press ?? self.press(at: canvas.canvasPoint(value.startLocation))
+                // With the zip-tie tool, every drag ties, wherever it starts.
+                let press = self.press ?? (canvas.isTying ? .background : self.press(at: canvas.canvasPoint(value.startLocation)))
                 if self.press == nil { self.press = press }
                 switch press {
                 case .socket(let column, let socket):
@@ -888,15 +900,15 @@ struct CanvasView: View {
         }
     }
 
-    /// With Option, draws a line to tie wires (as a right-drag does, through the event monitor); otherwise drags out a
-    /// selection rectangle. Only once it's gone a few points, so a click stays a click. In view points.
+    /// With the zip-tie tool or Option, draws a line to tie the wires it crosses; otherwise drags out a selection
+    /// rectangle. Only once it's gone a few points, so a click stays a click. In view points.
     private func dragBackground(from startLocation: CGPoint, to location: CGPoint) {
         guard canvas.backgroundDrag != nil || startLocation.distance(to: location) >= 3 else { return }
         let start = canvas.canvasPoint(startLocation), now = canvas.canvasPoint(location)
         if canvas.backgroundDrag == nil {
             isCanvasFocused = true
             let flags = NSEvent.modifierFlags
-            if flags.contains(.option) {
+            if canvas.isTying || flags.contains(.option) {
                 canvas.backgroundDrag = .stroke
             } else {
                 canvas.backgroundDrag = .marquee(base: flags.contains(.shift) ? canvas.selection : [])

@@ -172,6 +172,9 @@ enum DebugHooks {
                     window.orderOut(nil)
                 }
                 print("windows:", NSApp.windows.filter(\.isVisible).map { "\($0.identifier?.rawValue ?? "?") \($0.title)" })
+            case "view":
+                print(String(format: "view offset %.0f, %.0f zoom %.2f, tying %@", canvas.offset.x, canvas.offset.y, canvas.zoom,
+                             canvas.isTying ? "on" : "off"))
             case "routings":
                 print("routings built: \(Routing.built)")
             case "clock":
@@ -223,21 +226,22 @@ enum DebugHooks {
                 let start = CGPoint(x: numbers[0], y: numbers[1])
                 let end = numbers.count == 4 ? CGPoint(x: numbers[2], y: numbers[3]) : start
                 guard let window = NSApp.windows.first(where: \.isVisible), let height = window.contentView?.bounds.height else { break }
-                func post(_ type: NSEvent.EventType, _ point: CGPoint) {
-                    let view = canvas.viewPoint(point)
+                // Where on screen they are now: a pan along the way mustn't carry the pointer with it.
+                let startView = canvas.viewPoint(start), endView = canvas.viewPoint(end)
+                func post(_ type: NSEvent.EventType, _ view: CGPoint) {
                     if let event = NSEvent.mouseEvent(with: type, location: CGPoint(x: view.x, y: height - view.y), modifierFlags: [],
                                                       timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
                                                       context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
                         NSApp.postEvent(event, atStart: false)
                     }
                 }
-                post(.rightMouseDown, start)
+                post(.rightMouseDown, startView)
                 for step in 1...20 where start != end {
                     try? await Task.sleep(for: .seconds(0.02))
-                    post(.rightMouseDragged, start + (end - start) * (CGFloat(step) / 20))
+                    post(.rightMouseDragged, startView + (endView - startView) * (CGFloat(step) / 20))
                 }
                 try? await Task.sleep(for: .seconds(0.05))
-                post(.rightMouseUp, end)
+                post(.rightMouseUp, endView)
             case "feedback-on":
                 canvas.isFeedbackMode = true
             case "handle" where numbers.count == 3:

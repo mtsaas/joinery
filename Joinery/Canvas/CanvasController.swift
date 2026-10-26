@@ -115,6 +115,8 @@ final class CanvasController {
     var hoveredTie: ZipTie.ID?
     var connection: Connection?
     var stroke: Stroke?
+    /// The zip-tie tool: while it's on, every drag on the canvas draws a line that ties the wires it crosses.
+    var isTying = false
     /// Set when the right-drag drawing `stroke` ends, for the view to tie the wires it crossed.
     var isStrokeFinished = false
     /// The selection rectangle being dragged out, in canvas points.

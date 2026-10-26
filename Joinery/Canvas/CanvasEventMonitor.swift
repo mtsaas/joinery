@@ -4,8 +4,8 @@ import SwiftUI
 /// Input SwiftUI has no gesture or key handler for, watched in the window over the canvas's frame:
 /// - Two-finger scrolling or the mouse wheel pans; pinching or ⌘-scrolling zooms, around the pointer.
 /// - Holding Space turns dragging anywhere into panning.
-/// - Right-dragging from empty canvas or a wire draws a line that zip-ties the wires it crosses; a right-click without
-///   dragging opens the command wheel there instead of a context menu. Escape closes it.
+/// - Right-dragging pans; a right-click without dragging opens the command wheel there instead of a context menu.
+///   Escape closes it.
 /// - In the command palette, the arrow keys move through the matches and Escape closes it.
 /// - On a table's grid, the spreadsheet keys: arrows, Tab and Return move the cursor; typing, F2, Delete and Space
 ///   edit; Escape cancels, then leaves. While a cell is being edited these are caught before its text field, which
@@ -28,6 +28,8 @@ struct CanvasEventMonitor: NSViewRepresentable {
         private var monitor: Any?
         /// Where a right-button press started, while it might become a drag.
         private var rightClick: NSEvent?
+        /// Where the pointer was at the last step of a right-button pan, or nil if the press hasn't become one.
+        private var panLocation: CGPoint?
 
         override var isFlipped: Bool { true }
 
@@ -140,18 +142,23 @@ struct CanvasEventMonitor: NSViewRepresentable {
                 rightClick = event
             case .rightMouseDragged:
                 guard let down = rightClick else { return false }
-                let start = convert(down.locationInWindow, from: nil), location = convert(event.locationInWindow, from: nil)
-                if canvas.stroke == nil {
+                let location = convert(event.locationInWindow, from: nil)
+                if let previous = panLocation {
+                    canvas.pan(by: location - previous)
+                } else {
+                    // A few points first, so a click with a little wobble is still a click.
+                    let start = convert(down.locationInWindow, from: nil)
                     guard start.distance(to: location) > 3 else { return true }
-                    NSCursor.crosshair.push()
+                    NSCursor.closedHand.push()
+                    canvas.pan(by: location - start)
                 }
-                canvas.stroke = .init(start: canvas.canvasPoint(start), end: canvas.canvasPoint(location))
+                panLocation = location
             case .rightMouseUp:
                 guard let down = rightClick else { return false }
                 rightClick = nil
-                if canvas.stroke != nil {
+                if panLocation != nil {
+                    panLocation = nil
                     NSCursor.pop()
-                    canvas.isStrokeFinished = true
                 } else {
                     canvas.wheelRequest = convert(down.locationInWindow, from: nil)
                 }

@@ -71,9 +71,11 @@ struct SchemaEditor: View {
                 ToolbarItem(placement: .navigation) {
                     ZoomMenu(canvas: canvas, bounds: open.schema.bounds)
                 }
-                ToolbarItem(placement: .principal) {
+                ToolbarItemGroup(placement: .principal) {
                     Button("Table", systemImage: "tablecells") { canvas.addTable(to: &schema.wrappedValue) }
                         .help("Add a table (T)")
+                    Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)
+                        .help("Zip-tie tool: drag across wires to tie them (Z)")
                 }
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)

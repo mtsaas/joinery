@@ -33,11 +33,11 @@ Schemas live in a library you browse as in Freeform. The sidebar has All Schemas
 | Add a column for a key | Drag from a socket onto a table's header: it gets a column named for yours (`users.id` gives `user_id`), of its type, referencing it |
 | Wires avoid tables | View ▸ Wires Avoid Tables, or from the palette: wires bend around tables in their way |
 | Reroute a wire | Double-click it to add a bend point there, then drag the point; double-click a bend point to remove it |
-| Zip-tie wires | Right-drag (or Option-drag) a line across two or more wires, starting off a table |
+| Zip-tie wires | Turn on the zip-tie tool (Z, or the toolbar's tie button), then drag a line across two or more wires; it stays on until you press Z or Escape. Option-drag ties without it |
 | Select | Click tables, wires, ties; Shift-click to add; drag a box around tables, ties and wires to select those wholly inside it; ⌘A for everything |
 | Move | Drag anything selected to move the whole selection; hold Shift to keep it horizontal or vertical. Arrow keys nudge (Shift for 10 points) |
 | Delete | Delete removes the selection, or from the wheel |
-| Pan / zoom | Scroll, or hold Space and drag / pinch, ⌘-scroll, ⌘+ ⌘- ⌘0, Zoom to Fit ⌘1 |
+| Pan / zoom | Scroll, right-drag, or hold Space and drag / pinch, ⌘-scroll, ⌘+ ⌘- ⌘0, Zoom to Fit ⌘1 |
 
 Each wire takes the color of the table it references, and FK cells match it. Wires leave sockets and pass through
 ties and bend points square to them.
