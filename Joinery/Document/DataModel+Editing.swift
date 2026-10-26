@@ -245,6 +245,15 @@ extension DataModel {
         return bend.id
     }
 
+    /// Moves a column to before the one at `insertion` in its table, or last if that's past them all.
+    mutating func moveColumn(_ id: Column.ID, in table: Table.ID, to insertion: Int) {
+        guard let index = tables.firstIndex(where: { $0.id == table }),
+              let from = tables[index].columns.firstIndex(where: { $0.id == id }) else { return }
+        let column = tables[index].columns.remove(at: from)
+        let to = min(max(insertion > from ? insertion - 1 : insertion, 0), tables[index].columns.count)
+        tables[index].columns.insert(column, at: to)
+    }
+
     /// Gives `tables` and `groups` a color, as one change.
     mutating func recolor(tables ids: Set<Table.ID>, groups groupIDs: Set<TableGroup.ID>, _ color: TableColor) {
         for index in tables.indices where ids.contains(tables[index].id) { tables[index].color = color }

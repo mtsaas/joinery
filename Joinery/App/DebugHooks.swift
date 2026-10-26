@@ -236,6 +236,15 @@ enum DebugHooks {
             case "hover" where numbers.count == 2:
                 // The pointer over a canvas point, for what hovering shows there.
                 NotificationCenter.default.post(name: .hover, object: canvas, userInfo: ["point": CGPoint(x: numbers[0], y: numbers[1])])
+            case "column-drag" where words.count == 3 && numbers.count == 1:
+                // A column mid-drag, to go before the one at an index: "column-drag orders.user_id 3".
+                let parts = words[1].split(separator: ".").map(String.init)
+                if let table = document.wrappedValue.tables.first(where: { $0.name == parts.first }),
+                   let column = table.columns.first(where: { $0.name == parts.last }) {
+                    canvas.columnDrag = (table.id, column.id, Int(numbers[0]))
+                }
+            case "header-hover" where table != nil:
+                canvas.hoveredHeader = document.wrappedValue.tables[table!].id
             case "capture" where words.count == 2:
                 // The window now, to a file: for frames of an animation, between short waits.
                 capture(to: words[1])

@@ -798,4 +798,29 @@ struct JoineryTests {
             for (i, a) in frames.enumerated() { for b in frames[(i + 1)...] { #expect(!a.intersects(b), "\(layout): no overlaps") } }
         }
     }
+
+    @Test func columnsMoveWithinTheirTableAndTheirWiresFollow() throws {
+        var model = storefront()
+        let orders = model.tables[1].id
+        let index = try #require(model.tables.firstIndex { $0.id == orders })
+        model.tables[index].columns += [Column(name: "total", type: .numeric), Column(name: "placed_at", type: .timestamp)]
+        let names = { model.tables[index].columns.map(\.name) }
+        #expect(names() == ["id", "user_id", "total", "placed_at"])
+        let userID = model.tables[index].columns[1].id
+
+        // Dropped before the column at 3: down, past total.
+        model.moveColumn(userID, in: orders, to: 3)
+        #expect(names() == ["id", "total", "user_id", "placed_at"])
+        // Up, to the top; and past the end, last.
+        model.moveColumn(userID, in: orders, to: 0)
+        #expect(names() == ["user_id", "id", "total", "placed_at"])
+        model.moveColumn(userID, in: orders, to: 99)
+        #expect(names() == ["id", "total", "placed_at", "user_id"])
+
+        // Its wire leaves from its new row.
+        let wire = try #require(model.relationships.first { $0.from == userID })
+        let start = try #require(Routing(model: model).routes[wire.id]?.points.first)
+        let frame = Metrics.frame(of: model.tables[index])
+        #expect(abs(start.y - (frame.minY + Metrics.headerHeight + 3.5 * Metrics.rowHeight)) < 0.5)
+    }
 }

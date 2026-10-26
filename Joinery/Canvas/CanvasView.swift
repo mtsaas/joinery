@@ -795,9 +795,17 @@ struct CanvasView: View {
                 if socket != hoveredSocket { hoveredSocket = socket }
                 if isOverPort != isHoveringPort { isHoveringPort = isOverPort }
                 if hint?.point != canvas.portHint?.point { canvas.portHint = hint }
+                var header: Table.ID?
+                if case .active(let location) = phase, socket == nil {
+                    let point = canvas.canvasPoint(location)
+                    header = model.tables.last { Metrics.frame(of: $0).contains(point) }
+                        .flatMap { point.y < Metrics.frame(of: $0).minY + Metrics.headerHeight ? $0.id : nil }
+                }
+                if header != canvas.hoveredHeader { canvas.hoveredHeader = header }
             }
             .pointerStyle(canvas.isTying ? .rectSelection : hoveredSocket != nil || isHoveringPortSocket ? .link
-                          : canvas.portDrag != nil ? .grabActive : isHoveringPort ? .grabIdle : nil)
+                          : canvas.portDrag != nil || canvas.dragOffset != nil ? .grabActive
+                          : isHoveringPort || canvas.hoveredHeader != nil ? .grabIdle : nil)
             .help(hoveredSocket != nil ? "Drag to another column to add a foreign key"
                   : isHoveringPortSocket ? "Outside: drag to the column the port stands for. Inside: drag to a column in the group to reference it"
                   : isHoveringPort ? "Drag along the group's edge to move it; double-click to put it back facing its column" : "")
@@ -820,6 +828,8 @@ struct CanvasView: View {
     enum Press {
         /// Drawing a foreign key out of a column's socket.
         case socket(Column, at: CGPoint)
+        /// On a column's row: dragging it to another place in its table, or a click on its cell.
+        case row(Table, column: Column.ID)
         /// On a group's port: sliding it along the group's edge.
         case port(GroupPort.ID)
         /// Drawing a wire out of a port's inside or outside socket.
@@ -842,7 +852,13 @@ struct CanvasView: View {
         // By a group's edge, where the + follows the pointer: worked out here from where the press is, as the hover
         // does, not taken from the hover, which may have ended as the button went down, or never come.
         if let hint = portHint(near: point) { return .newPort(hint.group, side: hint.spot.side, along: hint.spot.along) }
-        if let table = model.tables.last(where: { Metrics.frame(of: $0).contains(point) }) { return .table(table) }
+        if let table = model.tables.last(where: { Metrics.frame(of: $0).contains(point) }) {
+            // A table moves by its header, or anywhere on it when it's one of several things selected; its rows move
+            // its columns.
+            let isOneOfMany = canvas.selection.contains(.table(table.id)) && canvas.selection.count > 1
+            if !isOneOfMany, case .column(let id) = cell(at: point, in: table).row { return .row(table, column: id) }
+            return .table(table)
+        }
         if let group = group(at: point) { return .group(group) }
         return .background
     }
@@ -916,6 +932,7 @@ struct CanvasView: View {
                     self.press = nil
                     canvas.portDrag = nil
                     canvas.connection = nil
+                    canvas.columnDrag = nil
                 }
                 // With the zip-tie tool, every drag ties, wherever it starts.
                 let press = self.press ?? (canvas.isTying ? .background : self.press(at: canvas.canvasPoint(value.startLocation)))
@@ -943,6 +960,10 @@ struct CanvasView: View {
                     canvas.portDrag = (id, spot.side, spot.along)
                 case .table(let table):
                     dragItem(.table(table.id), by: value.translation)
+                case .row(let table, let column):
+                    // A short way first, so a click on a cell stays a click.
+                    guard canvas.columnDrag != nil || CGPoint(value.translation).length >= 3 else { break }
+                    dragColumn(column, in: table, to: canvas.canvasPoint(value.location))
                 case .group(let id):
                     dragItem(.group(id), by: value.translation)
                 case .background:
@@ -978,6 +999,16 @@ struct CanvasView: View {
                 case .table(let table):
                     dropItem(.table(table.id), at: location, translation: translation,
                              click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) }
+                case .row(let table, let column):
+                    if let drag = canvas.columnDrag {
+                        canvas.columnDrag = nil
+                        model.moveColumn(column, in: table.id, to: drag.insertion)
+                    } else {
+                        // A click: the table selected, as a press on it would, then the cell.
+                        dragItem(.table(table.id), by: .zero)
+                        dropItem(.table(table.id), at: location, translation: .zero,
+                                 click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) }
+                    }
                 case .group(let id):
                     // A double-click on its name renames it.
                     dropItem(.group(id), at: location, translation: translation, click: nil) { _ in canvas.renamingGroup = id }
@@ -1094,6 +1125,13 @@ struct CanvasView: View {
         let isLocked = flags.contains(.shift)
         return CanvasController.snap(moving, by: offset, to: others, tolerance: 6 / canvas.zoom,
                                      across: !isLocked || offset.x != 0, down: !isLocked || offset.y != 0)
+    }
+
+    /// Where a column dragged to `point` (canvas points) would go in its table: before the row it's in the top half of.
+    private func dragColumn(_ column: Column.ID, in table: Table, to point: CGPoint) {
+        let frame = Metrics.frame(of: table)
+        let insertion = Int(((point.y - frame.minY - Metrics.headerHeight) / Metrics.rowHeight).rounded())
+        canvas.columnDrag = (table.id, column, min(max(insertion, 0), table.columns.count))
     }
 
     /// Ends a move, or if it hardly moved, a click (or double-click) at `location`, in view points.
@@ -1471,6 +1509,12 @@ struct CanvasView: View {
             connection?.from.flatMap { model.newColumnName(referencing: $0, in: id) }.map { "+ " + $0 }
         } else { nil }
         let portHint = canvas.portHint
+        let columnDrag = canvas.columnDrag.flatMap { drag in
+            model.table(drag.table).flatMap { table in
+                table.columns.firstIndex { $0.id == drag.column }.map { (frame: Metrics.frame(of: table), row: $0, insertion: drag.insertion) }
+            }
+        }
+        let grip = canvas.hoveredHeader.flatMap { id in model.table(id) }.map { Metrics.frame(of: $0).offsetBy(dx: canvas.tableOffsets[$0.id]?.x ?? 0, dy: canvas.tableOffsets[$0.id]?.y ?? 0) }
         return Canvas { screen, _ in
             var context = screen
             context.translateBy(x: offset.x, y: offset.y)
@@ -1496,6 +1540,27 @@ struct CanvasView: View {
                 let tag = CGRect(origin: origin, size: size).insetBy(dx: -8, dy: -4)
                 screen.fill(Path(roundedRect: tag, cornerRadius: tag.height / 2), with: .color(.accentColor))
                 screen.draw(label, in: CGRect(origin: origin, size: size))
+            }
+            if let columnDrag {
+                // The column lifted, and a line where it'll go.
+                let frame = columnDrag.frame
+                let row = CGRect(x: frame.minX, y: frame.minY + Metrics.headerHeight + CGFloat(columnDrag.row) * Metrics.rowHeight,
+                                 width: frame.width, height: Metrics.rowHeight)
+                context.fill(Path(row), with: .color(Color.accentColor.opacity(0.18)))
+                let y = frame.minY + Metrics.headerHeight + CGFloat(columnDrag.insertion) * Metrics.rowHeight
+                let line = Path(roundedRect: CGRect(x: frame.minX + 4, y: y - 1.25, width: frame.width - 8, height: 2.5), cornerRadius: 1.25)
+                context.fill(line, with: .color(.accentColor))
+            }
+            if let grip, connection == nil {
+                // Six dots at the header's end, where the table's grabbed.
+                let dot: CGFloat = 2.2, gap: CGFloat = 3.2
+                let origin = CGPoint(x: grip.maxX - 14, y: grip.minY + Metrics.headerHeight / 2 - gap)
+                var dots = Path()
+                for column in 0..<2 { for row in 0..<3 {
+                    let center = origin + CGPoint(x: CGFloat(column) * gap, y: CGFloat(row) * gap)
+                    dots.addEllipse(in: CGRect(x: center.x - dot / 2, y: center.y - dot / 2, width: dot, height: dot))
+                } }
+                context.fill(dots, with: .color(.secondary))
             }
             if let portHint {
                 // At screen size whatever the zoom.
