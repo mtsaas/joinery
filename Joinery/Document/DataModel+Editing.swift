@@ -257,6 +257,28 @@ extension DataModel {
 
     /// Drops references to anything that isn't there, so a hand-edited or damaged file can't make the canvas draw
     /// wires to nowhere. A wire and a tie stay joined only if each lists the other.
+    // MARK: Focus
+
+    /// `tables` and every table a foreign key joins them to, either way.
+    func neighborhood(of tables: Set<Table.ID>) -> Set<Table.ID> {
+        let owner = columnLocations.mapValues(\.table.id)
+        var around = tables
+        for relationship in relationships {
+            guard let from = owner[relationship.from], let to = owner[relationship.to] else { continue }
+            if tables.contains(from) { around.insert(to) }
+            if tables.contains(to) { around.insert(from) }
+        }
+        return around
+    }
+
+    /// The wires with both ends among `tables`.
+    func relationships(among tables: Set<Table.ID>) -> Set<Relationship.ID> {
+        let owner = columnLocations.mapValues(\.table.id)
+        return Set(relationships.filter { r in
+            owner[r.from].map(tables.contains) == true && owner[r.to].map(tables.contains) == true
+        }.map(\.id))
+    }
+
     // MARK: Groups
 
     func members(of group: TableGroup.ID) -> [Table] {

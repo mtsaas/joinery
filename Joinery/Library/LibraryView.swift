@@ -76,6 +76,8 @@ struct ModelEditor: View {
                         .help("Add a table (T)")
                     Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)
                         .help("Zip-tie tool: drag across wires to tie them (Z)")
+                    Toggle("Focus", systemImage: "scope", isOn: Bindable(canvas).isFocusing)
+                        .help("Focus mode: fade everything but the selection and what it's joined to (F)")
                 }
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)

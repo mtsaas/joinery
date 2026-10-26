@@ -41,7 +41,9 @@ struct CanvasView: View {
         ZStack(alignment: .topLeading) {
             GridLayer(zoom: canvas.zoom, offset: canvas.offset)
             GroupLayer(groups: groupFrames, zoom: canvas.zoom, viewOffset: canvas.offset, selected: canvas.selectedGroups,
-                       renaming: canvas.renamingGroup)
+                       renaming: canvas.renamingGroup, focused: focusedTables.map { focused in
+                           Set(model.tables.filter { focused.contains($0.id) }.compactMap(\.group))
+                       })
             wireLayer(routing, colors: colors)
             tableLayer(socketColors: socketColors, foreignKeys: foreignKeys)
             ForEach(model.zipTies) { tie in
@@ -117,6 +119,11 @@ struct CanvasView: View {
         .focusEffectDisabled()
         // Key presses reach these even while a cell has focus, so each checks that none does. (`isCanvasFocused` won't
         // do: it's true while anything inside the canvas has focus, cells included.)
+        .onKeyPress("f") {
+            guard isCanvasKeyTarget else { return .ignored }
+            canvas.isFocusing.toggle()
+            return .handled
+        }
         .onKeyPress("z") {
             guard isCanvasKeyTarget else { return .ignored }
             canvas.isTying.toggle()
@@ -543,6 +550,8 @@ struct CanvasView: View {
 
     /// The wires to show over the rest, which fade: those of whatever's selected. Nil highlights none.
     private var highlightedRelationships: Set<Relationship.ID>? {
+        // In focus mode, the wires among the tables in focus.
+        if let focused = focusedTables { return model.relationships(among: focused) }
         guard !canvas.selection.isEmpty else { return nil }
         let tables = canvas.selectedTables
         let columns = Set(model.tables.filter { tables.contains($0.id) }.flatMap(\.columns).map(\.id))
@@ -559,13 +568,22 @@ struct CanvasView: View {
 
     // MARK: Tables
 
+    /// In focus mode with something selected: the selected tables (a selected group's included) and every table a
+    /// foreign key joins them to. Everything else fades. Nil otherwise.
+    private var focusedTables: Set<Table.ID>? {
+        guard canvas.isFocusing else { return nil }
+        let selected = canvas.selectedTables.union(canvas.selectedGroups.flatMap { model.members(of: $0).map(\.id) })
+        return selected.isEmpty ? nil : model.neighborhood(of: selected)
+    }
+
     /// Every table, and the presses on them and on the empty canvas around them.
     private func tableLayer(socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> some View {
         var selected = canvas.selectedTables
         if case .table(let id)? = canvas.connection?.target { selected.insert(id) }
         return TableLayer(tables: model.tables, offsets: canvas.tableOffsets, zoom: canvas.zoom, viewOffset: canvas.offset,
                           viewSize: canvas.viewSize, selected: selected, cursor: canvas.cell, targetColumn: targetColumn,
-                          foreignKeys: foreignKeys, socketColors: socketColors, hoveredSocket: hoveredSocket, layouts: textLayouts)
+                          foreignKeys: foreignKeys, socketColors: socketColors, hoveredSocket: hoveredSocket, layouts: textLayouts,
+                          focused: focusedTables)
             .contentShape(.rect)
             .gesture(surfaceGesture)
             .onContinuousHover { phase in

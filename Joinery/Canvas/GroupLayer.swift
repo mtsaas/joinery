@@ -9,10 +9,14 @@ struct GroupLayer: View {
     let selected: Set<TableGroup.ID>
     /// Its name is being edited over it, so isn't drawn.
     var renaming: TableGroup.ID?
+    /// In focus mode, the groups with a table in focus; the rest fade.
+    var focused: Set<TableGroup.ID>?
 
     var body: some View {
         Canvas { context, _ in
             for (group, frame) in groups {
+                var context = context
+                if let focused, !focused.contains(group.id) { context.opacity = TableLayer.fadedOpacity }
                 let rect = CGRect(origin: frame.origin * zoom + viewOffset, size: frame.size * zoom)
                 let shape = Path(roundedRect: rect, cornerRadius: Metrics.groupCornerRadius * zoom, style: .continuous)
                 let color = group.color.color

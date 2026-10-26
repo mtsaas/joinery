@@ -28,6 +28,11 @@ struct TableLayer: View {
     let socketColors: [Routing.Socket: Color]
     let hoveredSocket: Routing.Socket?
     let layouts: TextLayouts
+    /// In focus mode, the tables in focus; the rest fade, under them.
+    var focused: Set<Table.ID>? = nil
+
+    /// How faint what's out of focus is.
+    static let fadedOpacity = 0.22
 
     @Environment(\.displayScale) private var displayScale
 
@@ -37,9 +42,15 @@ struct TableLayer: View {
     var body: some View {
         let visible = visibleTables
         Canvas { context, _ in
-            for layer in Self.layered(visible) {
-                var context = context
-                draw(layer, in: &context)
+            // Faded tables first, so those in focus are on top.
+            let faded = focused.map { focused in visible.filter { !focused.contains($0.table.id) } } ?? []
+            let clear = focused.map { focused in visible.filter { focused.contains($0.table.id) } } ?? visible
+            for (tables, opacity) in [(faded, Self.fadedOpacity), (clear, 1)] {
+                for layer in Self.layered(tables) {
+                    var context = context
+                    context.opacity = opacity
+                    draw(layer, in: &context)
+                }
             }
         }
         .accessibilityChildren {

@@ -33,6 +33,7 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
 | Add a column for a key | Drag from a socket onto a table's header: it gets a column named for yours (`users.id` gives `user_id`), of its type, referencing it |
 | Wires avoid tables | View ▸ Wires Avoid Tables, or from the palette: wires bend around tables in their way |
 | Reroute a wire | Double-click it to add a bend point there, then drag the point; double-click a bend point to remove it |
+| Focus | Turn on focus mode (F, or the toolbar's scope button), then select a table or group: it, the tables its foreign keys join it to, and the wires among them stay; everything else fades |
 | Group (schemas) | Select tables and press ⌘G (or right-click ▸ Group) to draw a named boundary around them, and type its name; for a database, its schema. Click a group's name to select it with its tables and the zip ties inside it, drag the name to move them all, double-click it to rename. Drop a table inside a group to put it there; right-click a table ▸ Remove from Group to take it out. ⇧⌘G ungroups, leaving the tables |
 | Zip-tie wires | Turn on the zip-tie tool (Z, or the toolbar's tie button), then drag a line across two or more wires; it stays on until you press Z or Escape. Option-drag ties without it |
 | Select | Click tables, wires, ties; Shift-click to add; drag a box around tables, ties and wires to select those wholly inside it; ⌘A for everything |
