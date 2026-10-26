@@ -269,9 +269,33 @@ struct PortShape: Equatable {
         let name = label.isEmpty ? Metrics.portHeight * 1.6 : CGFloat(label.count) * 6.4 + 24
         let (along, across) = isOnLeftOrRight ? (name, Metrics.portHeight) : (Metrics.portHeight, name)
         outer = across / 2
-        inner = max(outer, CGFloat(max(wires - 1, 0)) * Metrics.portSlotSpacing / 2 + Metrics.portHeight / 2)
-        // Long enough that its sides don't slope more steeply than about 25°.
+        // Its wires plug in only along the flat of its inside end, between its rounded corners: wide enough for them,
+        // and a wire's width either side. Where the rounding starts depends on how the sides slope, which depends on
+        // how wide it is, so it's worked out a few times over.
+        (inner, length) = (outer, along)
+        // With one wire or none, it's a pill.
+        guard wires > 1 else { return }
+        let wiresWide = CGFloat(wires - 1) * Metrics.portSlotSpacing / 2 + Metrics.wireWidth
+        inner = max(outer, wiresWide + Metrics.portHeight / 2)
+        for _ in 0..<4 {
+            // Long enough that its sides don't slope more steeply than about 25°.
+            length = max(along, (inner - outer) * 2.2)
+            inner = max(outer, wiresWide + innerRounding)
+        }
         length = max(along, (inner - outer) * 2.2)
+    }
+
+    /// How round its inside corners are, as drawn: a pill's end, or as much as there's room for.
+    var cornerRadius: CGFloat { min(Metrics.portHeight / 2, length / 2) }
+
+    /// How far along its inside end the rounding of each corner reaches: the radius, where the side's square to it,
+    /// and further, the more the side slopes in toward the outside.
+    var innerRounding: CGFloat {
+        let radius = min(cornerRadius, inner)
+        // The angle at the corner, between the end and the side running to the outside end.
+        let side = CGPoint(x: length, y: outer - inner), sideLength = max(side.length, 0.001)
+        let angle = acos(min(max(-side.y / sideLength, -1), 1))
+        return radius / tan(angle / 2)
     }
 
     /// Partway from `self` to `other`.

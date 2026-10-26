@@ -26,8 +26,9 @@ struct CanvasView: View {
     @State private var textLayouts = TextLayouts()
     @State private var wirePaths = WirePaths()
     @State private var portShapes = PortShapes()
-    /// What the press on the canvas in progress landed on.
+    /// What the press on the canvas in progress landed on, and where it started.
     @State private var press: Press?
+    @State private var pressStart: CGPoint?
     @State private var hoveredSocket: Routing.Socket?
     @State private var isHoveringPort = false
     @State private var isHoveringPortSocket = false
@@ -228,6 +229,12 @@ struct CanvasView: View {
                   let translation = note.userInfo?["translation"] as? CGSize else { return }
             dragItem(.table(id), by: translation)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .hover)) { note in
+            // As if the pointer were at a canvas point: what the + would show.
+            guard note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint else { return }
+            canvas.portHint = portHint(near: point)
+            print("hover \(Int(point.x)), \(Int(point.y)):", canvas.portHint.map { "+ at \(Int($0.point.x)), \(Int($0.point.y)) on \($0.spot.side)" } ?? "no +")
+        }
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { note in
             if note.object as AnyObject? === canvas { openSettings() }
         }
@@ -286,6 +293,19 @@ struct CanvasView: View {
                 commands.append(PaletteCommand(id: "focus-add", title: "Add Selection to Focus", symbol: "plus.viewfinder") {
                     canvas.addSelectionToFocus(in: model)
                 })
+            }
+        }
+        // The selection's color: each table's, and each group's (not its tables').
+        let groups = canvas.selectedGroups
+        let loose = groups.isEmpty ? tables : Set(model.tables.filter { tables.contains($0.id) && !($0.group.map(groups.contains) ?? false) }.map(\.id))
+        if !loose.isEmpty || !groups.isEmpty {
+            let what = [(loose.count, "table"), (groups.count, "group")].filter { $0.0 > 0 }
+                .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }.formatted()
+            commands += TableColor.allCases.map { color in
+                PaletteCommand(id: "color-\(color.rawValue)", title: "Color \(color.rawValue.capitalized)", subtitle: what, symbol: "circle.fill",
+                               tint: color.color) {
+                    model.recolor(tables: loose, groups: groups, color)
+                }
             }
         }
         if !canvas.selectedGroups.isEmpty {
@@ -379,6 +399,10 @@ struct CanvasView: View {
         } else if let hit = simulation.hit(near: point, within: reach) {
             target = .wire(hit)
             if !canvas.selection.contains(.relationship(hit.relationship)) { canvas.selection = [.relationship(hit.relationship)] }
+        } else if let group = model.groups.last(where: { model.frame(of: $0.id)?.contains(point) == true })?.id {
+            // Anywhere in a group's empty space is the group.
+            target = .group(group)
+            if !canvas.selection.contains(.group(group)) { canvas.selectGroup(group, in: model, extending: false) }
         } else {
             target = .canvas
         }
@@ -421,7 +445,11 @@ struct CanvasView: View {
                                                    symbol: "distribute.vertical.center") { model.distribute(tables, horizontally: false) }
             }
             extras = [groupSelection, untangle, deleteSelection]
-            return (slots, extras, nil)
+            // The selected tables' color, all at once.
+            if let first = model.tables.first(where: { tables.contains($0.id) }) {
+                color = (first.color, { color in model.recolor(tables: tables, groups: [], color) })
+            }
+            return (slots, extras, color)
         }
         switch wheel.target {
         case .table(let id):
@@ -664,7 +692,7 @@ struct CanvasView: View {
         let corners = [CGPoint(x: -half, y: -inner), CGPoint(x: half, y: -outer), CGPoint(x: half, y: outer), CGPoint(x: -half, y: inner)]
         // Every corner as round as a pill's end, or as the shape has room for: a pill's, along the edge on the top or
         // bottom, where it's only a pill's height long.
-        let round = min(Metrics.portHeight / 2, half)
+        let round = shape.cornerRadius
         let radii = [min(round, inner), min(round, outer), min(round, outer), min(round, inner)]
         var path = Path()
         path.move(to: (corners[3] + corners[0]) / 2)
@@ -761,7 +789,7 @@ struct CanvasView: View {
                     let portSocket = socket == nil ? model.portSocket(at: point, within: Metrics.socketReach(zoom: canvas.zoom), offsets: canvas.tableOffsets) : nil
                     if (portSocket != nil) != isHoveringPortSocket { isHoveringPortSocket = portSocket != nil }
                     isOverPort = socket == nil && portSocket == nil && model.port(at: point, offsets: canvas.tableOffsets) != nil
-                    if socket == nil && !isOverPort && canvas.connection == nil && canvas.portDrag == nil { hint = portHint(near: point) }
+                    if socket == nil && !isOverPort && press == nil { hint = portHint(near: point) }
                 }
                 if socket != hoveredSocket { hoveredSocket = socket }
                 if isOverPort != isHoveringPort { isHoveringPort = isOverPort }
@@ -872,6 +900,14 @@ struct CanvasView: View {
     private var surfaceGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .canvas)
             .onChanged { value in
+                // A new press, told by where it started: anything a cancelled one left behind goes. Its end never came, so
+                // what it was for, a port it was sliding, a wire it was drawing, would hang on, and the + stay hidden.
+                if value.startLocation != pressStart {
+                    pressStart = value.startLocation
+                    self.press = nil
+                    canvas.portDrag = nil
+                    canvas.connection = nil
+                }
                 // With the zip-tie tool, every drag ties, wherever it starts.
                 let press = self.press ?? (canvas.isTying ? .background : self.press(at: canvas.canvasPoint(value.startLocation)))
                 if self.press == nil { self.press = press }
@@ -903,6 +939,7 @@ struct CanvasView: View {
             .onEnded { value in
                 let press = self.press ?? .background
                 self.press = nil
+                pressStart = nil
                 switch press {
                 case .socket, .portSocket:
                     finishConnection()

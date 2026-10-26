@@ -641,6 +641,12 @@ struct JoineryTests {
         #expect(pill.inner == pill.outer && pill.outer == Metrics.portHeight / 2)
         let fan = PortShape(label: "users.id", wires: 20, isOnLeftOrRight: true)
         #expect(fan.inner > fan.outer * 3 && fan.outer == pill.outer && fan.length >= pill.length)
+        // Its wires plug in along the flat of its inside end, never on the rounding of its corners.
+        for wires in [2, 5, 20, 40] {
+            let shape = PortShape(label: "entity.entity_id", wires: wires, isOnLeftOrRight: true)
+            let outermost = CGFloat(wires - 1) * Metrics.portSlotSpacing / 2
+            #expect(outermost + Metrics.wireWidth / 2 <= shape.inner - shape.innerRounding + 0.01, "\(wires) wires")
+        }
         // Its outline keeps within it, on any side: on the top or bottom it's only a pill's height long.
         for isOnLeftOrRight in [true, false] {
             for wires in [0, 1, 3, 20] {

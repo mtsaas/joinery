@@ -8,6 +8,8 @@ struct PaletteCommand: Identifiable {
     /// Shown at the trailing edge, as on a menu item.
     var shortcut: String?
     var isDestructive = false
+    /// The symbol's color, if it shows one, as a color to choose does.
+    var tint: Color?
     let action: () -> Void
 
     /// How well `query` matches `text` as letters in order, higher being better: consecutive letters and letters
@@ -106,6 +108,7 @@ struct CommandPalette: View {
     private func row(_ command: PaletteCommand, isHighlighted: Bool) -> some View {
         HStack(spacing: 10) {
             Image(systemName: command.symbol)
+                .foregroundStyle(command.tint.map(AnyShapeStyle.init) ?? AnyShapeStyle(.foreground))
                 .frame(width: 20)
             Text(command.title)
             if let subtitle = command.subtitle {

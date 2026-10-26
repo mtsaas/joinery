@@ -245,6 +245,12 @@ extension DataModel {
         return bend.id
     }
 
+    /// Gives `tables` and `groups` a color, as one change.
+    mutating func recolor(tables ids: Set<Table.ID>, groups groupIDs: Set<TableGroup.ID>, _ color: TableColor) {
+        for index in tables.indices where ids.contains(tables[index].id) { tables[index].color = color }
+        for index in groups.indices where groupIDs.contains(groups[index].id) { groups[index].color = color }
+    }
+
     /// Moves tables and ties together, as when dragging a selection.
     mutating func move(tables: Set<Table.ID>, ties: Set<ZipTie.ID>, by delta: CGPoint) {
         for index in self.tables.indices where tables.contains(self.tables[index].id) { self.tables[index].position += delta }

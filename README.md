@@ -20,7 +20,7 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
 
 | Action | How |
 | --- | --- |
-| Command wheel | Right-click: commands in a ring around the pointer. Move toward one and click. With tables or ties selected, aligning points the way things go: left edges west, top edges north; on a table, rename, add a column, delete or recolor; on a wire, add a bend point or delete it |
+| Command wheel | Right-click: commands in a ring around the pointer. Move toward one and click. With tables or ties selected, aligning points the way things go: left edges west, top edges north; on a table, rename, add a column, delete or recolor; on several tables, recolor them all; in a group (anywhere in its empty space), rename, ungroup or recolor it; on a wire, add a bend point or delete it. The command palette (⌘K) has Color commands for whatever's selected, tables and groups |
 | Command palette | ⌘K: every command, plus each table to jump to; arrows, Return, Escape |
 | Align / distribute | With tables or zip ties selected, right-click for the wheel, or ⌘K then Align Left Edges, Align Centers, … Distribute Horizontally (tables). Aligned ties stand on the line and are held square to it; right-click one for Turn with Wires to free it |
 | Add a table | **T**, the toolbar table button, or Insert ▸ Table (⌥⌘T); type its name straight away |
