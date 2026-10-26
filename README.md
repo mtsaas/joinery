@@ -6,10 +6,11 @@ Requires macOS 26 and Xcode 26 or later. Open `Joinery.xcodeproj` and press ⌘R
 
 ## Library
 
-Schemas live in a library shown in the sidebar. Each schema is a plain `.joinery` file (readable JSON) in the app's own storage, and each collection is a folder. File ▸ Show Library in Finder shows where they are.
+Schemas live in a library you browse as in Freeform. The sidebar has All Schemas, Recents (opened or changed in the last month), Favorites, and your collections. The main area shows the chosen group's schemas as a grid of live previews, or as a list with table counts. Search matches schema and table names. Each schema is a plain `.joinery` file (readable JSON) in the app's own storage, and each collection is a folder. File ▸ Show Library in Finder shows where they are.
 
-- **New:** ⌘N makes a schema, in the selected schema's collection. ⇧⌘N makes a collection, which you can name straight away.
-- **Rename, duplicate, move, delete:** right-click a schema or collection. You can also drag schemas onto a collection or onto the Schemas heading. Move to Trash can be undone from the Trash.
+- **Open:** double-click a schema, or click it and press Return. It fills the window. ⌘↑ or the back button returns to the library.
+- **New:** ⌘N or the toolbar's compose button makes a schema, in the collection being shown, and opens it. ⇧⌘N or the folder button makes a collection, which you can name straight away.
+- **Rename, duplicate, favorite, move, delete:** right-click a schema or collection. You can also drag schemas onto a collection in the sidebar. Delete moves the clicked schema to the Trash, from where it can be put back. Favorites and when a schema was last opened are kept on the file itself, so they follow it through renames and moves.
 - **Saving and undo:** changes save themselves, half a second after you stop and whenever you switch schemas. Undo (⌘Z) covers the open schema.
 - **Opening and importing:** double-clicking a `.joinery` file in Finder, or File ▸ Import Schema… (⌘O), copies it into the library and opens it.
 - **Examples:** a new library starts with an Examples collection containing Chinook, Northwind, Sakila, the Stack Overflow data dump, and Storefront. File ▸ Add Examples puts back any you've deleted. `scripts/make_examples.py` generates them.

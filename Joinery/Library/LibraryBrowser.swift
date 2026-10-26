@@ -1,0 +1,480 @@
+import SwiftUI
+
+/// The library, as Freeform shows its boards: All Schemas, Recents, Favorites and the collections in the sidebar, and
+/// the schemas in whichever is chosen as a grid of previews or a list, searchable by schema or table name. Opening one
+/// gives the window over to it.
+struct LibraryBrowser: View {
+    @Bindable var library: Library
+
+    enum Scope: Hashable {
+        case all, recents, favorites
+        case collection(URL)
+    }
+
+    enum Layout: String {
+        case grid, list
+    }
+
+    @State private var scope = Scope.all
+    @State private var columns = NavigationSplitViewVisibility.all
+    @AppStorage("libraryLayout") private var layout = Layout.grid
+    @State private var search = ""
+    /// The schema picked out with a click, to open with Return.
+    @State private var highlighted: URL?
+    /// The schema or collection being renamed in place.
+    @State private var renaming: URL?
+    @State private var collectionToTrash: Library.Collection?
+    @State private var previews = SchemaPreviews()
+    @State private var layouts = TextLayouts()
+
+    var body: some View {
+        NavigationSplitView(columnVisibility: $columns) {
+            sidebar
+                .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 320)
+        } detail: {
+            content
+        }
+        .searchable(text: $search, placement: .toolbar, prompt: "Search")
+        .toolbar(removing: .title)
+        .confirmationDialog("Move “\(collectionToTrash?.name ?? "")” to the Trash?", isPresented: Binding {
+            collectionToTrash != nil
+        } set: { if !$0 { collectionToTrash = nil } }, presenting: collectionToTrash) { collection in
+            Button("Move to Trash", role: .destructive) {
+                if scope == .collection(collection.url) { scope = .all }
+                library.trash(collection.url)
+            }
+        } message: { collection in
+            Text("Its \(collection.schemas.count) schemas go with it. You can put them back from the Trash.")
+        }
+        // A collection that's gone, renamed or trashed, can't stay chosen.
+        .onChange(of: library.collections.map(\.url)) {
+            if case .collection(let url) = scope, !library.collections.contains(where: { $0.url == url }) { scope = .all }
+        }
+    }
+
+    // MARK: Sidebar
+
+    private var sidebar: some View {
+        List(selection: Binding { scope } set: { if let new = $0 { scope = new } }) {
+            Section("Schemas") {
+                smartRow(.all, "All Schemas", symbol: "square.grid.2x2.fill", color: .blue, count: library.allSchemas.count)
+                smartRow(.recents, "Recents", symbol: "clock.fill", color: .orange, count: library.recents.count)
+                smartRow(.favorites, "Favorites", symbol: "heart.fill", color: .red,
+                         count: library.allSchemas.count { library.details[$0]?.isFavorite == true })
+            }
+            if !library.collections.isEmpty {
+                Section("Collections") {
+                    ForEach(library.collections) { collectionRow($0) }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .toolbar {
+            ToolbarItem {
+                Button("New Collection", systemImage: "folder.badge.plus") {
+                    if let url = library.newCollection() {
+                        scope = .collection(url)
+                        renaming = url
+                    }
+                }
+                .help("New collection (⇧⌘N)")
+            }
+        }
+    }
+
+    private func smartRow(_ scope: Scope, _ title: String, symbol: String, color: Color, count: Int) -> some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(systemName: symbol)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 22, height: 22)
+                .background(color.gradient, in: .circle)
+        }
+        .badge(count)
+        .tag(scope)
+    }
+
+    private func collectionRow(_ collection: Library.Collection) -> some View {
+        Group {
+            if renaming == collection.url {
+                RenameField(name: collection.name) { name in
+                    renaming = nil
+                    if let name {
+                        let renamed = collection.url.deletingLastPathComponent().appending(path: name, directoryHint: .isDirectory)
+                        library.rename(collection.url, to: name)
+                        if scope == .collection(collection.url) { scope = .collection(renamed) }
+                    }
+                }
+            } else {
+                Label(collection.name, systemImage: collection.name == Library.examplesName ? "books.vertical" : "folder")
+                    .badge(collection.schemas.count)
+            }
+        }
+        .tag(Scope.collection(collection.url))
+        .dropDestination(for: URL.self) { urls, _ in move(urls, into: collection.url) }
+        .contextMenu {
+            Button("New Schema", systemImage: "square.and.pencil") { library.newSchema(in: collection.url) }
+            Button("Rename", systemImage: "pencil") { renaming = collection.url }
+            Button("Show in Finder", systemImage: "finder") { library.showInFinder(collection.url) }
+            Divider()
+            Button("Move to Trash", systemImage: "trash", role: .destructive) {
+                if collection.schemas.isEmpty { library.trash(collection.url) } else { collectionToTrash = collection }
+            }
+        }
+    }
+
+    @discardableResult
+    private func move(_ urls: [URL], into collection: URL?) -> Bool {
+        let schemas = urls.filter { $0.pathExtension == "joinery" }
+        for url in schemas { library.move(url, to: collection) }
+        return !schemas.isEmpty
+    }
+
+    // MARK: Schemas
+
+    private var title: String {
+        switch scope {
+        case .all: "All Schemas"
+        case .recents: "Recents"
+        case .favorites: "Favorites"
+        case .collection(let url): url.lastPathComponent
+        }
+    }
+
+    /// What's in the chosen group, and matches the search: most recently changed first, or for Recents, used.
+    private var shown: [URL] {
+        let schemas: [URL] = switch scope {
+        case .all: library.allSchemas.sorted { modified($0) > modified($1) }
+        case .recents: library.recents
+        case .favorites: library.allSchemas.filter { library.details[$0]?.isFavorite == true }.sorted { modified($0) > modified($1) }
+        case .collection(let url): (library.collections.first { $0.url == url }?.schemas ?? []).sorted { modified($0) > modified($1) }
+        }
+        let query = search.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return schemas }
+        // By name, or the name of a table in it.
+        return schemas.filter { url in
+            Library.name(of: url).localizedStandardContains(query)
+                || preview(of: url)?.schema.tables.contains { $0.name.localizedStandardContains(query) } == true
+        }
+    }
+
+    private func modified(_ url: URL) -> Date { library.details[url]?.modified ?? .distantPast }
+
+    private func preview(of url: URL) -> SchemaPreviews.Preview? {
+        previews.preview(of: url, modified: modified(url))
+    }
+
+    private func header(count: Int) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.system(size: 30, weight: .bold))
+                .foregroundStyle(.tint)
+            Text(count == 1 ? "1 Schema" : "\(count) Schemas")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 28)
+        .padding(.top, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var content: some View {
+        let shown = shown
+        return Group {
+            if shown.isEmpty {
+                VStack(spacing: 0) {
+                    header(count: 0)
+                    emptyState
+                        .frame(maxHeight: .infinity)
+                }
+            } else if layout == .grid {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        header(count: shown.count)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 196, maximum: 240), spacing: 20, alignment: .top)],
+                                  alignment: .leading, spacing: 20) {
+                            ForEach(shown, id: \.self) { card($0) }
+                        }
+                        .padding(.horizontal, 28)
+                        .padding(.bottom, 20)
+                    }
+                }
+                // A click on the background lets go of the highlighted schema.
+                .background { Color.clear.contentShape(.rect).onTapGesture { highlighted = nil } }
+            } else {
+                VStack(alignment: .leading, spacing: 14) {
+                    header(count: shown.count)
+                    list(shown)
+                }
+            }
+        }
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.return) {
+            guard let highlighted else { return .ignored }
+            library.selection = highlighted
+            return .handled
+        }
+        .onDeleteCommand { if let highlighted { library.trash(highlighted) } }
+        .toolbar {
+            // At the trailing end, with the search, as in Freeform.
+            ToolbarSpacer(.flexible)
+            ToolbarItem(placement: .primaryAction) {
+                Button("New Schema", systemImage: "square.and.pencil") { library.newSchema(in: selectedCollection) }
+                    .help("New schema (⌘N)")
+            }
+            ToolbarItem(placement: .primaryAction) {
+                Picker("View", selection: $layout) {
+                    Label("Grid", systemImage: "square.grid.2x2").tag(Layout.grid)
+                    Label("List", systemImage: "list.bullet").tag(Layout.list)
+                }
+                .pickerStyle(.segmented)
+                .help("Show as a grid or a list")
+            }
+        }
+    }
+
+    /// Where a new schema goes: the collection being shown.
+    private var selectedCollection: URL? {
+        if case .collection(let url) = scope { url } else { nil }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        Group {
+            if !search.isEmpty {
+                ContentUnavailableView.search(text: search)
+            } else {
+                switch scope {
+                case .favorites:
+                    ContentUnavailableView("No Favorites", systemImage: "heart",
+                                           description: Text("Right-click a schema and choose Add to Favorites."))
+                case .recents:
+                    ContentUnavailableView("No Recent Schemas", systemImage: "clock",
+                                           description: Text("Schemas you open or change show up here for a month."))
+                default:
+                    ContentUnavailableView {
+                        Label("No Schemas", systemImage: "tablecells")
+                    } description: {
+                        Text("Start one, or drag schemas here from another collection.")
+                    } actions: {
+                        Button("New Schema") { library.newSchema(in: selectedCollection) }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func card(_ url: URL) -> some View {
+        SchemaCard(name: Library.name(of: url), date: modified(url), isFavorite: library.details[url]?.isFavorite == true,
+                   isHighlighted: highlighted == url, preview: preview(of: url), layouts: layouts,
+                   isRenaming: renaming == url) { name in
+            renaming = nil
+            if let name { library.rename(url, to: name) }
+        }
+        .gesture(TapGesture(count: 2).onEnded { library.selection = url })
+        .simultaneousGesture(TapGesture().onEnded { highlighted = url })
+        .draggable(url)
+        .contextMenu { menu(for: url) }
+    }
+
+    private func list(_ shown: [URL]) -> some View {
+        SwiftUI.Table(shown.map(Row.init), selection: $highlighted) {
+            TableColumn("Name") { row in
+                if renaming == row.url {
+                    RenameField(name: Library.name(of: row.url)) { name in
+                        renaming = nil
+                        if let name { library.rename(row.url, to: name) }
+                    }
+                } else {
+                    HStack(spacing: 6) {
+                        Image(systemName: "tablecells").foregroundStyle(.secondary)
+                        Text(Library.name(of: row.url))
+                        if library.details[row.url]?.isFavorite == true {
+                            Image(systemName: "heart.fill").font(.caption).foregroundStyle(.red)
+                        }
+                    }
+                }
+            }
+            TableColumn("Tables") { row in
+                Text(preview(of: row.url).map { "\($0.schema.tables.count)" } ?? "—").monospacedDigit()
+            }
+            .width(min: 50, ideal: 60, max: 80)
+            TableColumn("Collection") { row in
+                Text(library.collection(of: row.url)?.lastPathComponent ?? "—").foregroundStyle(.secondary)
+            }
+            TableColumn("Date Modified") { row in
+                Text(SchemaCard.describe(modified(row.url))).foregroundStyle(.secondary)
+            }
+        }
+        .contextMenu(forSelectionType: URL.self) { urls in
+            if let url = urls.first { menu(for: url) }
+        } primaryAction: { urls in
+            if let url = urls.first { library.selection = url }
+        }
+    }
+
+    private struct Row: Identifiable {
+        let url: URL
+        var id: URL { url }
+    }
+
+    @ViewBuilder
+    private func menu(for url: URL) -> some View {
+        let isFavorite = library.details[url]?.isFavorite == true
+        Button("Open", systemImage: "arrow.up.forward.app") { library.selection = url }
+        Divider()
+        Button(isFavorite ? "Remove from Favorites" : "Add to Favorites", systemImage: isFavorite ? "heart.slash" : "heart") {
+            library.setFavorite(url, !isFavorite)
+        }
+        Button("Rename", systemImage: "pencil") { renaming = url }
+        Button("Duplicate", systemImage: "plus.square.on.square") { library.duplicate(url) }
+        Menu("Move To", systemImage: "folder") {
+            Button("No Collection") { library.move(url, to: nil) }
+                .disabled(library.collection(of: url) == nil)
+            Divider()
+            ForEach(library.collections) { collection in
+                Button(collection.name) { library.move(url, to: collection.url) }
+                    .disabled(library.collection(of: url) == collection.url)
+            }
+        }
+        Button("Show in Finder", systemImage: "finder") { library.showInFinder(url) }
+        Divider()
+        Button("Move to Trash", systemImage: "trash", role: .destructive) { library.trash(url) }
+    }
+}
+
+/// A schema in the grid: a picture of it, its name and when it last changed.
+private struct SchemaCard: View {
+    let name: String
+    let date: Date
+    let isFavorite: Bool
+    let isHighlighted: Bool
+    let preview: SchemaPreviews.Preview?
+    let layouts: TextLayouts
+    let isRenaming: Bool
+    let rename: (String?) -> Void
+
+    @State private var isHovered = false
+
+    private static let cornerRadius: CGFloat = 12
+    /// Between the card and its highlight ring; the ring's radius is the card's plus this and its width, so they're
+    /// concentric.
+    private static let ringGap: CGFloat = 3
+    private static let ringWidth: CGFloat = 3
+
+    var body: some View {
+        VStack(spacing: 0) {
+            SchemaThumbnail(preview: preview, layouts: layouts)
+                .frame(height: 128)
+                .background(Theme.canvas)
+            VStack(alignment: .leading, spacing: 2) {
+                if isRenaming {
+                    RenameField(name: name, done: rename)
+                } else {
+                    HStack(spacing: 4) {
+                        Text(name).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        if isFavorite { Image(systemName: "heart.fill").font(.system(size: 9)).foregroundStyle(.red) }
+                    }
+                }
+                Text(Self.describe(date))
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 9)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .topLeading)
+            .background(Color.primary.opacity(isHovered ? 0.11 : 0.08))
+        }
+        .clipShape(.rect(cornerRadius: Self.cornerRadius))
+        .overlay {
+            RoundedRectangle(cornerRadius: Self.cornerRadius).strokeBorder(Theme.cardBorder, lineWidth: 1)
+        }
+        .overlay {
+            if isHighlighted {
+                let outset = Self.ringGap + Self.ringWidth
+                RoundedRectangle(cornerRadius: Self.cornerRadius + outset)
+                    .strokeBorder(Color.accentColor, lineWidth: Self.ringWidth)
+                    .padding(-outset)
+            }
+        }
+        .contentShape(.rect(cornerRadius: Self.cornerRadius))
+        .onHover { isHovered = $0 }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+    }
+
+    /// "Today, 7:31 AM", "Yesterday, 4:02 PM", or the date.
+    static func describe(_ date: Date) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if Calendar.current.isDateInToday(date) { return "Today, \(time)" }
+        if Calendar.current.isDateInYesterday(date) { return "Yesterday, \(time)" }
+        return date.formatted(date: .abbreviated, time: .omitted)
+    }
+}
+
+/// A schema in miniature: its tables and wires, fitted to the space, drawn as on the canvas.
+private struct SchemaThumbnail: View {
+    let preview: SchemaPreviews.Preview?
+    let layouts: TextLayouts
+
+    var body: some View {
+        GeometryReader { geometry in
+            if let preview, let bounds = preview.bounds {
+                let inset: CGFloat = 14
+                let zoom = min((geometry.size.width - inset * 2) / bounds.width, (geometry.size.height - inset * 2) / bounds.height, 0.6)
+                let offset = CGPoint(x: geometry.size.width / 2 - bounds.midX * zoom, y: geometry.size.height / 2 - bounds.midY * zoom)
+                ZStack {
+                    Canvas { context, _ in
+                        context.translateBy(x: offset.x, y: offset.y)
+                        context.scaleBy(x: zoom, y: zoom)
+                        for wire in preview.wires {
+                            context.stroke(wire.path, with: .color(wire.color), lineWidth: 1.25 / zoom)
+                        }
+                    }
+                    TableLayer(tables: preview.schema.tables, offsets: [:], zoom: zoom, viewOffset: offset, viewSize: geometry.size,
+                               selected: [], cursor: nil, targetColumn: nil, foreignKeys: preview.foreignKeys, socketColors: [:],
+                               hoveredSocket: nil, layouts: layouts)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+/// Each schema read and routed once for its preview, again only when its file changes.
+@MainActor
+final class SchemaPreviews {
+    struct Preview {
+        let schema: Schema
+        let wires: [(path: Path, color: Color)]
+        let foreignKeys: [Column.ID: Color]
+        let bounds: CGRect?
+    }
+
+    private var previews: [URL: (modified: Date, preview: Preview?)] = [:]
+
+    func preview(of url: URL, modified: Date) -> Preview? {
+        if let cached = previews[url], cached.modified == modified { return cached.preview }
+        let preview = (try? Schema(contentsOf: url)).map { schema in
+            let routing = Routing(schema: schema)
+            let locations = schema.columnLocations
+            let colors = Dictionary(schema.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
+                                    uniquingKeysWith: { first, _ in first })
+            return Preview(
+                schema: schema,
+                wires: schema.relationships.compactMap { r in
+                    routing.routes[r.id].map { (Path(smoothing: $0.points), colors[r.id] ?? .gray) }
+                },
+                foreignKeys: Dictionary(schema.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
+                                        uniquingKeysWith: { first, _ in first }),
+                bounds: schema.bounds)
+        }
+        previews[url] = (modified, preview)
+        return preview
+    }
+}

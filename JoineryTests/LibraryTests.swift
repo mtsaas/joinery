@@ -76,4 +76,30 @@ struct LibraryTests {
         #expect(library.schemas.map(Library.name(of:)) == ["Chinook", "Chinook 2"])
         #expect(library.open?.schema.tables.count == 11)
     }
+
+    @Test func favoritesFollowARenameButNotACopy() throws {
+        let library = freshLibrary()
+        library.newSchema()
+        let original = try #require(library.selection)
+        #expect(library.recents.first == original, "opening it makes it recent")
+        library.setFavorite(original, true)
+
+        // Saving replaces the file with a new one, which has to take the mark with it.
+        var schema = try #require(library.open).schema
+        schema.addTable(at: .zero)
+        library.open?.change(to: schema)
+        library.open?.saveNow()
+        library.reload()
+        #expect(library.details[original]?.isFavorite == true, "still a favorite after saving")
+
+        library.rename(original, to: "Liked")
+        let renamed = try #require(library.selection)
+        library.reload()
+        #expect(library.details[renamed]?.isFavorite == true, "kept on the file, so it moves with it")
+
+        library.duplicate(renamed)
+        let copy = try #require(library.selection)
+        #expect(copy != renamed)
+        #expect(library.details[copy]?.isFavorite == false)
+    }
 }

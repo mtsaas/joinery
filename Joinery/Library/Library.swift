@@ -36,6 +36,22 @@ final class Library {
     /// What last went wrong, to tell the person.
     var failure: String?
 
+    /// What the browser shows about a schema besides its name.
+    struct Details {
+        var modified: Date
+        /// When it was last opened here, if it has been.
+        var opened: Date?
+        var isFavorite: Bool
+
+        /// When it was last opened or changed, whichever's later.
+        var lastUsed: Date { max(modified, opened ?? .distantPast) }
+    }
+
+    private(set) var details: [URL: Details] = [:]
+
+    /// Every schema, in collections or not.
+    var allSchemas: [URL] { schemas + collections.flatMap(\.schemas) }
+
     private let files = FileManager.default
 
     init(root: URL) {
@@ -80,6 +96,31 @@ final class Library {
         collections = top.filter { $0.hasDirectoryPath }.sorted(by: byName).map { folder in
             Collection(url: folder, schemas: contents(of: folder).filter { $0.pathExtension == "joinery" }.sorted(by: byName))
         }
+        details = Dictionary(uniqueKeysWithValues: allSchemas.map { url in
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            let opened = url.extendedAttribute(Self.openedAttribute).flatMap { Double(String(decoding: $0, as: UTF8.self)) }
+            return (url, Details(modified: modified, opened: opened.map(Date.init(timeIntervalSinceReferenceDate:)),
+                                 isFavorite: url.extendedAttribute(Self.favoriteAttribute) != nil))
+        })
+    }
+
+    // MARK: Favorites and recents
+    //
+    // Kept on the files themselves, as extended attributes, so they go wherever a schema is moved or renamed.
+
+    private static let favoriteAttribute = URL.attributePrefix + "favorite"
+    private static let openedAttribute = URL.attributePrefix + "opened"
+
+    func setFavorite(_ url: URL, _ isFavorite: Bool) {
+        url.setExtendedAttribute(Self.favoriteAttribute, to: isFavorite ? Data([1]) : nil)
+        details[url]?.isFavorite = isFavorite
+    }
+
+    /// Schemas opened or changed in the last month, most recent first.
+    var recents: [URL] {
+        let month = Date.now.addingTimeInterval(-30 * 24 * 3600)
+        return allSchemas.filter { (details[$0]?.lastUsed ?? .distantPast) > month }
+            .sorted { details[$0]!.lastUsed > details[$1]!.lastUsed }
     }
 
     // MARK: Changes
@@ -134,6 +175,8 @@ final class Library {
             open?.saveNow()
             let copy = unique(Self.name(of: url) + " copy", extension: "joinery", in: url.deletingLastPathComponent())
             try files.copyItem(at: url, to: copy)
+            // A copy starts out ordinary, whatever the original was.
+            copy.setExtendedAttribute(Self.favoriteAttribute, to: nil)
             reload()
             selection = copy
         }
@@ -183,9 +226,12 @@ final class Library {
     private func openSelection() {
         open?.saveNow()
         open = nil
-        guard let selection else { return }
+        // Back in the browser: what was open has changed.
+        guard let selection else { return reload() }
         do {
             open = try OpenSchema(url: selection)
+            selection.setExtendedAttribute(Self.openedAttribute, to: Data(String(Date.now.timeIntervalSinceReferenceDate).utf8))
+            details[selection]?.opened = .now
         } catch {
             failure = "Couldn't open “\(Self.name(of: selection))”: \(error.localizedDescription)"
         }

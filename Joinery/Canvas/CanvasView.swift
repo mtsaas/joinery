@@ -1235,7 +1235,7 @@ private struct GridLayer: View {
     }
 }
 
-private extension Path {
+extension Path {
     /// A smooth curve through the middle of each pair of points, bending at the points themselves.
     init(smoothing points: [CGPoint]) {
         self.init()

@@ -4,7 +4,7 @@ import SwiftUI
 /// Lets the app be checked from the command line, without clicking. Set in the environment:
 /// - `JOINERY_LIBRARY=<dir>`: use that folder as the library (see `Library`), so tests never touch the real one.
 /// - `JOINERY_OPEN=<name>`: select the schema with that name. A `.joinery` path passed as an argument is imported and
-///   selected too. `JOINERY_NO_SIDEBAR`: hide the sidebar.
+///   selected too.
 /// - `JOINERY_APPEARANCE=light|dark`: whatever the system's set to.
 /// - `JOINERY_SNAPSHOT=out.png`: saves the front window to `out.png` and quits. `JOINERY_SNAPSHOT_FRAMES=n` saves n
 ///   frames 50 ms apart (out-0.png, out-1.png, …) to check an animation; `JOINERY_SNAPSHOT_DELAY` sets the wait.
@@ -93,6 +93,8 @@ enum DebugHooks {
                                                           "space": (49, " ")]
                 if let (code, characters) = codes[words[1]] {
                     await press(characters, keyCode: code)
+                } else if words[1] == "cmd+up" {
+                    await press("\u{F700}", keyCode: 126, modifiers: .command)
                 } else if words[1] == "cmd+delete" {
                     await press("\u{7f}", keyCode: 51, modifiers: .command)
                 } else if words[1].hasPrefix("shift+cmd+"), let letter = words[1].last {
@@ -159,6 +161,9 @@ enum DebugHooks {
                 canvas.zoomToFit(document.wrappedValue.bounds)
             case "quit":
                 exit(0)
+            case "library":
+                let library = Library.shared
+                print("library open: \(library.open?.name ?? "none"), recents: \(library.recents.map(Library.name(of:)).prefix(3))")
             case "routings":
                 print("routings built: \(Routing.built)")
             case "clock":

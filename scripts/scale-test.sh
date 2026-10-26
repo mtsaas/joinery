@@ -22,7 +22,7 @@ for size in $sizes; do
   for avoid in NO YES; do
     # A folder that doesn't exist yet, so the library starts with the examples to open.
     scratch=$(mktemp -d) library="$scratch/library"
-    line=$(JOINERY_NO_SIDEBAR=1 JOINERY_LIBRARY="$library" JOINERY_OPEN=Storefront \
+    line=$(JOINERY_LIBRARY="$library" JOINERY_OPEN=Storefront \
       JOINERY_SCRIPT="generate $tables $keys;$([ $zoom = fit ] || echo "focus t$((tables / 2)) $zoom;")wait 1.5;shake t$((tables / 2)) 3;quit" \
       "$app" -ApplePersistenceIgnoreState YES -wiresAvoidTables $avoid 2>&1 | grep '^shake:' || echo "shake: failed")
     rm -rf "$scratch"
