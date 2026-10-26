@@ -685,22 +685,15 @@ struct CanvasView: View {
         }
     }
 
-    /// A port's outline in its own terms, x out of the group and y across: its outside end rounded as a pill's, its
-    /// inside end as wide as its wires need, its corners rounded.
+    /// A port's outline in its own terms, x out of the group and y across: the bar across its inside end and the stem
+    /// out to its outside end, each a pill's thickness with round ends, as one shape.
     static func portOutline(_ shape: PortShape) -> Path {
-        let (half, outer, inner) = (shape.length / 2, shape.outer, shape.inner)
-        let corners = [CGPoint(x: -half, y: -inner), CGPoint(x: half, y: -outer), CGPoint(x: half, y: outer), CGPoint(x: -half, y: inner)]
-        // Every corner as round as a pill's end, or as the shape has room for: a pill's, along the edge on the top or
-        // bottom, where it's only a pill's height long.
-        let round = shape.cornerRadius
-        let radii = [min(round, inner), min(round, outer), min(round, outer), min(round, inner)]
-        var path = Path()
-        path.move(to: (corners[3] + corners[0]) / 2)
-        for index in corners.indices {
-            path.addArc(tangent1End: corners[index], tangent2End: corners[(index + 1) % corners.count], radius: radii[index])
-        }
-        path.closeSubpath()
-        return path
+        let thickness = min(Metrics.portHeight, shape.length), half = shape.length / 2
+        let bar = Path(roundedRect: CGRect(x: -half, y: -shape.inner, width: thickness, height: shape.inner * 2),
+                       cornerRadius: min(thickness, shape.inner * 2) / 2)
+        let stem = Path(roundedRect: CGRect(x: -half, y: -shape.outer, width: shape.length, height: shape.outer * 2),
+                        cornerRadius: min(shape.length, shape.outer * 2) / 2)
+        return bar.union(stem)
     }
 
     /// Drawn where its wires actually are, so it rides along as they spring into place. A bend point is a dot.

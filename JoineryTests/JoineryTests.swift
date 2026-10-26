@@ -645,7 +645,7 @@ struct JoineryTests {
         for wires in [2, 5, 20, 40] {
             let shape = PortShape(label: "entity.entity_id", wires: wires, isOnLeftOrRight: true)
             let outermost = CGFloat(wires - 1) * Metrics.portSlotSpacing / 2
-            #expect(outermost + Metrics.wireWidth / 2 <= shape.inner - shape.innerRounding + 0.01, "\(wires) wires")
+            #expect(outermost + Metrics.wireWidth / 2 <= shape.flat + 0.01, "\(wires) wires")
         }
         // Its outline keeps within it, on any side: on the top or bottom it's only a pill's height long.
         for isOnLeftOrRight in [true, false] {
