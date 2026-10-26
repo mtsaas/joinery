@@ -641,6 +641,15 @@ struct JoineryTests {
         #expect(pill.inner == pill.outer && pill.outer == Metrics.portHeight / 2)
         let fan = PortShape(label: "users.id", wires: 20, isOnLeftOrRight: true)
         #expect(fan.inner > fan.outer * 3 && fan.outer == pill.outer && fan.length >= pill.length)
+        // Its outline keeps within it, on any side: on the top or bottom it's only a pill's height long.
+        for isOnLeftOrRight in [true, false] {
+            for wires in [0, 1, 3, 20] {
+                let shape = PortShape(label: "entity.entity_id", wires: wires, isOnLeftOrRight: isOnLeftOrRight)
+                let bounds = CanvasView.portOutline(shape).boundingRect
+                #expect(bounds.width <= shape.length + 0.01 && bounds.height <= max(shape.inner, shape.outer) * 2 + 0.01,
+                        "\(isOnLeftOrRight ? "side" : "top"), \(wires) wires: \(bounds)")
+            }
+        }
         let bus = try #require(routing.routes[id])
         #expect(bus.points.first == port.outside)
         #expect(bus.points.last == Metrics.socket(row: 0, side: .trailing, in: Metrics.frame(of: users)))

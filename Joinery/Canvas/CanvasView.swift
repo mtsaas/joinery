@@ -662,8 +662,10 @@ struct CanvasView: View {
     static func portOutline(_ shape: PortShape) -> Path {
         let (half, outer, inner) = (shape.length / 2, shape.outer, shape.inner)
         let corners = [CGPoint(x: -half, y: -inner), CGPoint(x: half, y: -outer), CGPoint(x: half, y: outer), CGPoint(x: -half, y: inner)]
-        // Each corner as round as it can be: the outside ones fully, as a pill's end; the inside ones as the pill's.
-        let radii = [min(Metrics.portHeight / 2, inner), outer, outer, min(Metrics.portHeight / 2, inner)]
+        // Every corner as round as a pill's end, or as the shape has room for: a pill's, along the edge on the top or
+        // bottom, where it's only a pill's height long.
+        let round = min(Metrics.portHeight / 2, half)
+        let radii = [min(round, inner), min(round, outer), min(round, outer), min(round, inner)]
         var path = Path()
         path.move(to: (corners[3] + corners[0]) / 2)
         for index in corners.indices {

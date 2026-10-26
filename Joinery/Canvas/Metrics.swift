@@ -51,8 +51,8 @@ enum Metrics {
     /// The + for adding a port by a group's edge, on screen.
     static let portHintRadius: CGFloat = 10
 
-    /// How far apart wires plugging into a port's inside end are.
-    static let portSlotSpacing: CGFloat = 6
+    /// How far apart wires plugging into a port's inside end are: as a zip tie holds them.
+    static let portSlotSpacing: CGFloat = tieSpacing
 
     /// Which grid column a point on a table falls in, by its distance from the table's left edge.
     enum GridColumn { case key, name, type }
