@@ -40,6 +40,28 @@ Schemas live in a library shown in the sidebar. Each schema is a plain `.joinery
 Each wire takes the color of the table it references, and FK cells match it. Wires leave sockets and pass through
 ties and bend points square to them.
 
+## AI assistants (MCP)
+
+While Joinery is open it runs an MCP server at `http://127.0.0.1:8723/mcp`, reachable only from this Mac. An assistant connected to it can read and edit the schema open in the window. Changes show up as they're made, save themselves, and undo with ⌘Z.
+
+To connect Claude Code, run this (also copied by "Connect an AI Assistant" in the ⌘K palette):
+
+```bash
+claude mcp add --transport http joinery http://127.0.0.1:8723/mcp
+```
+
+Other assistants can use the same URL. Those that only run local commands can bridge to it with `npx -y mcp-remote http://127.0.0.1:8723/mcp`.
+
+| Tool | Does |
+| --- | --- |
+| `list_schemas`, `open_schema`, `new_schema` | Choose what to work on |
+| `get_schema` | Every table, column, type, key and foreign key |
+| `create_tables` | Adds tables, placed clear of the others. A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole schema can be made in one call |
+| `alter_table` | Renames, recolors, adds, drops or changes columns |
+| `drop_tables`, `add_foreign_key`, `remove_foreign_key` | What they say |
+
+Types accept SQL spellings, such as `varchar(255)`, `decimal(10,2)`, `bigserial` and `timestamp with time zone`. Each call applies completely or not at all.
+
 ## Frame rate (Debug builds)
 
 The bottom-left corner shows frames per second while anything moves, and what the last frame cost: routing the wires and drawing them. `JOINERY_SCRIPT="shake <table> <seconds>"` drags a table about and prints the frame rate and how long each whole update took.

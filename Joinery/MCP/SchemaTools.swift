@@ -1,0 +1,339 @@
+import CoreGraphics
+import Foundation
+
+/// What an AI assistant can do to a schema over MCP: read it, add, change and drop tables, and add and remove foreign
+/// keys. Each call works on a copy and either applies whole or not at all, so it's one change, and one undo.
+@MainActor
+enum SchemaTools {
+    struct Failure: LocalizedError {
+        let message: String
+        init(_ message: String) { self.message = message }
+        var errorDescription: String? { message }
+    }
+
+    // MARK: Definitions
+
+    private static let columnSchema: [String: Any] = [
+        "type": "object",
+        "properties": [
+            "name": ["type": "string"],
+            "type": ["type": "string", "description": "uuid, integer, bigint, numeric, text, varchar, boolean, date, timestamp, json or bytea; SQL spellings and aliases such as int, serial, decimal(10,2), varchar(255), jsonb also work. Defaults to text."],
+            "primary_key": ["type": "boolean"],
+            "nullable": ["type": "boolean"],
+            "references": ["type": "string", "description": "Makes this a foreign key: \"table.column\", or just \"table\" for its primary key."],
+        ],
+        "required": ["name"],
+    ]
+
+    private static let tableReference: [String: Any] = ["type": "string", "description": "The table's name."]
+
+    static let definitions: [[String: Any]] = [
+        [
+            "name": "get_schema",
+            "description": "The open schema: every table with its columns (type, primary key, nullable) and the foreign keys between them. Read this before changing anything.",
+            "inputSchema": ["type": "object", "properties": [String: Any]()],
+            "annotations": ["readOnlyHint": true],
+        ],
+        [
+            "name": "create_tables",
+            "description": "Adds one or more tables, placed clear of the others. Columns can reference tables created in the same call, so a whole schema can be made at once.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "tables": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "name": ["type": "string"],
+                                "columns": ["type": "array", "items": columnSchema],
+                                "color": ["type": "string", "enum": TableColor.allCases.map(\.rawValue)],
+                            ],
+                            "required": ["name", "columns"],
+                        ],
+                    ],
+                ],
+                "required": ["tables"],
+            ],
+        ],
+        [
+            "name": "alter_table",
+            "description": "Changes a table: renames it, recolors it, adds, drops or changes columns. A changed column's references can be set to a table or column, or to an empty string to drop its foreign key.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "table": tableReference,
+                    "rename_to": ["type": "string"],
+                    "color": ["type": "string", "enum": TableColor.allCases.map(\.rawValue)],
+                    "add_columns": ["type": "array", "items": columnSchema],
+                    "drop_columns": ["type": "array", "items": ["type": "string"]],
+                    "change_columns": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "name": ["type": "string", "description": "The column's current name."],
+                                "rename_to": ["type": "string"],
+                                "type": ["type": "string"],
+                                "primary_key": ["type": "boolean"],
+                                "nullable": ["type": "boolean"],
+                                "references": ["type": "string"],
+                            ],
+                            "required": ["name"],
+                        ],
+                    ],
+                ],
+                "required": ["table"],
+            ],
+        ],
+        [
+            "name": "drop_tables",
+            "description": "Removes tables, and every foreign key to or from them.",
+            "inputSchema": [
+                "type": "object",
+                "properties": ["tables": ["type": "array", "items": tableReference]],
+                "required": ["tables"],
+            ],
+            "annotations": ["destructiveHint": true],
+        ],
+        [
+            "name": "add_foreign_key",
+            "description": "Makes a column a foreign key to another: from \"orders.user_id\" to \"users.id\", or to \"users\" for its primary key.",
+            "inputSchema": [
+                "type": "object",
+                "properties": ["from": ["type": "string"], "to": ["type": "string"]],
+                "required": ["from", "to"],
+            ],
+        ],
+        [
+            "name": "remove_foreign_key",
+            "description": "Removes the foreign keys from a column (\"orders.user_id\"), or only the one to `to`.",
+            "inputSchema": [
+                "type": "object",
+                "properties": ["from": ["type": "string"], "to": ["type": "string"]],
+                "required": ["from"],
+            ],
+        ],
+    ]
+
+    static var names: Set<String> { Set(definitions.compactMap { $0["name"] as? String }) }
+
+    // MARK: Calls
+
+    /// Runs `name` on `schema`, which is left alone if it fails.
+    /// - Returns: What happened, for the assistant.
+    static func call(_ name: String, _ arguments: [String: Any], on schema: inout Schema) throws -> String {
+        var draft = schema
+        let result: String
+        switch name {
+        case "get_schema": return try describe(schema)
+        case "create_tables": result = try createTables(arguments, in: &draft)
+        case "alter_table": result = try alterTable(arguments, in: &draft)
+        case "drop_tables": result = try dropTables(arguments, in: &draft)
+        case "add_foreign_key":
+            let from = try column(named: string("from", in: arguments), in: draft)
+            let to = try column(named: string("to", in: arguments), in: draft)
+            guard draft.connect(from, to: to) != nil else { throw Failure("That foreign key already exists.") }
+            result = "Added \(draft.qualifiedName(of: from)!) → \(draft.qualifiedName(of: to)!)."
+        case "remove_foreign_key":
+            let from = try column(named: string("from", in: arguments), in: draft)
+            let to = try (arguments["to"] as? String).map { try column(named: $0, in: draft) }
+            let count = draft.relationships.count
+            draft.removeRelationships { $0.from == from && (to == nil || $0.to == to) }
+            guard draft.relationships.count < count else { throw Failure("There's no such foreign key.") }
+            result = "Removed \(count - draft.relationships.count) foreign key\(count - draft.relationships.count == 1 ? "" : "s")."
+        default: throw Failure("There's no tool called \(name).")
+        }
+        schema = draft
+        return result
+    }
+
+    /// The schema as JSON: tables in order, each column's foreign key as "table.column".
+    static func describe(_ schema: Schema) throws -> String {
+        let references = Dictionary(schema.relationships.compactMap { r in schema.qualifiedName(of: r.to).map { (r.from, $0) } },
+                                    uniquingKeysWith: { first, _ in first })
+        let tables: [[String: Any]] = schema.tables.map { table in
+            [
+                "name": table.name,
+                "color": table.color.rawValue,
+                "columns": table.columns.map { column -> [String: Any] in
+                    var description: [String: Any] = ["name": column.name, "type": column.type.rawValue]
+                    if column.isPrimaryKey { description["primary_key"] = true }
+                    if column.isNullable { description["nullable"] = true }
+                    if let reference = references[column.id] { description["references"] = reference }
+                    return description
+                },
+            ]
+        }
+        let data = try JSONSerialization.data(withJSONObject: ["tables": tables], options: [.prettyPrinted, .sortedKeys])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private static func createTables(_ arguments: [String: Any], in schema: inout Schema) throws -> String {
+        guard let specs = arguments["tables"] as? [[String: Any]], !specs.isEmpty else { throw Failure("Give at least one table.") }
+        // Every table first, so columns can reference any of them.
+        var pending: [(column: Column.ID, references: String)] = []
+        var names: [String] = []
+        for spec in specs {
+            let name = try string("name", in: spec)
+            guard schema.tables.allSatisfy({ $0.name.lowercased() != name.lowercased() }) else {
+                throw Failure("There's already a table called \(name).")
+            }
+            let id = schema.addTable(at: .zero)
+            let index = schema.tables.count - 1
+            schema.tables[index].name = name
+            if let color = spec["color"] as? String { schema.tables[index].color = try tableColor(color) }
+            let columns = try (spec["columns"] as? [Any] ?? []).map { try column($0) }
+            if !columns.isEmpty { schema.tables[index].columns = columns.map(\.column) }
+            try requireUniqueColumns(schema.tables[index])
+            pending += columns.compactMap { column in column.references.map { (column.column.id, $0) } }
+            schema.tables[index].position = schema.openSpot(for: schema.tables[index], excluding: id)
+            names.append(name)
+        }
+        for (column, reference) in pending {
+            schema.connect(column, to: try self.column(named: reference, in: schema))
+        }
+        let keys = pending.count
+        return "Created \(names.joined(separator: ", "))" + (keys > 0 ? " with \(keys) foreign key\(keys == 1 ? "" : "s")." : ".")
+    }
+
+    private static func alterTable(_ arguments: [String: Any], in schema: inout Schema) throws -> String {
+        let id = try table(named: string("table", in: arguments), in: schema).id
+        var index: Int { schema.tables.firstIndex { $0.id == id }! }
+        var changes: [String] = []
+        if let name = arguments["rename_to"] as? String, !name.isEmpty {
+            guard schema.tables.allSatisfy({ $0.id == id || $0.name.lowercased() != name.lowercased() }) else {
+                throw Failure("There's already a table called \(name).")
+            }
+            schema.tables[index].name = name
+            changes.append("renamed it \(name)")
+        }
+        if let color = arguments["color"] as? String {
+            schema.tables[index].color = try tableColor(color)
+            changes.append("made it \(color)")
+        }
+        for name in arguments["drop_columns"] as? [String] ?? [] {
+            schema.removeColumn(try column(named: name, in: schema.tables[index]).id)
+            changes.append("dropped \(name)")
+        }
+        for spec in arguments["change_columns"] as? [[String: Any]] ?? [] {
+            let name = try string("name", in: spec)
+            let columnID = try column(named: name, in: schema.tables[index]).id
+            let row = schema.tables[index].columns.firstIndex { $0.id == columnID }!
+            if let newName = spec["rename_to"] as? String, !newName.isEmpty { schema.tables[index].columns[row].name = newName }
+            if let type = spec["type"] as? String {
+                let parsed = try dataType(type)
+                schema.tables[index].columns[row].type = parsed.type
+                if parsed.isNullable { schema.tables[index].columns[row].isNullable = true }
+            }
+            if let isPrimaryKey = spec["primary_key"] as? Bool { schema.tables[index].columns[row].isPrimaryKey = isPrimaryKey }
+            if let isNullable = spec["nullable"] as? Bool { schema.tables[index].columns[row].isNullable = isNullable }
+            if let reference = spec["references"] as? String {
+                schema.removeRelationships { $0.from == columnID }
+                if !reference.isEmpty { schema.connect(columnID, to: try column(named: reference, in: schema)) }
+            }
+            changes.append("changed \(name)")
+        }
+        let added = try (arguments["add_columns"] as? [Any] ?? []).map { try column($0) }
+        schema.tables[index].columns += added.map(\.column)
+        for (column, reference) in added.compactMap({ c in c.references.map { (c.column.id, $0) } }) {
+            schema.connect(column, to: try self.column(named: reference, in: schema))
+        }
+        if !added.isEmpty { changes.append("added \(added.map(\.column.name).joined(separator: ", "))") }
+        try requireUniqueColumns(schema.tables[index])
+        guard !changes.isEmpty else { throw Failure("Nothing to change: give rename_to, color, add_columns, drop_columns or change_columns.") }
+        return "\(schema.tables[index].name): " + changes.joined(separator: "; ") + "."
+    }
+
+    private static func dropTables(_ arguments: [String: Any], in schema: inout Schema) throws -> String {
+        guard let names = arguments["tables"] as? [String], !names.isEmpty else { throw Failure("Give the tables to drop.") }
+        for name in names { schema.removeTable(try table(named: name, in: schema).id) }
+        return "Dropped \(names.joined(separator: ", "))."
+    }
+
+    // MARK: Reading arguments
+
+    private static func string(_ key: String, in arguments: [String: Any]) throws -> String {
+        guard let value = arguments[key] as? String, !value.isEmpty else { throw Failure("“\(key)” is required.") }
+        return value
+    }
+
+    private static func column(_ spec: Any) throws -> (column: Column, references: String?) {
+        guard let spec = spec as? [String: Any] else { throw Failure("Each column is an object with a name and type.") }
+        let parsed = try dataType(spec["type"] as? String ?? "text")
+        let column = Column(name: try string("name", in: spec), type: parsed.type,
+                            isPrimaryKey: spec["primary_key"] as? Bool ?? false,
+                            isNullable: spec["nullable"] as? Bool ?? parsed.isNullable)
+        return (column, (spec["references"] as? String).flatMap { $0.isEmpty ? nil : $0 })
+    }
+
+    /// A type as SQL might spell it: "VARCHAR(255)", "decimal(10, 2)", "timestamp with time zone", "int?".
+    static func dataType(_ text: String) throws -> (type: DataType, isNullable: Bool) {
+        let isNullable = text.hasSuffix("?")
+        let word = text.split(whereSeparator: { "( ?".contains($0) }).first.map(String.init) ?? ""
+        guard let parsed = DataType.parse(word) else {
+            throw Failure("Unknown type “\(text)”. Use one of: \(DataType.allCases.map(\.rawValue).joined(separator: ", ")).")
+        }
+        return (parsed.type, isNullable)
+    }
+
+    private static func tableColor(_ name: String) throws -> TableColor {
+        guard let color = TableColor(rawValue: name.lowercased()) else {
+            throw Failure("Unknown color “\(name)”. Use one of: \(TableColor.allCases.map(\.rawValue).joined(separator: ", ")).")
+        }
+        return color
+    }
+
+    private static func table(named name: String, in schema: Schema) throws -> Table {
+        guard let table = schema.tables.first(where: { $0.name.lowercased() == name.lowercased() }) else {
+            throw Failure("There's no table called \(name). Tables: \(schema.tables.map(\.name).joined(separator: ", ")).")
+        }
+        return table
+    }
+
+    private static func column(named name: String, in table: Table) throws -> Column {
+        guard let column = table.columns.first(where: { $0.name.lowercased() == name.lowercased() }) else {
+            throw Failure("\(table.name) has no column called \(name). Its columns: \(table.columns.map(\.name).joined(separator: ", ")).")
+        }
+        return column
+    }
+
+    /// "table.column", or "table" for its primary key.
+    private static func column(named reference: String, in schema: Schema) throws -> Column.ID {
+        let parts = reference.split(separator: ".", maxSplits: 1).map(String.init)
+        let table = try table(named: parts.first ?? reference, in: schema)
+        if parts.count == 2 { return try column(named: parts[1], in: table).id }
+        let keys = table.columns.filter(\.isPrimaryKey)
+        guard keys.count == 1 else {
+            throw Failure("\(table.name) has \(keys.isEmpty ? "no" : "a compound") primary key; name the column: \(table.name).<column>.")
+        }
+        return keys[0].id
+    }
+
+    private static func requireUniqueColumns(_ table: Table) throws {
+        var seen: Set<String> = []
+        for column in table.columns where !seen.insert(column.name.lowercased()).inserted {
+            throw Failure("\(table.name) would have two columns called \(column.name).")
+        }
+    }
+}
+
+extension Schema {
+    /// Where `table` can go without crowding the others: the first gap, reading left to right in rows over the area
+    /// they cover, or below them all.
+    func openSpot(for table: Table, excluding id: Table.ID) -> CGPoint {
+        let others = tables.filter { $0.id != id }.map(Metrics.frame)
+        guard let bounds = others.reduce(nil, { $0?.union($1) ?? $1 }) else { return .zero }
+        let gap: CGFloat = 80, size = Metrics.size(of: table)
+        let step = Metrics.tableWidth + gap
+        let columns = max(4, Int((bounds.width + gap) / step))
+        for row in 0... {
+            for column in 0..<columns {
+                let origin = CGPoint(x: bounds.minX + CGFloat(column) * step, y: bounds.minY + CGFloat(row) * 40)
+                let room = CGRect(origin: origin, size: size).insetBy(dx: -gap / 2, dy: -gap / 2)
+                if !others.contains(where: { $0.intersects(room) }) { return origin }
+            }
+        }
+        return .zero
+    }
+}

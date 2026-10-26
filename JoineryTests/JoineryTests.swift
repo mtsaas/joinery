@@ -343,4 +343,35 @@ struct JoineryTests {
         #expect(CommandWheel.direction(of: CGPoint(x: 50, y: -1)) == .east)
         #expect(CommandWheel.direction(of: CGPoint(x: -50, y: -1)) == .west, "either side of ±180°")
     }
+
+    @Test func assistantToolsBuildASchemaInOneCall() throws {
+        var schema = Schema()
+        let result = try SchemaTools.call("create_tables", ["tables": [
+            ["name": "users", "columns": [["name": "id", "type": "uuid", "primary_key": true]]],
+            ["name": "posts", "columns": [["name": "id", "type": "bigserial", "primary_key": true],
+                                          ["name": "author_id", "type": "UUID", "references": "users"],
+                                          ["name": "price", "type": "decimal(10, 2)"],
+                                          ["name": "body", "type": "text?"]]],
+        ]], on: &schema)
+        #expect(result == "Created users, posts with 1 foreign key.")
+        let posts = try #require(schema.tables.first { $0.name == "posts" })
+        #expect(posts.columns.map(\.type) == [.bigint, .uuid, .numeric, .text])
+        #expect(posts.columns[3].isNullable)
+        #expect(schema.qualifiedName(of: schema.relationships[0].to) == "users.id", "a bare table name means its primary key")
+        #expect(!Metrics.frame(of: schema.tables[0]).intersects(Metrics.frame(of: posts)), "placed clear of each other")
+
+        // A failing call changes nothing, even after parts of it would have worked.
+        let before = schema
+        #expect(throws: SchemaTools.Failure.self) {
+            try SchemaTools.call("create_tables", ["tables": [
+                ["name": "tags", "columns": [["name": "id", "type": "int"]]],
+                ["name": "post_tags", "columns": [["name": "tag_id", "references": "nope"]]],
+            ]], on: &schema)
+        }
+        #expect(schema == before)
+
+        _ = try SchemaTools.call("alter_table", ["table": "POSTS", "change_columns": [["name": "author_id", "references": ""]]],
+                                 on: &schema)
+        #expect(schema.relationships.isEmpty, "an empty reference drops the foreign key")
+    }
 }

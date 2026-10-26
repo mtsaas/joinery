@@ -212,6 +212,11 @@ struct CanvasView: View {
         commands += [
             PaletteCommand(id: "avoid", title: "Wires Avoid Tables", subtitle: wiresAvoidTables ? "On" : "Off",
                            symbol: "point.topleft.down.to.point.bottomright.curvepath") { wiresAvoidTables.toggle() },
+            PaletteCommand(id: "mcp", title: "Connect an AI Assistant", subtitle: "Copies the setup command",
+                           symbol: "sparkles") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(MCPServer.setupCommand, forType: .string)
+            },
             PaletteCommand(id: "select-all", title: "Select All", symbol: "checkmark.rectangle.stack", shortcut: "⌘A") {
                 canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })
             },
