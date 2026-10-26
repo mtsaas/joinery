@@ -58,7 +58,7 @@ struct ModelEditor: View {
     @Environment(\.undoManager) private var undoManager
 
     var body: some View {
-        let model = Binding { open.model } set: { open.change(to: $0) }
+        let model = Binding { canvas.shown(open.model) } set: { open.change(to: $0) }
         CanvasView(model: model, canvas: canvas)
             // Under the toolbar, which floats over it, but not the sidebar, so fitting the model fits what's visible.
             .ignoresSafeArea(edges: .top)

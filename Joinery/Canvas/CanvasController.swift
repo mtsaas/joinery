@@ -310,14 +310,30 @@ final class CanvasController {
     var untangling: (from: Int, best: Int, progress: Double)?
     @ObservationIgnored private var untangleTask: Task<Void, Never>?
 
+    /// Zip ties an untangling will delete, hidden while it runs.
+    private(set) var untanglingTies: Set<ZipTie.ID> = []
+
+    /// `model` as the canvas shows it: without the zip ties an untangling in progress will delete.
+    func shown(_ model: DataModel) -> DataModel {
+        guard !untanglingTies.isEmpty else { return model }
+        var shown = model
+        for tie in untanglingTies { shown.removeZipTie(tie) }
+        return shown
+    }
+
     /// Moves the selected tables (and selected groups'), step by step, toward where fewer wires cross, showing it as it
-    /// goes; then saves where it got to as one change, without the zip ties on their wires or selected, which the move
-    /// leaves in the wrong places. One undo puts it all back. If it finds nothing better, nothing changes.
+    /// goes; then saves where it got to as one change, deleting the zip ties in the selection and on the moved tables'
+    /// wires, which the move leaves in the wrong places (hidden from the start). One undo puts it all back. Stopped,
+    /// nothing changes.
     func untangleSelection(of model: Binding<DataModel>) {
-        let moving = selectedTablesAndMembers(in: model.wrappedValue)
-        guard !moving.isEmpty, untangleTask == nil else { return }
-        let selectedTies = selectedTies
         let start = model.wrappedValue
+        let moving = selectedTablesAndMembers(in: start)
+        guard !moving.isEmpty, untangleTask == nil else { return }
+        let columns = Set(start.tables.filter { moving.contains($0.id) }.flatMap(\.columns).map(\.id))
+        let wires = Set(start.relationships.filter { columns.contains($0.from) || columns.contains($0.to) }.map(\.id))
+        let selectedTies = selectedTies
+        untanglingTies = Set(start.zipTies.filter { selectedTies.contains($0.id) || $0.relationships.contains(where: wires.contains) }.map(\.id))
+        let ties = untanglingTies
         untangleTask = Task {
             var untangler = Untangler(model: start, moving: moving)
             untangling = (untangler.startingCrossings, untangler.startingCrossings, 0)
@@ -333,18 +349,18 @@ final class CanvasController {
             previewOffsets = [:]
             untangling = nil
             untangleTask = nil
-            guard isFinished, untangler.best.crossings < untangler.startingCrossings else { return }
+            untanglingTies = []
+            guard isFinished else { return }
             var untangled = model.wrappedValue
-            let offsets = untangler.bestOffsets
-            for index in untangled.tables.indices {
-                if let offset = offsets[untangled.tables[index].id] { untangled.tables[index].position += offset }
+            // The tables moved only if that crosses fewer wires; the ties go either way.
+            if untangler.best.crossings < untangler.startingCrossings {
+                let offsets = untangler.bestOffsets
+                for index in untangled.tables.indices {
+                    if let offset = offsets[untangled.tables[index].id] { untangled.tables[index].position += offset }
+                }
             }
-            // Ties on the moved tables' wires, and any selected.
-            let columns = Set(untangled.tables.filter { moving.contains($0.id) }.flatMap(\.columns).map(\.id))
-            let wires = Set(untangled.relationships.filter { columns.contains($0.from) || columns.contains($0.to) }.map(\.id))
-            for tie in untangled.zipTies where selectedTies.contains(tie.id) || tie.relationships.contains(where: wires.contains) {
-                untangled.removeZipTie(tie.id)
-            }
+            for tie in ties { untangled.removeZipTie(tie) }
+            selection.subtract(ties.map { .zipTie($0) })
             model.wrappedValue = untangled
         }
     }

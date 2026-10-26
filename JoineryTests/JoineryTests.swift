@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import struct SwiftUI.Binding
 import Testing
 @testable import Joinery
 
@@ -594,5 +595,24 @@ struct JoineryTests {
         for index in untangled.tables.indices { untangled.tables[index].position += first.bestOffsets[untangled.tables[index].id] ?? .zero }
         let frames = untangled.tables.map(Metrics.frame)
         for (i, a) in frames.enumerated() { for b in frames[(i + 1)...] { #expect(!a.intersects(b)) } }
+    }
+
+    @Test func untanglingDeletesTheSelectionsTiesInOneChange() async throws {
+        var model = storefront()
+        let wire = model.relationships[0]
+        let bend = model.addBendPoint(on: wire.id, at: CGPoint(x: 360, y: 120), direction: CGPoint(x: 1, y: 0), segment: 0)
+        let tie = try #require(bend)
+        let table = try #require(model.columnLocations[wire.from]?.table.id)
+        // One table alone, so there may be nothing better to move to: the tie goes all the same.
+        let canvas = CanvasController()
+        canvas.selection = [.table(table)]
+        var changes: [DataModel] = []
+        let binding = Binding { model } set: { model = $0; changes.append($0) }
+        canvas.untangleSelection(of: binding)
+        #expect(canvas.shown(model).zipTies.isEmpty, "hidden while it runs")
+        while canvas.isUntangling { try await Task.sleep(for: .milliseconds(20)) }
+        #expect(changes.count == 1, "one undo")
+        #expect(model.zipTies.isEmpty && model.relationships[0].zipTies.isEmpty)
+        #expect(!canvas.selection.contains(.zipTie(tie)))
     }
 }
