@@ -40,6 +40,7 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
 | Select | Click tables, wires, ties; Shift-click to add; drag a box around tables, ties and wires to select those wholly inside it; ⌘A for everything |
 | Move | Drag anything selected to move the whole selection. Tables snap into line with others, edges or centers, and guides show where they line up; hold ⌘ to move freely. Hold Shift to keep a move horizontal or vertical. Arrow keys nudge (Shift for 10 points) |
 | Delete | Delete removes the selection, or from the wheel |
+| Minimap | Bottom right: the whole data model small, with a frame around what's in view; click or drag in it to go there. View ▸ Show Minimap (⇧⌘M) hides it |
 | Pan / zoom | Scroll, right-drag, or hold Space and drag / pinch, ⌘-scroll, ⌘+ ⌘- ⌘0, Zoom to Fit ⌘1 |
 
 Each wire takes the color of the table it references, and FK cells match it. Wires leave sockets and pass through

@@ -5,6 +5,7 @@ struct CanvasCommands: Commands {
     @FocusedValue(\.canvasController) private var canvas
     @FocusedBinding(\.model) private var model
     @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
+    @AppStorage("showsMinimap") private var showsMinimap = true
 
     /// Does something to the frontmost data model, as one change.
     private func change(_ body: (CanvasController, inout DataModel) -> Void) {
@@ -50,6 +51,8 @@ struct CanvasCommands: Commands {
                 .keyboardShortcut("k")
                 .disabled(canvas == nil)
             Toggle("Wires Avoid Tables", isOn: $wiresAvoidTables)
+            Toggle("Show Minimap", isOn: $showsMinimap)
+                .keyboardShortcut("m", modifiers: [.command, .shift])
             Divider()
             Button("Zoom In") { canvas?.zoom(by: 1.25) }
                 .keyboardShortcut("+")

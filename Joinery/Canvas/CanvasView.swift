@@ -28,6 +28,7 @@ struct CanvasView: View {
     @State private var press: Press?
     @State private var hoveredSocket: Routing.Socket?
     @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
+    @AppStorage("showsMinimap") private var showsMinimap = true
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
@@ -70,6 +71,17 @@ struct CanvasView: View {
                 } actions: {
                     Button("Add Table") { canvas.addTable(to: &model) }
                 }
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if showsMinimap, !model.tables.isEmpty, canvas.viewSize.width > 0 {
+                let zoom = canvas.zoom
+                Minimap(tables: model.tables,
+                        groups: model.groups.compactMap { group in model.frame(of: group.id).map { (group, $0) } },
+                        visible: CGRect(origin: CGPoint(x: -canvas.offset.x / zoom, y: -canvas.offset.y / zoom), size: canvas.viewSize * (1 / zoom))) {
+                    canvas.center(on: CGRect(origin: $0, size: .zero))
+                }
+                .padding(16)
             }
         }
         .overlay(alignment: .bottom) {
