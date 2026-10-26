@@ -48,7 +48,8 @@ struct Routing {
     /// Where each group's ports are, and the wires each bundles.
     private(set) var ports: [GroupPort.ID: DataModel.PortPlacement] = [:]
     private(set) var ties: [ZipTie.ID: Tie] = [:]
-    /// The sockets each wire is plugged into: its foreign key's, then the referenced column's.
+    /// The sockets each wire is plugged into: its foreign key's, then the referenced column's. A port's bus, by the
+    /// port's ID, plugs into its column's, at both ends.
     private(set) var sockets: [Relationship.ID: (from: Socket, to: Socket)] = [:]
 
     /// What each wire's route was worked out from: where it runs through, its curve before avoiding anything, and the
@@ -136,11 +137,14 @@ struct Routing {
                 }
             }
         }
-        // Each port's bus: out of the port, square to the edge, into its column's socket on the side facing it.
+        // Each port's bus: out of the port, square to the edge, into its column's socket on the side facing it. There
+        // even before any wire runs through it, as a socket for the group's tables to plug into.
         var buses: [(id: GroupPort.ID, waypoints: [Waypoint], column: Column.ID)] = []
-        for (id, port) in ports.sorted(by: { $0.key.uuidString < $1.key.uuidString }) where !port.wires.isEmpty {
+        for (id, port) in ports.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
             guard let row = rows[port.column], let frame = frames[row.table] else { continue }
             let side: Side = port.point.x < frame.midX ? .leading : .trailing
+            let socket = Socket(column: port.column, side: side)
+            sockets[id] = (socket, socket)
             buses.append((id, [Waypoint(point: port.point, tangent: port.normal),
                                Waypoint(point: Metrics.socket(row: row.row, side: side, in: frame), tangent: -side.outward)], port.column))
         }

@@ -562,7 +562,7 @@ struct CanvasView: View {
                 }
                 // Each port's bus, then the port over where its wires meet it.
                 for (id, port) in routing.ports {
-                    let color = port.wires.first.flatMap { colors[$0] } ?? .gray
+                    let color = colors[id] ?? .gray
                     let isDimmed = highlighted.map { highlighted in !port.wires.contains(where: highlighted.contains) } ?? false
                     if let bus = simulation.wires[id] {
                         let path = wirePaths.path(for: id, through: bus.points)
@@ -1510,12 +1510,15 @@ private final class RoutingCache {
 
     private var colors: (model: DataModel, colors: [Relationship.ID: Color])?
 
-    /// Each wire's color, the color of the table it references, worked out again only when the model changes.
+    /// Each wire's color, the color of the table it references, and each port's bus's, worked out again only when the
+    /// model changes.
     func wireColors(for model: DataModel) -> [Relationship.ID: Color] {
         if let colors, colors.model == model { return colors.colors }
         let locations = model.columnLocations
-        let wireColors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
+        var wireColors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
                                     uniquingKeysWith: { first, _ in first })
+        // A port's bus, by its ID, is its column's table's color, as the wires to that column are.
+        for port in model.groups.flatMap(\.ports) { wireColors[port.id] = locations[port.column]?.table.color.color }
         colors = (model, wireColors)
         return wireColors
     }

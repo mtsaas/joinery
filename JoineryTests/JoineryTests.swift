@@ -662,10 +662,22 @@ struct JoineryTests {
         model.movePort(id, to: nil)
         #expect(model.portPlacements()[id]?.normal == CGPoint(x: -1, y: 0))
 
+        // A port for a column none of the group's tables reference yet still runs its bus there, plugged in, to tie into.
+        let reviews = model.tables[2].id
+        let lone = model.group([reviews], named: "feedback")
+        let reviewColumns = Set(model.tables[2].columns.map(\.id))
+        model.removeRelationships { reviewColumns.contains($0.from) }
+        let added = model.addPort(to: lone, for: usersID)
+        let empty = try #require(added)
+        let emptyRouting = Routing(model: model)
+        #expect(emptyRouting.ports[empty]?.wires.isEmpty == true)
+        #expect(emptyRouting.routes[empty]?.points.first == emptyRouting.ports[empty]?.point)
+        #expect(emptyRouting.sockets[empty]?.to.column == usersID)
+
         // Once users joins the group, there's nothing outside to stand for.
         model.tables[0].group = group
         model.repair()
-        #expect(model.groups[0].ports.isEmpty)
+        #expect(model.groups.first { $0.id == group }?.ports.isEmpty == true)
     }
 
     @Test func assistantsTablesLandInOpenSpaceBesideTheirCompany() throws {

@@ -204,6 +204,15 @@ enum DebugHooks {
                 let json = words.dropFirst(2).joined(separator: " ")
                 let arguments = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
                 do { print("mcp:", try ModelTools.call(words[1], arguments, on: &document.wrappedValue)) } catch { print("mcp failed:", error.localizedDescription) }
+            case "add-port" where words.count == 3:
+                // A socket dropped on a group: "add-port hierarchy user_account.user_id".
+                let model = document.wrappedValue
+                let parts = words[2].split(separator: ".").map(String.init)
+                guard let group = model.groups.first(where: { $0.name == words[1] }),
+                      let column = model.tables.first(where: { $0.name == parts.first })?.columns.first(where: { $0.name == parts.last })
+                else { print("add-port: no such group or column"); break }
+                print("add-port:", document.wrappedValue.connect(dragging: column.id, onto: .group(group.id)).map { "\($0)" } ?? "no wire",
+                      document.wrappedValue.portPlacements().values.map { "\($0.label) (\($0.wires.count))" })
             case "port" where words.count >= 2:
                 // The first port put on a side ("port bottom 0.3"), or back facing its column ("port auto").
                 guard let id = document.wrappedValue.groups.lazy.flatMap(\.ports).first?.id else { break }
