@@ -223,6 +223,13 @@ enum DebugHooks {
                    let point = model.edgePoint(of: group.id, at: (side, numbers[0])) {
                     canvas.portHint = (group.id, (side, numbers[0]), point)
                 }
+            case "plug-first" where words.count == 2:
+                // The first port's outside plugged into a column, as a drop would: "plug-first entity.entity_id".
+                let parts = words[1].split(separator: ".").map(String.init)
+                guard let port = document.wrappedValue.groups.lazy.flatMap(\.ports).first?.id,
+                      let column = document.wrappedValue.tables.first(where: { $0.name == parts.first })?.columns.first(where: { $0.name == parts.last })
+                else { break }
+                document.wrappedValue.plug(port, into: column.id)
             case "capture" where words.count == 2:
                 // The window now, to a file: for frames of an animation, between short waits.
                 capture(to: words[1])

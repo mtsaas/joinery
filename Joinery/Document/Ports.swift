@@ -17,23 +17,24 @@ extension DataModel {
         /// The wires bundled through it.
         var wires: [Relationship.ID]
 
-        /// How big its pill is: as long as its name, along the edge.
-        var size: CGSize { Metrics.portSize(label: label) }
-        /// Its sockets, just past the ends of its pill square to the edge: the inside one, for the group's tables'
-        /// wires, and the outside one, for its bus.
-        var inside: CGPoint { point - normal * socketDistance }
-        var outside: CGPoint { point + normal * socketDistance }
-        /// Where the `index`th of `count` wires through it plugs in: side by side across its inside end, a tie's
-        /// spacing apart, so they leave as separate wires, not one bundle.
+        /// Its shape: a pill around its name that widens toward the inside of the group, as many wires as plug in
+        /// there, into a rounded triangle.
+        var shape: PortShape { PortShape(label: label, wires: wires.count, isOnLeftOrRight: normal.x != 0) }
+        /// Where its bus leaves it, at the middle of its outside end, and where its wires come in, at its inside end.
+        var outside: CGPoint { point + normal * shape.length / 2 }
+        var inside: CGPoint { point - normal * shape.length / 2 }
+
+        /// Where the `index`th of `count` wires through it plugs in: side by side across its inside end, so they come
+        /// in as separate wires, not one bundle.
         func insideSlot(_ index: Int, of count: Int) -> CGPoint {
-            guard count > 1 else { return inside }
-            return insideTie + normal.perpendicular * ((CGFloat(index) - CGFloat(count - 1) / 2) * Metrics.tieSpacing)
+            inside + normal.perpendicular * ((CGFloat(index) - CGFloat(count - 1) / 2) * Metrics.portSlotSpacing)
         }
-        /// The middle of the tie holding several wires across its inside end, against the pill.
-        var insideTie: CGPoint { point - normal * (extent / 2 + Metrics.tieThickness / 2) }
-        private var socketDistance: CGFloat { extent / 2 + Metrics.socketDiameter / 2 + 1 }
-        /// How far the pill reaches square to the edge.
-        private var extent: CGFloat { normal.x == 0 ? size.height : size.width }
+
+        /// Whether `point` is on it.
+        func contains(_ point: CGPoint) -> Bool {
+            let offset = point - self.point, shape = shape
+            return abs(offset.dot(normal)) <= shape.length / 2 && abs(offset.dot(normal.perpendicular)) <= max(shape.inner, shape.outer)
+        }
     }
 
     // MARK: Cables
@@ -156,12 +157,9 @@ extension DataModel {
         }
     }
 
-    /// The port whose pill is under `point`, with tables moved by `offsets`.
+    /// The port under `point`, with tables moved by `offsets`.
     func port(at point: CGPoint, offsets: [Table.ID: CGPoint] = [:]) -> GroupPort.ID? {
-        portPlacements(offsets: offsets).first { _, port in
-            CGRect(x: port.point.x - port.size.width / 2, y: port.point.y - port.size.height / 2,
-                   width: port.size.width, height: port.size.height).contains(point)
-        }?.key
+        portPlacements(offsets: offsets).first { $0.value.contains(point) }?.key
     }
 
     /// A port's socket within `reach` of `point`: its outside one, or its inside.
@@ -251,6 +249,35 @@ extension DataModel {
         guard let index = groups.firstIndex(where: { $0.id == group }) else { return }
         groups[index].ports = []
         repair()
+    }
+}
+
+/// A port's shape, in its own terms: how long it is out of the group, and half how wide it is across at its outside end
+/// and at its inside end. A pill, with one wire or none; with more, wider at the inside, as a rounded triangle.
+struct PortShape: Equatable {
+    var length: CGFloat
+    var outer: CGFloat
+    var inner: CGFloat
+
+    init(length: CGFloat, outer: CGFloat, inner: CGFloat) {
+        (self.length, self.outer, self.inner) = (length, outer, inner)
+    }
+
+    /// For a port named `label` with `wires` plugged in, on a group's left or right side, where its name runs out of
+    /// the group, or its top or bottom, where it runs along the edge.
+    init(label: String, wires: Int, isOnLeftOrRight: Bool) {
+        let name = label.isEmpty ? Metrics.portHeight * 1.6 : CGFloat(label.count) * 6.4 + 24
+        let (along, across) = isOnLeftOrRight ? (name, Metrics.portHeight) : (Metrics.portHeight, name)
+        outer = across / 2
+        inner = max(outer, CGFloat(max(wires - 1, 0)) * Metrics.portSlotSpacing / 2 + Metrics.portHeight / 2)
+        // Long enough that its sides don't slope more steeply than about 25°.
+        length = max(along, (inner - outer) * 2.2)
+    }
+
+    /// Partway from `self` to `other`.
+    func mixed(with other: PortShape, by amount: CGFloat) -> PortShape {
+        PortShape(length: length + (other.length - length) * amount, outer: outer + (other.outer - outer) * amount,
+                  inner: inner + (other.inner - inner) * amount)
     }
 }
 

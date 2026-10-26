@@ -633,10 +633,14 @@ struct JoineryTests {
 
         // Each wire ends at the port; one bus runs from it to the users socket facing it.
         let routing = Routing(model: model)
-        // Side by side across its inside end, a tie's spacing apart, not all into one point.
+        // Side by side across its inside end, not all into one point; which widens for them, from a pill's.
         let ends = Set(wires.compactMap { routing.routes[$0]?.points.last })
         #expect(ends == [port.insideSlot(0, of: 2), port.insideSlot(1, of: 2)])
-        #expect(port.insideSlot(0, of: 2).distance(to: port.insideSlot(1, of: 2)) == Metrics.tieSpacing)
+        #expect(port.insideSlot(0, of: 2).distance(to: port.insideSlot(1, of: 2)) == Metrics.portSlotSpacing)
+        let pill = PortShape(label: "users.id", wires: 1, isOnLeftOrRight: true)
+        #expect(pill.inner == pill.outer && pill.outer == Metrics.portHeight / 2)
+        let fan = PortShape(label: "users.id", wires: 20, isOnLeftOrRight: true)
+        #expect(fan.inner > fan.outer * 3 && fan.outer == pill.outer && fan.length >= pill.length)
         let bus = try #require(routing.routes[id])
         #expect(bus.points.first == port.outside)
         #expect(bus.points.last == Metrics.socket(row: 0, side: .trailing, in: Metrics.frame(of: users)))
@@ -659,7 +663,7 @@ struct JoineryTests {
         model.movePort(id, to: spot)
         let moved = try #require(model.portPlacements()[id])
         #expect(moved.normal == CGPoint(x: 0, y: 1) && moved.point == CGPoint(x: frame.midX, y: frame.maxY))
-        #expect(Routing(model: model).routes[wires[0]]?.points.last.map { $0.distance(to: moved.insideTie) <= Metrics.tieSpacing } == true,
+        #expect(Routing(model: model).routes[wires[0]]?.points.last.map { $0.distance(to: moved.inside) <= Metrics.portSlotSpacing } == true,
                 "the wires follow it")
         let saved = try JSONDecoder().decode(DataModel.self, from: model.fileData)
         #expect(saved.portPlacements()[id] == moved, "and it's kept where it was put")

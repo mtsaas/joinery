@@ -25,6 +25,7 @@ struct CanvasView: View {
     @State private var routingCache = RoutingCache()
     @State private var textLayouts = TextLayouts()
     @State private var wirePaths = WirePaths()
+    @State private var portShapes = PortShapes()
     /// What the press on the canvas in progress landed on.
     @State private var press: Press?
     @State private var hoveredSocket: Routing.Socket?
@@ -533,7 +534,7 @@ struct CanvasView: View {
         for port in model.groups.flatMap(\.ports) { cableTies[port.id] = port.zipTies }
 
         let appearing = canvas.appearingPort
-        return TimelineView(.animation(paused: !isAnimating && appearing == nil)) { timeline in
+        return TimelineView(.animation(paused: !isAnimating && appearing == nil && !portShapes.isEasing)) { timeline in
             Canvas { context, _ in
                 #if DEBUG
                 let start = ProcessInfo.processInfo.systemUptime
@@ -580,8 +581,13 @@ struct CanvasView: View {
                         growth = min(1, (ProcessInfo.processInfo.systemUptime - appearing.start) / Self.portAppearance)
                         if growth >= 1 { Task { canvas.appearingPort = nil } }
                     }
-                    drawPort(port, color: color, isSelected: selectedWires.contains(id), isDimmed: isDimmed, growth: growth, zoom: zoom, in: context)
+                    drawPort(port, shape: portShapes[id] ?? port.shape, color: color, isSelected: selectedWires.contains(id),
+                             isDimmed: isDimmed, growth: growth, zoom: zoom, in: context)
                 }
+                // Ports widen and narrow as wires come and go, eased, not at once.
+                let wasEasing = portShapes.isEasing
+                portShapes.advance(toward: routing.ports.mapValues(\.shape), to: timeline.date.timeIntervalSinceReferenceDate)
+                if portShapes.isEasing != wasEasing { Task { isAnimating = isAnimating || portShapes.isEasing } }
                 for (id, tie) in routing.ties {
                     drawTie(tie, id: id, isSelected: selectedTies.contains(id), isHovered: id == hoveredTie,
                             color: tie.relationships.first.flatMap { colors[$0] } ?? .gray,
@@ -626,51 +632,45 @@ struct CanvasView: View {
     /// How long a port takes to grow out of the + it's made with.
     static let portAppearance = 0.24
 
-    /// A pill on its group's edge, filled with its bus's color and named for the column it's plugged into, between a
-    /// socket inside the group and one out: each an empty ring until something plugs in, then filled, as a table's.
-    /// Wires plugged in inside are held side by side by a tie across it. `growth`, from 0 to 1, grows it out of the +.
-    private func drawPort(_ port: DataModel.PortPlacement, color: Color, isSelected: Bool, isDimmed: Bool,
+    /// One solid shape on its group's edge, in its bus's color, named for the column it's plugged into: a pill, widening
+    /// toward the inside, as more wires plug in there, into a rounded triangle. `growth`, from 0 to 1, grows it out of
+    /// the +.
+    private func drawPort(_ port: DataModel.PortPlacement, shape: PortShape, color: Color, isSelected: Bool, isDimmed: Bool,
                           growth: CGFloat = 1, zoom: CGFloat, in context: GraphicsContext) {
         var context = context
         if isDimmed { context.opacity = TableLayer.fadedOpacity }
-        // Eased out: quick at first, settling into place.
+        // Eased out: quick at first, settling into place. From the + it grows out of, a circle as wide as it is.
         let eased = 1 - pow(1 - growth, 3)
-        let plus = Metrics.portHintRadius * 2 / zoom
-        let size = CGSize(width: plus + (port.size.width - plus) * eased, height: plus + (port.size.height - plus) * eased)
-        let pill = CGRect(x: port.point.x - size.width / 2, y: port.point.y - size.height / 2, width: size.width, height: size.height)
-        let shape = Path(roundedRect: pill, cornerRadius: size.height / 2)
-        let fill = port.column == nil ? Theme.card : color
-        context.fill(shape, with: .color(eased < 1 ? Color.accentColor.mix(with: fill, by: eased) : fill))
-        context.stroke(shape, with: .color(isSelected ? Color.accentColor : port.column == nil ? Theme.socket : .clear),
-                       lineWidth: isSelected ? 2 : 1)
+        let plus = Metrics.portHintRadius / zoom
+        let shape = PortShape(length: plus * 2, outer: plus, inner: plus).mixed(with: shape, by: eased)
+        // Its own terms, along the normal and across it, onto the canvas.
+        let across = port.normal.perpendicular
+        let place = CGAffineTransform(a: port.normal.x, b: port.normal.y, c: across.x, d: across.y, tx: port.point.x, ty: port.point.y)
+        let outline = Self.portOutline(shape).applying(place)
+        let fill = port.column == nil ? Theme.socket : color
+        context.fill(outline, with: .color(eased < 1 ? Color.accentColor.mix(with: fill, by: eased) : fill))
+        if isSelected { context.stroke(outline, with: .color(.accentColor), lineWidth: 2) }
         if !port.label.isEmpty {
-            context.draw(context.resolve(Text(port.label).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)), at: port.point)
+            var label = context
+            label.opacity *= eased
+            label.draw(label.resolve(Text(port.label).font(.system(size: 11, weight: .semibold)).foregroundStyle(.white)), at: port.point)
         }
-        context.opacity *= eased
-        if port.wires.count > 1 {
-            // A tie across the inside end, holding the wires plugged in there apart.
-            var tie = context
-            tie.translateBy(x: port.insideTie.x, y: port.insideTie.y)
-            tie.rotate(by: .radians(atan2(port.normal.y, port.normal.x)))
-            let halfLength = Metrics.tieHalfLength(holding: port.wires.count)
-            let band = Path(roundedRect: CGRect(x: -Metrics.tieThickness / 2, y: -halfLength, width: Metrics.tieThickness, height: halfLength * 2),
-                            cornerRadius: Metrics.tieThickness / 2)
-            tie.fill(band, with: .color(Theme.tie))
-            tie.stroke(band, with: .color(.black.opacity(0.18)), lineWidth: 0.5)
+    }
+
+    /// A port's outline in its own terms, x out of the group and y across: its outside end rounded as a pill's, its
+    /// inside end as wide as its wires need, its corners rounded.
+    static func portOutline(_ shape: PortShape) -> Path {
+        let (half, outer, inner) = (shape.length / 2, shape.outer, shape.inner)
+        let corners = [CGPoint(x: -half, y: -inner), CGPoint(x: half, y: -outer), CGPoint(x: half, y: outer), CGPoint(x: -half, y: inner)]
+        // Each corner as round as it can be: the outside ones fully, as a pill's end; the inside ones as the pill's.
+        let radii = [min(Metrics.portHeight / 2, inner), outer, outer, min(Metrics.portHeight / 2, inner)]
+        var path = Path()
+        path.move(to: (corners[3] + corners[0]) / 2)
+        for index in corners.indices {
+            path.addArc(tangent1End: corners[index], tangent2End: corners[(index + 1) % corners.count], radius: radii[index])
         }
-        let line: CGFloat = 1.5, diameter = Metrics.socketDiameter
-        let sockets = (port.wires.count > 1 ? [] : [(port.inside, !port.wires.isEmpty)]) + [(port.outside, port.column != nil)]
-        for (center, isPlugged) in sockets {
-            let circle = Path(ellipseIn: CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter))
-            if isPlugged {
-                context.fill(circle, with: .color(color))
-            } else {
-                context.fill(circle, with: .color(Theme.card))
-                let ring = Path(ellipseIn: CGRect(x: center.x - (diameter - line) / 2, y: center.y - (diameter - line) / 2,
-                                                  width: diameter - line, height: diameter - line))
-                context.stroke(ring, with: .color(Theme.socket), lineWidth: line)
-            }
-        }
+        path.closeSubpath()
+        return path
     }
 
     /// Drawn where its wires actually are, so it rides along as they spring into place. A bend point is a dot.

@@ -51,11 +51,8 @@ enum Metrics {
     /// The + for adding a port by a group's edge, on screen.
     static let portHintRadius: CGFloat = 10
 
-    /// How big a port's pill is, for its name: room for the name and a socket at either end; just the sockets, nameless.
-    static func portSize(label: String) -> CGSize {
-        label.isEmpty ? CGSize(width: portHeight * 1.6, height: portHeight)
-            : CGSize(width: CGFloat(label.count) * 6.4 + 36, height: portHeight)
-    }
+    /// How far apart wires plugging into a port's inside end are.
+    static let portSlotSpacing: CGFloat = 6
 
     /// Which grid column a point on a table falls in, by its distance from the table's left edge.
     enum GridColumn { case key, name, type }
