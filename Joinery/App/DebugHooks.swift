@@ -10,7 +10,7 @@ import SwiftUI
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
 ///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection), `place <x> <y>` (puts the selected ties there),
-///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `feedback-on`, `handle <n> <dx> <dy>`, `feedback-note <text>`, `feedback-save`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point),
+///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `feedback-on`, `handle <n> <dx> <dy>`, `feedback-note <text>`, `feedback-save`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point), `shake <table> <seconds>` (drags it about and prints frame stats), `select-ties`, `ties` (prints them),
 ///   `wait <seconds>`.
 @MainActor
 enum DebugHooks {
@@ -106,6 +106,37 @@ enum DebugHooks {
                 case nil: "none"
                 }
                 print("cell \(row).\(canvas.cell.map { "\($0.part)" } ?? "-") editing=\(canvas.isEditingCell) draft=\"\(canvas.draft)\"")
+            case "shake" where table != nil && numbers.count == 1:
+                // Drags the table back and forth as fast as a hand would, every display frame, as a drag does.
+                canvas.selection = [.table(document.wrappedValue.tables[table!].id)]
+                _ = FrameMeter.shared.report(over: 1)
+                let start = ProcessInfo.processInfo.systemUptime
+                var updates: [Double] = [], layouts: [Double] = []
+                let window = NSApp.windows.first(where: \.isVisible)
+                while ProcessInfo.processInfo.systemUptime - start < numbers[0] {
+                    let t = ProcessInfo.processInfo.systemUptime - start
+                    // The whole update a move causes, done now rather than at the next display frame, and timed.
+                    let (_, layout) = FrameMeter.time {
+                        canvas.dragOffset = CGPoint(x: 120 * sin(t * 12), y: 60 * sin(t * 7))
+                        window?.contentView?.layoutSubtreeIfNeeded()
+                    }
+                    let (_, display) = FrameMeter.time { window?.displayIfNeeded(); CATransaction.flush() }
+                    updates.append(layout + display)
+                    layouts.append(layout)
+                    try? await Task.sleep(for: .seconds(1.0 / 240))
+                }
+                canvas.dragOffset = nil
+                updates.sort()
+                print("shake:", FrameMeter.shared.report(over: numbers[0]),
+                      String(format: "| whole update %.1f ms median (layout %.1f), %.1f ms worst", updates[updates.count / 2],
+                             layouts.sorted()[layouts.count / 2], updates.last ?? 0))
+            case "select-ties":
+                canvas.selection = Set(document.wrappedValue.zipTies.map { .zipTie($0.id) })
+            case "ties":
+                for tie in document.wrappedValue.zipTies {
+                    print(String(format: "tie at %.0f, %.0f held %@ selected %@", tie.position.x, tie.position.y,
+                                 tie.heldDirection.map { "\($0)" } ?? "no", canvas.selection.contains(.zipTie(tie.id)) ? "yes" : "no"))
+                }
             case "routings":
                 print("routings built: \(Routing.built)")
             case "clock":

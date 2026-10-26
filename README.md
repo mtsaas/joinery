@@ -19,7 +19,7 @@ Schemas live in a library shown in the sidebar. Each schema is a plain `.joinery
 | Action | How |
 | --- | --- |
 | Command palette | ⌘K: every command, plus each table to jump to; arrows, Return, Escape |
-| Align / distribute | With tables selected, ⌘K then Align Left Edges, Align Centers, … Distribute Horizontally |
+| Align / distribute | With tables or zip ties selected, ⌘K then Align Left Edges, Align Centers, … Distribute Horizontally (tables). Aligned ties stand on the line and are held square to it; right-click one and choose Turn with Wires to free it |
 | Add a table | **T**, the toolbar table button, or Insert ▸ Table (⌥⌘T); type its name straight away |
 | Edit cells | Tables are grids, like a spreadsheet: click a cell to put the cursor there and just type to replace it; double-click or F2 edits it in place. Return on a selected table renames it |
 | Move between cells | Arrow keys; Tab / Shift-Tab along the row; Return goes down, and past the last row adds a column; Delete clears a cell |
@@ -38,6 +38,10 @@ Schemas live in a library shown in the sidebar. Each schema is a plain `.joinery
 
 Each wire takes the color of the table it references, and FK cells match it. Wires leave sockets and pass through
 ties and bend points square to them.
+
+## Frame rate (Debug builds)
+
+The bottom-left corner shows frames per second while anything moves, and what the last frame cost: routing the wires and drawing them. `JOINERY_SCRIPT="shake <table> <seconds>"` drags a table about and prints the frame rate and how long each whole update took.
 
 ## Routing feedback (Debug builds)
 

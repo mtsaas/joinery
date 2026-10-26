@@ -246,6 +246,22 @@ struct JoineryTests {
         #expect(schema.tables.allSatisfy { $0.position.x == 1000 })
     }
 
+    @Test func aligningTiesLinesThemUpAndHoldsThemSquare() throws {
+        var schema = storefront()
+        let wires = schema.relationships.map(\.id)
+        let first = schema.addBendPoint(on: wires[0], at: CGPoint(x: 380, y: -40), direction: CGPoint(x: 1, y: -0.3), segment: 0)
+        let second = schema.addBendPoint(on: wires[1], at: CGPoint(x: 410, y: 160), direction: CGPoint(x: 1, y: 0.4), segment: 0)
+        let a = try #require(first), b = try #require(second)
+        schema.align([], ties: [a, b], .center)
+        let ties = schema.zipTies
+        #expect(ties.allSatisfy { $0.position.x == 395 }, "on the line through the middle of them")
+        #expect(ties.allSatisfy { $0.heldDirection == CGPoint(x: 1, y: 0) }, "wires run square across the line")
+        // Held as tables move, rather than turning with their wires.
+        schema.tables[1].position.y -= 300
+        let routing = Routing(schema: schema)
+        #expect(routing.ties[a]?.direction == CGPoint(x: 1, y: 0))
+    }
+
     @Test func boxSelectionPrefersTablesThenTiesThenWires() {
         let table = UUID(), tie = UUID(), wire = UUID()
         typealias Item = CanvasController.Item

@@ -79,6 +79,8 @@ struct ZipTie: Codable, Identifiable, Equatable {
     /// The way the bundle ran when it was tied, a unit vector. The tie turns to follow its wires as tables move; this
     /// only keeps it from flipping, which would reverse the order of the wires across it.
     var direction: CGPoint
+    /// The way it's held, once lined up with others; until then (nil) it turns with its wires.
+    var heldDirection: CGPoint?
     /// The wires it holds, in order across the bundle.
     var relationships: [Relationship.ID]
 }

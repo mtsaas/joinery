@@ -20,6 +20,7 @@ struct CanvasView: View {
     @FocusState private var isCanvasFocused: Bool
     @State private var routingCache = RoutingCache()
     @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
+    @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         let routing = routingCache.routing(for: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
@@ -31,9 +32,7 @@ struct CanvasView: View {
         ZStack(alignment: .topLeading) {
             GridLayer(zoom: canvas.zoom, offset: canvas.offset)
             wireLayer(routing, colors: colors)
-            ForEach(schema.tables) { table in
-                tableView(table, socketColors: socketColors, foreignKeys: foreignKeys)
-            }
+            tables(socketColors: socketColors, foreignKeys: foreignKeys)
             ForEach(schema.zipTies) { tie in
                 if let frame = routing.ties[tie.id] { tieHandle(tie, frame) }
             }
@@ -80,6 +79,7 @@ struct CanvasView: View {
             }
         }
         #if DEBUG
+        .overlay(alignment: .bottomLeading) { FrameReadout().padding(12) }
         .overlay(alignment: .bottom) {
             if canvas.isFeedbackMode {
                 FeedbackBar(canvas: canvas, save: saveFeedback).padding(.bottom, 20)
@@ -166,16 +166,17 @@ struct CanvasView: View {
                 },
             ]
         }
-        let tables = canvas.selectedTables
-        if tables.count >= 2 {
-            let count = "\(tables.count) tables"
+        let tables = canvas.selectedTables, ties = canvas.selectedTies
+        if tables.count + ties.count >= 2 {
+            let count = [(tables.count, "table"), (ties.count, "tie")].filter { $0.0 > 0 }
+                .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }.formatted()
             let alignments: [(String, String, Schema.Alignment)] = [
                 ("Align Left Edges", "align.horizontal.left", .left), ("Align Centers", "align.horizontal.center", .center),
                 ("Align Right Edges", "align.horizontal.right", .right), ("Align Top Edges", "align.vertical.top", .top),
                 ("Align Middles", "align.vertical.center", .middle), ("Align Bottom Edges", "align.vertical.bottom", .bottom),
             ]
             commands += alignments.map { title, symbol, alignment in
-                PaletteCommand(id: title, title: title, subtitle: count, symbol: symbol) { schema.align(tables, alignment) }
+                PaletteCommand(id: title, title: title, subtitle: count, symbol: symbol) { schema.align(tables, ties: ties, alignment) }
             }
         }
         if tables.count >= 3 {
@@ -238,6 +239,10 @@ struct CanvasView: View {
 
         return TimelineView(.animation(paused: !isAnimating)) { timeline in
             Canvas { context, _ in
+                #if DEBUG
+                let start = ProcessInfo.processInfo.systemUptime
+                defer { FrameMeter.shared.drew(in: (ProcessInfo.processInfo.systemUptime - start) * 1000) }
+                #endif
                 let isMoving = simulation.advance(toward: routing.routes, to: timeline.date.timeIntervalSinceReferenceDate)
                 if isMoving != isAnimating { Task { isAnimating = isMoving } }
 
@@ -333,29 +338,83 @@ struct CanvasView: View {
 
     // MARK: Tables
 
-    private func tableView(_ table: Table, socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> some View {
+    /// Everything a table's views show, read from the canvas up front: they read nothing from it themselves, so a
+    /// table whose look is unchanged can be skipped.
+    struct TableLook: Equatable {
+        var table: Table
+        /// In canvas points, moved by any drag.
+        var frame: CGRect
+        var zoom: CGFloat
+        var viewOffset: CGPoint
+        var isSelected: Bool
+        var cursor: CanvasController.Cell?
+        var isEditing: Bool
+        var selectsAllDraft: Bool
+        /// Only for the table being edited.
+        var draft: String
+        var targetColumn: Column.ID?
+        var foreignKeys: [Column.ID: Color]
+        var socketColors: [Routing.Socket: Color]
+        var displayScale: CGFloat
+
+        func viewPoint(_ point: CGPoint) -> CGPoint { point * zoom + viewOffset }
+    }
+
+    /// Each table's views are rebuilt only when what it shows changes, not for every frame of a drag.
+    private func tables(socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> some View {
+        ForEach(schema.tables) { table in
+            Unchanged(value: look(of: table, socketColors: socketColors, foreignKeys: foreignKeys)) { tableView($0) }
+                .equatable()
+        }
+    }
+
+    private func look(of table: Table, socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> TableLook {
         let offset = canvas.tableOffsets[table.id] ?? .zero
-        let frame = Metrics.frame(of: table).offsetBy(dx: offset.x, dy: offset.y)
-        let origin = canvas.viewPoint(frame.origin)
+        let cursor = canvas.cell?.table == table.id ? canvas.cell : nil
+        var sockets: [Routing.Socket: Color] = [:]
+        for column in table.columns {
+            for side in Side.allCases {
+                let socket = Routing.Socket(column: column.id, side: side)
+                sockets[socket] = socketColors[socket]
+            }
+        }
+        return TableLook(table: table, frame: Metrics.frame(of: table).offsetBy(dx: offset.x, dy: offset.y), zoom: canvas.zoom,
+                         viewOffset: canvas.offset,
+                         isSelected: canvas.selection.contains(.table(table.id)) || canvas.connection?.target == .table(table.id),
+                         cursor: cursor, isEditing: cursor != nil && canvas.isEditingCell,
+                         selectsAllDraft: cursor != nil && canvas.selectsAllDraft, draft: cursor != nil ? canvas.draft : "",
+                         targetColumn: targetColumn.flatMap { id in table.columns.contains { $0.id == id } ? id : nil },
+                         foreignKeys: foreignKeys.filter { id, _ in table.columns.contains { $0.id == id } }, socketColors: sockets,
+                         displayScale: displayScale)
+    }
+
+    private func tableView(_ look: TableLook) -> some View {
+        let table = look.table, frame = look.frame, zoom = look.zoom
+        let origin = look.viewPoint(frame.origin)
         return ZStack(alignment: .topLeading) {
-            TableCard(table: table, zoom: canvas.zoom,
-                      isSelected: canvas.selection.contains(.table(table.id)) || canvas.connection?.target == .table(table.id),
-                      cursor: canvas.cell?.table == table.id ? canvas.cell : nil, isEditing: canvas.isEditingCell,
-                      draft: $canvas.draft, selectsAllDraft: canvas.selectsAllDraft, targetColumn: targetColumn,
-                      foreignKeys: foreignKeys, editorLostFocus: { canvas.cellCommand = .commit(then: nil) })
-                .position(x: origin.x + frame.width * canvas.zoom / 2, y: origin.y + frame.height * canvas.zoom / 2)
+            TableCard(table: table, zoom: zoom, isSelected: look.isSelected, cursor: look.cursor, isEditing: look.isEditing,
+                      draft: $canvas.draft, selectsAllDraft: look.selectsAllDraft, targetColumn: look.targetColumn,
+                      foreignKeys: look.foreignKeys, editorLostFocus: { canvas.cellCommand = .commit(then: nil) },
+                      hairline: 1 / look.displayScale)
+                .equatable()
+                .position(x: origin.x + frame.width * zoom / 2, y: origin.y + frame.height * zoom / 2)
                 .gesture(itemGesture(.table(table.id), click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) })
                 .contextMenu { tableMenu(table) }
             ForEach(Array(table.columns.enumerated()), id: \.element.id) { row, column in
                 ForEach(Side.allCases, id: \.self) { side in
                     let socket = Metrics.socket(row: row, side: side, in: frame)
-                    Socket(color: socketColors[Routing.Socket(column: column.id, side: side)], zoom: canvas.zoom)
-                        .position(canvas.viewPoint(socket))
+                    Socket(color: look.socketColors[Routing.Socket(column: column.id, side: side)], zoom: zoom)
+                        .position(look.viewPoint(socket))
                         .gesture(connectGesture(from: column, at: socket))
                         .help("Drag to another column to add a foreign key")
                 }
             }
         }
+    }
+
+    /// Lets a tie lined up with others turn with its wires again.
+    private func release(_ tie: ZipTie.ID) {
+        if let index = schema.zipTies.firstIndex(where: { $0.id == tie }) { schema.zipTies[index].heldDirection = nil }
     }
 
     /// The row a wire being dragged would connect to.
@@ -599,6 +658,9 @@ struct CanvasView: View {
                         schema.removeRelationships { $0.id == tie.relationships[0] }
                     }
                 } else {
+                    if tie.heldDirection != nil {
+                        Button("Turn with Wires", systemImage: "arrow.triangle.2.circlepath") { release(tie.id) }
+                    }
                     Button("Cut Zip Tie", systemImage: "scissors", role: .destructive) { schema.removeZipTie(tie.id) }
                 }
             }
@@ -911,8 +973,22 @@ private struct GridHints: View {
     }
 }
 
+/// `content` for `value`, re-evaluated only when `value` changes (with `.equatable()`). The content must take
+/// everything it shows from `value`: whatever else it reads won't update it.
+private struct Unchanged<Value: Equatable, Content: View>: View, Equatable {
+    let value: Value
+    let content: (Value) -> Content
+
+    var body: some View { content(value) }
+
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        MainActor.assumeIsolated { a.value == b.value }
+    }
+}
+
 /// The last routing worked out, kept while nothing it depends on changes: a redraw that only moves the grid cursor or
 /// the selection needn't route every wire again.
+@MainActor
 private final class RoutingCache {
     private var inputs: (schema: Schema, tables: [Table.ID: CGPoint], ties: [ZipTie.ID: CGPoint], avoiding: Bool)?
     private var routing: Routing?
@@ -923,7 +999,14 @@ private final class RoutingCache {
            inputs.ties == tieOffsets, inputs.schema == schema {
             return routing
         }
+        #if DEBUG
+        let (routing, milliseconds) = FrameMeter.time {
+            Routing(schema: schema, tableOffsets: tableOffsets, tieOffsets: tieOffsets, avoidingTables: avoidingTables)
+        }
+        FrameMeter.shared.routed(in: milliseconds)
+        #else
         let routing = Routing(schema: schema, tableOffsets: tableOffsets, tieOffsets: tieOffsets, avoidingTables: avoidingTables)
+        #endif
         inputs = (schema, tableOffsets, tieOffsets, avoidingTables)
         self.routing = routing
         return routing

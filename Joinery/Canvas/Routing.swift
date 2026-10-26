@@ -128,7 +128,8 @@ struct Routing {
                       let way = flow(of: relationship, at: index, through: center) else { continue }
                 sum += way.dot(tie.direction) < 0 ? -way : way
             }
-            ties[tie.id] = Tie(center: center, direction: sum.normalized ?? tie.direction, relationships: tie.relationships)
+            ties[tie.id] = Tie(center: center, direction: tie.heldDirection ?? sum.normalized ?? tie.direction,
+                               relationships: tie.relationships)
         }
 
         for relationship in schema.relationships {

@@ -110,10 +110,24 @@ extension Schema {
 
     enum Alignment { case left, center, right, top, middle, bottom }
 
-    /// Lines tables up along an edge or center of the box around them all.
-    mutating func align(_ ids: Set<Table.ID>, _ alignment: Alignment) {
+    /// Lines tables and ties up along an edge or center of the box around them all. Ties go on the line itself, and
+    /// are held across it, so the wires through them run square to it and they stay that way as tables move.
+    mutating func align(_ ids: Set<Table.ID>, ties tieIDs: Set<ZipTie.ID> = [], _ alignment: Alignment) {
         let indices = tables.indices.filter { ids.contains(tables[$0].id) }
-        guard let bounds = indices.map({ Metrics.frame(of: tables[$0]) }).reduce(nil, { $0?.union($1) ?? $1 }) else { return }
+        let ties = zipTies.indices.filter { tieIDs.contains(zipTies[$0].id) }
+        let frames = indices.map { Metrics.frame(of: tables[$0]) } + ties.map { CGRect(origin: zipTies[$0].position, size: .zero) }
+        guard let bounds = frames.reduce(nil, { $0?.union($1) ?? $1 }) else { return }
+        for index in ties {
+            let tie = zipTies[index]
+            switch alignment {
+            case .left, .center, .right:
+                zipTies[index].position.x = alignment == .left ? bounds.minX : alignment == .center ? bounds.midX : bounds.maxX
+                zipTies[index].heldDirection = CGPoint(x: tie.direction.x < 0 ? -1 : 1, y: 0)
+            case .top, .middle, .bottom:
+                zipTies[index].position.y = alignment == .top ? bounds.minY : alignment == .middle ? bounds.midY : bounds.maxY
+                zipTies[index].heldDirection = CGPoint(x: 0, y: tie.direction.y < 0 ? -1 : 1)
+            }
+        }
         for index in indices {
             let size = Metrics.size(of: tables[index])
             switch alignment {

@@ -5,7 +5,7 @@ import SwiftUI
 ///
 /// Every cell is plain text, except the one being edited: it alone becomes a text field, set in exactly the same
 /// place and type, so editing doesn't look like filling in a form. The grid cursor is a border around its cell.
-struct TableCard: View {
+struct TableCard: View, Equatable {
     let table: Table
     let zoom: CGFloat
     let isSelected: Bool
@@ -20,10 +20,19 @@ struct TableCard: View {
     let foreignKeys: [Column.ID: Color]
     /// Called if the cell being edited loses focus some other way than the grid's keys, say a click elsewhere.
     let editorLostFocus: () -> Void
+    /// One pixel. Passed in rather than read from the environment, which would rebuild every card on every frame of
+    /// a drag.
+    let hairline: CGFloat
 
-    @Environment(\.displayScale) private var displayScale
-
-    private var hairline: CGFloat { 1 / displayScale }
+    /// Everything drawn, so a card that hasn't changed isn't rebuilt while another is dragged. The draft only matters
+    /// to the card being edited, and the callback never changes what's drawn.
+    nonisolated static func == (a: Self, b: Self) -> Bool {
+        MainActor.assumeIsolated {
+            a.table == b.table && a.zoom == b.zoom && a.isSelected == b.isSelected && a.cursor == b.cursor
+                && a.isEditing == b.isEditing && a.selectsAllDraft == b.selectsAllDraft && a.targetColumn == b.targetColumn
+                && a.foreignKeys == b.foreignKeys && a.hairline == b.hairline && (a.cursor == nil || a.draft == b.draft)
+        }
+    }
 
     var body: some View {
         let size = Metrics.size(of: table)
