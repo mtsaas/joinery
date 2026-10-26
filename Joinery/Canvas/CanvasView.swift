@@ -11,7 +11,7 @@ import SwiftUI
 /// Keyboard: T adds a table, Return edits the selected one, arrows nudge, Delete removes, ⌘A selects everything. While
 /// editing, Tab and Shift-Tab step through cells, Return adds a column, Escape finishes.
 struct CanvasView: View {
-    @Binding var schema: Schema
+    @Binding var model: DataModel
     @Bindable var canvas: CanvasController
 
     @State private var simulation = WireSimulation()
@@ -31,17 +31,17 @@ struct CanvasView: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        let routing = routingCache.routing(for: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
+        let routing = routingCache.routing(for: model, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
                                            avoidingTables: wiresAvoidTables)
-        let colors = routingCache.wireColors(for: schema)
-        let foreignKeys = Dictionary(schema.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
+        let colors = routingCache.wireColors(for: model)
+        let foreignKeys = Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
                                      uniquingKeysWith: { first, _ in first })
         let socketColors = socketColors(routing, colors: colors)
         ZStack(alignment: .topLeading) {
             GridLayer(zoom: canvas.zoom, offset: canvas.offset)
             wireLayer(routing, colors: colors)
             tableLayer(socketColors: socketColors, foreignKeys: foreignKeys)
-            ForEach(schema.zipTies) { tie in
+            ForEach(model.zipTies) { tie in
                 if let frame = routing.ties[tie.id] { tieHandle(tie, frame) }
             }
             cellEditor
@@ -54,15 +54,15 @@ struct CanvasView: View {
         .coordinateSpace(.canvas)
         .clipped()
         .background { CanvasEventMonitor(canvas: canvas) }
-        .onGeometryChange(for: CGSize.self, of: \.size) { canvas.resize(to: $0, fitting: schema.bounds) }
+        .onGeometryChange(for: CGSize.self, of: \.size) { canvas.resize(to: $0, fitting: model.bounds) }
         .overlay {
-            if schema.tables.isEmpty {
+            if model.tables.isEmpty {
                 ContentUnavailableView {
                     Label("No Tables", systemImage: "tablecells")
                 } description: {
                     Text("Press T to add a table, then drag between column sockets to draw foreign keys.")
                 } actions: {
-                    Button("Add Table") { canvas.addTable(to: &schema) }
+                    Button("Add Table") { canvas.addTable(to: &model) }
                 }
             }
         }
@@ -106,7 +106,7 @@ struct CanvasView: View {
         .animation(.smooth(duration: 0.2), value: canvas.cell != nil)
         .animation(.smooth(duration: 0.15), value: canvas.showsPalette)
         .onChange(of: canvas.showsPalette) { if !canvas.showsPalette { isCanvasFocused = true } }
-        // Opening a schema puts the keys straight to work on it: T, Z and the rest, without a click first.
+        // Opening a model puts the keys straight to work on it: T, Z and the rest, without a click first.
         .onAppear { isCanvasFocused = true }
         .focusable()
         .focused($isCanvasFocused)
@@ -120,7 +120,7 @@ struct CanvasView: View {
         }
         .onKeyPress("t") {
             guard isCanvasKeyTarget else { return .ignored }
-            canvas.addTable(to: &schema)
+            canvas.addTable(to: &model)
             return .handled
         }
         .onKeyPress(.return) {
@@ -134,9 +134,9 @@ struct CanvasView: View {
             return .handled
         }
         .onCommand(#selector(NSText.selectAll(_:))) {
-            canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })
+            canvas.selection = Set(model.tables.map { .table($0.id) } + model.zipTies.map { .zipTie($0.id) })
         }
-        .onDeleteCommand { if isCanvasKeyTarget { canvas.deleteSelection(in: &schema) } }
+        .onDeleteCommand { if isCanvasKeyTarget { canvas.deleteSelection(in: &model) } }
         .onExitCommand {
             #if DEBUG
             if canvas.feedback != nil { return canvas.feedback = nil }
@@ -198,9 +198,9 @@ struct CanvasView: View {
     /// New Table first, then what applies to the selection, tools and view, then every table to jump to.
     private var paletteCommands: [PaletteCommand] {
         var commands = [PaletteCommand(id: "new-table", title: "New Table", symbol: "plus.rectangle", shortcut: "T") {
-            canvas.addTable(to: &schema)
+            canvas.addTable(to: &model)
         }]
-        if canvas.selection.count == 1, case .table(let id)? = canvas.selection.first, let table = schema.table(id) {
+        if canvas.selection.count == 1, case .table(let id)? = canvas.selection.first, let table = model.table(id) {
             commands += [
                 PaletteCommand(id: "add-column", title: "Add Column", subtitle: table.name, symbol: "plus") {
                     addColumn(to: id, after: table.columns.last?.id)
@@ -214,9 +214,9 @@ struct CanvasView: View {
         if let (aligned, ties) = canvas.alignable {
             let count = [(aligned.count, "table"), (ties.count, "tie")].filter { $0.0 > 0 }
                 .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }.formatted()
-            commands += Schema.Alignment.allCases.map { alignment in
+            commands += DataModel.Alignment.allCases.map { alignment in
                 PaletteCommand(id: alignment.title, title: alignment.title, subtitle: count, symbol: alignment.symbol) {
-                    schema.align(aligned, ties: ties, alignment)
+                    model.align(aligned, ties: ties, alignment)
                 }
             }
         }
@@ -224,14 +224,14 @@ struct CanvasView: View {
             let count = "\(tables.count) tables"
             commands += [
                 PaletteCommand(id: "distribute-h", title: "Distribute Horizontally", subtitle: count,
-                               symbol: "distribute.horizontal.center") { schema.distribute(tables, horizontally: true) },
+                               symbol: "distribute.horizontal.center") { model.distribute(tables, horizontally: true) },
                 PaletteCommand(id: "distribute-v", title: "Distribute Vertically", subtitle: count,
-                               symbol: "distribute.vertical.center") { schema.distribute(tables, horizontally: false) },
+                               symbol: "distribute.vertical.center") { model.distribute(tables, horizontally: false) },
             ]
         }
         if !canvas.selection.isEmpty {
             commands.append(PaletteCommand(id: "delete", title: "Delete Selection", symbol: "trash", shortcut: "⌫") {
-                canvas.deleteSelection(in: &schema)
+                canvas.deleteSelection(in: &model)
             })
         }
         commands += [
@@ -243,10 +243,10 @@ struct CanvasView: View {
                 openSettings()
             },
             PaletteCommand(id: "select-all", title: "Select All", symbol: "checkmark.rectangle.stack", shortcut: "⌘A") {
-                canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })
+                canvas.selection = Set(model.tables.map { .table($0.id) } + model.zipTies.map { .zipTie($0.id) })
             },
             PaletteCommand(id: "fit", title: "Zoom to Fit", symbol: "arrow.up.left.and.arrow.down.right", shortcut: "⌘1") {
-                canvas.zoomToFit(schema.bounds)
+                canvas.zoomToFit(model.bounds)
             },
             PaletteCommand(id: "zoom-in", title: "Zoom In", symbol: "plus.magnifyingglass", shortcut: "⌘+") { canvas.zoom(by: 1.25) },
             PaletteCommand(id: "zoom-out", title: "Zoom Out", symbol: "minus.magnifyingglass", shortcut: "⌘−") { canvas.zoom(by: 0.8) },
@@ -261,7 +261,7 @@ struct CanvasView: View {
             if !canvas.isFeedbackMode { canvas.feedback = nil }
         })
         #endif
-        commands += schema.tables.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map { table in
+        commands += model.tables.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }.map { table in
             PaletteCommand(id: "table-\(table.id)", title: table.name, subtitle: "\(table.columns.count) columns", symbol: "tablecells") {
                 canvas.selection = [.table(table.id)]
                 canvas.center(on: Metrics.frame(of: table))
@@ -277,7 +277,7 @@ struct CanvasView: View {
     private func openWheel(at viewPoint: CGPoint) {
         isCanvasFocused = true
         let point = canvas.canvasPoint(viewPoint)
-        let routing = routingCache.routing(for: schema, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
+        let routing = routingCache.routing(for: model, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
                                            avoidingTables: wiresAvoidTables)
         let reach = Metrics.wireHitRadius / canvas.zoom
         let target: CanvasController.Wheel.Target
@@ -286,7 +286,7 @@ struct CanvasView: View {
         }) {
             target = .tie(id)
             if !canvas.selection.contains(.zipTie(id)) { canvas.selection = [.zipTie(id)] }
-        } else if let table = schema.tables.last(where: { Metrics.frame(of: $0).contains(point) }) {
+        } else if let table = model.tables.last(where: { Metrics.frame(of: $0).contains(point) }) {
             // Its header is the table; a row, that column.
             if case .column(let id) = cell(at: point, in: table).row { target = .column(id, in: table.id) } else { target = .table(table.id) }
             if !canvas.selection.contains(.table(table.id)) { canvas.selection = [.table(table.id)] }
@@ -312,38 +312,38 @@ struct CanvasView: View {
         var slots: [CommandWheel.Direction: PaletteCommand] = [:], extras: [PaletteCommand] = []
         var color: (current: TableColor, set: (TableColor) -> Void)?
         let deleteSelection = PaletteCommand(id: "delete", title: "Delete", symbol: "trash", shortcut: "⌫", isDestructive: true) {
-            canvas.deleteSelection(in: &schema)
+            canvas.deleteSelection(in: &model)
         }
         if let (aligned, ties) = canvas.alignable {
-            let directions: [Schema.Alignment: CommandWheel.Direction] = [.left: .west, .right: .east, .top: .north,
+            let directions: [DataModel.Alignment: CommandWheel.Direction] = [.left: .west, .right: .east, .top: .north,
                                                                            .bottom: .south, .center: .northWest, .middle: .southWest]
             for (alignment, direction) in directions {
                 slots[direction] = PaletteCommand(id: alignment.title, title: alignment.title, symbol: alignment.symbol) {
-                    schema.align(aligned, ties: ties, alignment)
+                    model.align(aligned, ties: ties, alignment)
                 }
             }
             if tables.count >= 3 {
                 slots[.northEast] = PaletteCommand(id: "distribute-h", title: "Distribute Horizontally",
-                                                   symbol: "distribute.horizontal.center") { schema.distribute(tables, horizontally: true) }
+                                                   symbol: "distribute.horizontal.center") { model.distribute(tables, horizontally: true) }
                 slots[.southEast] = PaletteCommand(id: "distribute-v", title: "Distribute Vertically",
-                                                   symbol: "distribute.vertical.center") { schema.distribute(tables, horizontally: false) }
+                                                   symbol: "distribute.vertical.center") { model.distribute(tables, horizontally: false) }
             }
             extras = [deleteSelection]
             return (slots, extras, nil)
         }
         switch wheel.target {
         case .table(let id):
-            guard let table = schema.table(id) else { break }
+            guard let table = model.table(id) else { break }
             slots[.north] = PaletteCommand(id: "rename", title: "Rename", symbol: "pencil", shortcut: "⏎") { canvas.edit(.name(of: id)) }
             slots[.east] = PaletteCommand(id: "add-column", title: "Add Column", symbol: "plus") {
                 addColumn(to: id, after: table.columns.last?.id)
             }
             slots[.south] = PaletteCommand(id: "delete", title: "Delete Table", symbol: "trash", isDestructive: true) {
-                schema.removeTable(id)
+                model.removeTable(id)
             }
             color = (table.color, { binding(for: id).wrappedValue.color = $0 })
         case .column(let id, let tableID):
-            guard let table = schema.table(tableID), let column = table.columns.first(where: { $0.id == id }) else { break }
+            guard let table = model.table(tableID), let column = table.columns.first(where: { $0.id == id }) else { break }
             func toggle(_ title: String, _ symbol: String, _ isOn: Bool, _ change: @escaping (inout Column) -> Void) -> PaletteCommand {
                 PaletteCommand(id: title, title: title, subtitle: isOn ? "On" : "Off", symbol: symbol) { updateColumn(id, in: tableID, change) }
             }
@@ -364,16 +364,16 @@ struct CanvasView: View {
             }
             color = (table.color, { binding(for: tableID).wrappedValue.color = $0 })
         case .tie(let id):
-            guard let tie = schema.zipTies.first(where: { $0.id == id }) else { break }
+            guard let tie = model.zipTies.first(where: { $0.id == id }) else { break }
             if tie.relationships.count == 1 {
                 slots[.north] = PaletteCommand(id: "remove-bend", title: "Remove Bend Point",
-                                               symbol: "point.topleft.down.to.point.bottomright.curvepath") { schema.removeZipTie(id) }
+                                               symbol: "point.topleft.down.to.point.bottomright.curvepath") { model.removeZipTie(id) }
                 slots[.south] = PaletteCommand(id: "delete-key", title: "Delete Foreign Key", symbol: "trash", isDestructive: true) {
-                    schema.removeRelationships { $0.id == tie.relationships[0] }
+                    model.removeRelationships { $0.id == tie.relationships[0] }
                 }
             } else {
                 slots[.south] = PaletteCommand(id: "cut", title: "Cut Zip Tie", symbol: "scissors", isDestructive: true) {
-                    schema.removeZipTie(id)
+                    model.removeZipTie(id)
                 }
                 if tie.heldDirection != nil {
                     slots[.north] = PaletteCommand(id: "turn", title: "Turn with Wires", symbol: "arrow.triangle.2.circlepath") { release(id) }
@@ -381,22 +381,22 @@ struct CanvasView: View {
             }
         case .wire(let hit):
             slots[.north] = PaletteCommand(id: "bend", title: "Add Bend Point", symbol: "point.topleft.down.to.point.bottomright.curvepath") {
-                if let bend = schema.addBendPoint(on: hit.relationship, at: hit.point, direction: hit.tangent, segment: hit.segment) {
+                if let bend = model.addBendPoint(on: hit.relationship, at: hit.point, direction: hit.tangent, segment: hit.segment) {
                     canvas.selection = [.zipTie(bend)]
                 }
             }
             slots[.south] = PaletteCommand(id: "delete-key", title: "Delete Foreign Key", symbol: "trash", isDestructive: true) {
-                schema.removeRelationships { $0.id == hit.relationship }
+                model.removeRelationships { $0.id == hit.relationship }
             }
         case .canvas:
             slots[.north] = PaletteCommand(id: "new-table", title: "New Table", symbol: "plus.rectangle", shortcut: "T") {
-                canvas.addTable(to: &schema, at: wheel.point)
+                canvas.addTable(to: &model, at: wheel.point)
             }
             slots[.east] = PaletteCommand(id: "fit", title: "Zoom to Fit", symbol: "arrow.up.left.and.arrow.down.right") {
-                canvas.zoomToFit(schema.bounds)
+                canvas.zoomToFit(model.bounds)
             }
             slots[.west] = PaletteCommand(id: "select-all", title: "Select All", symbol: "checkmark.rectangle.stack") {
-                canvas.selection = Set(schema.tables.map { .table($0.id) } + schema.zipTies.map { .zipTie($0.id) })
+                canvas.selection = Set(model.tables.map { .table($0.id) } + model.zipTies.map { .zipTie($0.id) })
             }
             slots[.south] = PaletteCommand(id: "palette", title: "All Commands", symbol: "command", shortcut: "⌘K") {
                 canvas.togglePalette()
@@ -419,7 +419,7 @@ struct CanvasView: View {
         let tieCrossings = canvas.stroke.map { Set(simulation.crossings(from: $0.start, to: $0.end).map(\.relationship)) } ?? []
         let selectedTies = canvas.selectedTies, hoveredTie = canvas.hoveredTie
         let selectedWires = Set(canvas.selection.compactMap { if case .relationship(let id) = $0 { id } else { nil } })
-        let relationships = schema.relationships
+        let relationships = model.relationships
 
         return TimelineView(.animation(paused: !isAnimating)) { timeline in
             Canvas { context, _ in
@@ -500,12 +500,12 @@ struct CanvasView: View {
     private var highlightedRelationships: Set<Relationship.ID>? {
         guard !canvas.selection.isEmpty else { return nil }
         let tables = canvas.selectedTables
-        let columns = Set(schema.tables.filter { tables.contains($0.id) }.flatMap(\.columns).map(\.id))
-        var wires = Set(schema.relationships.filter { columns.contains($0.from) || columns.contains($0.to) }.map(\.id))
+        let columns = Set(model.tables.filter { tables.contains($0.id) }.flatMap(\.columns).map(\.id))
+        var wires = Set(model.relationships.filter { columns.contains($0.from) || columns.contains($0.to) }.map(\.id))
         for item in canvas.selection {
             switch item {
             case .relationship(let id): wires.insert(id)
-            case .zipTie(let id): wires.formUnion(schema.zipTies.first { $0.id == id }?.relationships ?? [])
+            case .zipTie(let id): wires.formUnion(model.zipTies.first { $0.id == id }?.relationships ?? [])
             case .table: break
             }
         }
@@ -518,7 +518,7 @@ struct CanvasView: View {
     private func tableLayer(socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> some View {
         var selected = canvas.selectedTables
         if case .table(let id)? = canvas.connection?.target { selected.insert(id) }
-        return TableLayer(tables: schema.tables, offsets: canvas.tableOffsets, zoom: canvas.zoom, viewOffset: canvas.offset,
+        return TableLayer(tables: model.tables, offsets: canvas.tableOffsets, zoom: canvas.zoom, viewOffset: canvas.offset,
                           viewSize: canvas.viewSize, selected: selected, cursor: canvas.cell, targetColumn: targetColumn,
                           foreignKeys: foreignKeys, socketColors: socketColors, hoveredSocket: hoveredSocket, layouts: textLayouts)
             .contentShape(.rect)
@@ -542,14 +542,14 @@ struct CanvasView: View {
 
     private func press(at point: CGPoint) -> Press {
         if let (column, socket, _) = socket(at: point) { return .socket(column, at: socket) }
-        if let table = schema.tables.last(where: { Metrics.frame(of: $0).contains(point) }) { return .table(table) }
+        if let table = model.tables.last(where: { Metrics.frame(of: $0).contains(point) }) { return .table(table) }
         return .background
     }
 
     /// The socket within reach of `point`, in canvas points, with its column and center.
     private func socket(at point: CGPoint) -> (column: Column, center: CGPoint, socket: Routing.Socket)? {
         let reach = Metrics.socketReach(zoom: canvas.zoom)
-        for table in schema.tables.reversed() {
+        for table in model.tables.reversed() {
             let frame = Metrics.frame(of: table)
             guard frame.insetBy(dx: -reach, dy: -reach).contains(point) else { continue }
             let row = Int(((point.y - frame.minY - Metrics.headerHeight) / Metrics.rowHeight).rounded(.down))
@@ -608,7 +608,7 @@ struct CanvasView: View {
     /// the cell's own background hiding the text it replaces.
     @ViewBuilder
     private var cellEditor: some View {
-        if canvas.isEditingCell, let cell = canvas.cell, let table = schema.table(cell.table) {
+        if canvas.isEditingCell, let cell = canvas.cell, let table = model.table(cell.table) {
             let offset = canvas.tableOffsets[table.id] ?? .zero
             let row: Int? = if case .column(let id) = cell.row { table.columns.firstIndex { $0.id == id } } else { nil }
             let zoom = canvas.zoom
@@ -630,7 +630,7 @@ struct CanvasView: View {
 
     /// Lets a tie lined up with others turn with its wires again.
     private func release(_ tie: ZipTie.ID) {
-        if let index = schema.zipTies.firstIndex(where: { $0.id == tie }) { schema.zipTies[index].heldDirection = nil }
+        if let index = model.zipTies.firstIndex(where: { $0.id == tie }) { model.zipTies[index].heldDirection = nil }
     }
 
     /// The row a wire being dragged would connect to.
@@ -642,9 +642,9 @@ struct CanvasView: View {
     /// the end.
     private func binding(for id: Table.ID) -> Binding<Table> {
         Binding {
-            schema.table(id) ?? Table(name: "", position: .zero, color: .blue)
+            model.table(id) ?? Table(name: "", position: .zero, color: .blue)
         } set: { table in
-            if let index = schema.tables.firstIndex(where: { $0.id == id }) { schema.tables[index] = table }
+            if let index = model.tables.firstIndex(where: { $0.id == id }) { model.tables[index] = table }
         }
     }
 
@@ -675,8 +675,8 @@ struct CanvasView: View {
         let offset = CanvasController.moveOffset(CGPoint(translation) / canvas.zoom, isAxisLocked: flags.contains(.shift))
         let selected = canvas.selectedTables
         guard !selected.isEmpty, !flags.contains(.command) else { return (offset, []) }
-        let moving = schema.tables.filter { selected.contains($0.id) }.map(Metrics.frame)
-        let others = schema.tables.filter { !selected.contains($0.id) }.map(Metrics.frame)
+        let moving = model.tables.filter { selected.contains($0.id) }.map(Metrics.frame)
+        let others = model.tables.filter { !selected.contains($0.id) }.map(Metrics.frame)
         // With Shift, only along the way it's moving.
         let isLocked = flags.contains(.shift)
         return CanvasController.snap(moving, by: offset, to: others, tolerance: 6 / canvas.zoom,
@@ -691,7 +691,7 @@ struct CanvasView: View {
         defer { deselectOnClick = nil }
         let delta = move(by: translation).offset
         if CGPoint(translation).length > 2 {
-            schema.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
+            model.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
             lastClick = nil
             return
         }
@@ -710,13 +710,13 @@ struct CanvasView: View {
     }
 
     private func dragConnection(from column: Column, at socket: CGPoint, to end: CGPoint) {
-        let target = schema.dropTarget(at: end).flatMap { $0 == .column(column.id) ? nil : $0 }
+        let target = model.dropTarget(at: end).flatMap { $0 == .column(column.id) ? nil : $0 }
         canvas.connection = .init(from: column.id, start: socket, end: end, target: target)
     }
 
     private func finishConnection() {
         if let connection = canvas.connection, let target = connection.target,
-           let id = schema.connect(dragging: connection.from, onto: target) {
+           let id = model.connect(dragging: connection.from, onto: target) {
             canvas.selection = [.relationship(id)]
         }
         canvas.connection = nil
@@ -778,7 +778,7 @@ struct CanvasView: View {
 
     /// Moves the cursor; Tab or Return past the last row goes on into a new column.
     private func moveCursor(_ move: CanvasController.CellMove) {
-        guard let cell = canvas.cell, let table = schema.table(cell.table) else { return }
+        guard let cell = canvas.cell, let table = model.table(cell.table) else { return }
         isCanvasFocused = true
         if let next = CanvasController.cell(after: cell, move, in: table) {
             canvas.cell = next
@@ -798,33 +798,33 @@ struct CanvasView: View {
     }
 
     private func text(of cell: CanvasController.Cell) -> String {
-        guard let table = schema.table(cell.table) else { return "" }
+        guard let table = model.table(cell.table) else { return "" }
         guard case .column(let id) = cell.row else { return table.name }
         guard let column = table.columns.first(where: { $0.id == id }) else { return "" }
         return cell.part == .type ? column.typeLabel : column.name
     }
 
-    /// Puts what was typed into the schema, as one change (one undo). A type is read as typed ("int?", "ts"), and
+    /// Puts what was typed into the model, as one change (one undo). A type is read as typed ("int?", "ts"), and
     /// left as it was if it reads as nothing; a table keeps its name rather than lose it.
     private func commitDraft() {
         guard canvas.isEditingCell else { return }
         canvas.isEditingCell = false
         isCanvasFocused = true
-        guard let cell = canvas.cell, let index = schema.tables.firstIndex(where: { $0.id == cell.table }) else { return }
+        guard let cell = canvas.cell, let index = model.tables.firstIndex(where: { $0.id == cell.table }) else { return }
         let text = canvas.draft.trimmingCharacters(in: .whitespaces)
         guard case .column(let id) = cell.row else {
-            if !text.isEmpty, text != schema.tables[index].name { schema.tables[index].name = text }
+            if !text.isEmpty, text != model.tables[index].name { model.tables[index].name = text }
             return
         }
-        guard let row = schema.tables[index].columns.firstIndex(where: { $0.id == id }) else { return }
-        var column = schema.tables[index].columns[row]
+        guard let row = model.tables[index].columns.firstIndex(where: { $0.id == id }) else { return }
+        var column = model.tables[index].columns[row]
         if cell.part == .type {
             guard let parsed = DataType.parse(text) else { return }
             (column.type, column.isNullable) = (parsed.type, parsed.isNullable)
         } else {
             column.name = text
         }
-        if column != schema.tables[index].columns[row] { schema.tables[index].columns[row] = column }
+        if column != model.tables[index].columns[row] { model.tables[index].columns[row] = column }
     }
 
     /// Takes the cursor off the grid. Columns left without a name are dropped.
@@ -832,45 +832,45 @@ struct CanvasView: View {
         commitDraft()
         guard let cell = canvas.cell else { return }
         canvas.cell = nil
-        for column in schema.table(cell.table)?.columns ?? [] where column.name.trimmingCharacters(in: .whitespaces).isEmpty {
-            schema.removeColumn(column.id)
+        for column in model.table(cell.table)?.columns ?? [] where column.name.trimmingCharacters(in: .whitespaces).isEmpty {
+            model.removeColumn(column.id)
         }
     }
 
     /// Adds a column after `column` (at the top for nil) and starts typing its name.
     private func addColumn(to table: Table.ID, after column: Column.ID?) {
         commitDraft()
-        if let id = schema.addColumn(to: table, after: column) {
+        if let id = model.addColumn(to: table, after: column) {
             begin(CanvasController.Cell(table: table, row: .column(id), part: .name), replacingWith: "")
         }
     }
 
     /// Deletes the cursor's column; the cursor goes to the row above.
     private func deleteColumn(at cell: CanvasController.Cell) {
-        guard case .column(let id) = cell.row, let table = schema.table(cell.table),
+        guard case .column(let id) = cell.row, let table = model.table(cell.table),
               let row = table.columns.firstIndex(where: { $0.id == id }) else { return }
         canvas.isEditingCell = false
         canvas.cell = row > 0 ? CanvasController.Cell(table: table.id, row: .column(table.columns[row - 1].id), part: cell.part)
             : .name(of: table.id)
-        schema.removeColumn(id)
+        model.removeColumn(id)
     }
 
     private func updateColumn(_ column: Column.ID, in table: Table.ID, _ change: (inout Column) -> Void) {
-        guard let index = schema.tables.firstIndex(where: { $0.id == table }),
-              let row = schema.tables[index].columns.firstIndex(where: { $0.id == column }) else { return }
-        change(&schema.tables[index].columns[row])
+        guard let index = model.tables.firstIndex(where: { $0.id == table }),
+              let row = model.tables[index].columns.firstIndex(where: { $0.id == column }) else { return }
+        change(&model.tables[index].columns[row])
     }
 
     private func togglePrimaryKey(_ cell: CanvasController.Cell) {
-        guard case .column(let id) = cell.row, let column = schema.table(cell.table)?.columns.first(where: { $0.id == id }) else { return }
+        guard case .column(let id) = cell.row, let column = model.table(cell.table)?.columns.first(where: { $0.id == id }) else { return }
         setPrimaryKey(cell, to: !column.isPrimaryKey)
     }
 
     private func setPrimaryKey(_ cell: CanvasController.Cell, to isKey: Bool) {
-        guard case .column(let id) = cell.row, let index = schema.tables.firstIndex(where: { $0.id == cell.table }),
-              let row = schema.tables[index].columns.firstIndex(where: { $0.id == id }),
-              schema.tables[index].columns[row].isPrimaryKey != isKey else { return }
-        schema.tables[index].columns[row].isPrimaryKey = isKey
+        guard case .column(let id) = cell.row, let index = model.tables.firstIndex(where: { $0.id == cell.table }),
+              let row = model.tables[index].columns.firstIndex(where: { $0.id == id }),
+              model.tables[index].columns[row].isPrimaryKey != isKey else { return }
+        model.tables[index].columns[row].isPrimaryKey = isKey
     }
 
     // MARK: Zip ties and bend points
@@ -886,7 +886,7 @@ struct CanvasView: View {
             .rotationEffect(.radians(atan2(frame.direction.y, frame.direction.x)))
             .position(canvas.viewPoint(frame.center))
             // Double-clicking a bend point straightens the wire again.
-            .gesture(itemGesture(.zipTie(tie.id)) { _ in if isBendPoint { schema.removeZipTie(tie.id) } })
+            .gesture(itemGesture(.zipTie(tie.id)) { _ in if isBendPoint { model.removeZipTie(tie.id) } })
             .onHover { isHovered in
                 if isHovered { canvas.hoveredTie = tie.id } else if canvas.hoveredTie == tie.id { canvas.hoveredTie = nil }
             }
@@ -912,7 +912,7 @@ struct CanvasView: View {
         let item = CanvasController.Item.relationship(hit.relationship)
         let now = ProcessInfo.processInfo.systemUptime
         if let last = lastClick, last.item == item, now - last.time < NSEvent.doubleClickInterval,
-           let bend = schema.addBendPoint(on: hit.relationship, at: hit.point, direction: hit.tangent, segment: hit.segment) {
+           let bend = model.addBendPoint(on: hit.relationship, at: hit.point, direction: hit.tangent, segment: hit.segment) {
             canvas.selection = [.zipTie(bend)]
             lastClick = nil
         } else {
@@ -961,8 +961,8 @@ struct CanvasView: View {
     /// drawn across a crowded canvas without catching what it passes over.
     private func items(in rect: CGRect) -> Set<CanvasController.Item> {
         CanvasController.boxSelection(
-            tables: schema.tables.filter { rect.contains(Metrics.frame(of: $0)) }.map(\.id),
-            ties: schema.zipTies.filter { tie in
+            tables: model.tables.filter { rect.contains(Metrics.frame(of: $0)) }.map(\.id),
+            ties: model.zipTies.filter { tie in
                 let reach = Metrics.tieHalfLength(holding: tie.relationships.count)
                 return rect.contains(CGRect(x: tie.position.x - reach, y: tie.position.y - reach, width: reach * 2, height: reach * 2))
             }.map(\.id),
@@ -970,7 +970,7 @@ struct CanvasView: View {
     }
 
     private func finishStroke() {
-        if let stroke = canvas.stroke, let tie = schema.zipTie(simulation, from: stroke.start, to: stroke.end) {
+        if let stroke = canvas.stroke, let tie = model.zipTie(simulation, from: stroke.start, to: stroke.end) {
             canvas.selection = [.zipTie(tie)]
         }
         canvas.stroke = nil
@@ -999,7 +999,7 @@ struct CanvasView: View {
         case .leftArrow: CGPoint(x: -step, y: 0)
         default: CGPoint(x: step, y: 0)
         }
-        schema.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
+        model.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
     }
 
     // MARK: Overlay
@@ -1014,13 +1014,13 @@ struct CanvasView: View {
         // Previews the color it'll take once dropped, and on a table, the column it'll add.
         let color = connection.map { connection in
             switch connection.target {
-            case .column(let id)?: schema.columnLocations[id]?.table.color.color ?? Theme.socket
-            case .table?: schema.columnLocations[connection.from]?.table.color.color ?? Theme.socket
+            case .column(let id)?: model.columnLocations[id]?.table.color.color ?? Theme.socket
+            case .table?: model.columnLocations[connection.from]?.table.color.color ?? Theme.socket
             case nil: Theme.socket
             }
         }
         let newColumn: String? = if let connection, case .table(let id)? = connection.target {
-            schema.newColumnName(referencing: connection.from, in: id)
+            model.newColumnName(referencing: connection.from, in: id)
         } else { nil }
         return Canvas { screen, _ in
             var context = screen
@@ -1097,21 +1097,21 @@ extension CanvasView {
             edit.isAnchor.insert(false, at: index)
             canvas.feedback = edit
         } else if let hit = simulation.hit(near: point, within: tolerance),
-                  let route = Routing(schema: schema, avoidingTables: wiresAvoidTables).routes[hit.relationship] {
+                  let route = Routing(model: model, avoidingTables: wiresAvoidTables).routes[hit.relationship] {
             canvas.feedback = FeedbackEdit(relationship: hit.relationship, route: route)
         }
     }
 
-    /// Saves the correction with the schema and routing as they are now.
+    /// Saves the correction with the model and routing as they are now.
     fileprivate func saveFeedback() {
         guard let edit = canvas.feedback,
-              let route = Routing(schema: schema, avoidingTables: wiresAvoidTables).routes[edit.relationship],
-              let relationship = schema.relationships.first(where: { $0.id == edit.relationship }) else { return }
-        let foreignKey = "\(schema.qualifiedName(of: relationship.from) ?? "?") → \(schema.qualifiedName(of: relationship.to) ?? "?")"
+              let route = Routing(model: model, avoidingTables: wiresAvoidTables).routes[edit.relationship],
+              let relationship = model.relationships.first(where: { $0.id == edit.relationship }) else { return }
+        let foreignKey = "\(model.qualifiedName(of: relationship.from) ?? "?") → \(model.qualifiedName(of: relationship.to) ?? "?")"
         do {
             try RoutingFeedback.save(RoutingFeedbackCase(
-                schemaName: Library.shared.open?.name ?? "", note: edit.note, routingVersion: Routing.version,
-                routingParameters: Routing.parameters, avoidingTables: wiresAvoidTables, schema: schema,
+                modelName: Library.shared.open?.name ?? "", note: edit.note, routingVersion: Routing.version,
+                routingParameters: Routing.parameters, avoidingTables: wiresAvoidTables, model: model,
                 relationship: edit.relationship, foreignKey: foreignKey, routed: route.points, expected: edit.expected,
                 controlPoints: edit.points))
             canvas.feedback = nil
@@ -1218,30 +1218,30 @@ private struct GridHints: View {
 /// the selection needn't route every wire again.
 @MainActor
 private final class RoutingCache {
-    private var inputs: (schema: Schema, tables: [Table.ID: CGPoint], ties: [ZipTie.ID: CGPoint], avoiding: Bool)?
+    private var inputs: (model: DataModel, tables: [Table.ID: CGPoint], ties: [ZipTie.ID: CGPoint], avoiding: Bool)?
     private var routing: Routing?
 
-    private var colors: (schema: Schema, colors: [Relationship.ID: Color])?
+    private var colors: (model: DataModel, colors: [Relationship.ID: Color])?
 
-    /// Each wire's color, the color of the table it references, worked out again only when the schema changes.
-    func wireColors(for schema: Schema) -> [Relationship.ID: Color] {
-        if let colors, colors.schema == schema { return colors.colors }
-        let locations = schema.columnLocations
-        let wireColors = Dictionary(schema.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
+    /// Each wire's color, the color of the table it references, worked out again only when the model changes.
+    func wireColors(for model: DataModel) -> [Relationship.ID: Color] {
+        if let colors, colors.model == model { return colors.colors }
+        let locations = model.columnLocations
+        let wireColors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
                                     uniquingKeysWith: { first, _ in first })
-        colors = (schema, wireColors)
+        colors = (model, wireColors)
         return wireColors
     }
 
-    func routing(for schema: Schema, tableOffsets: [Table.ID: CGPoint], tieOffsets: [ZipTie.ID: CGPoint],
+    func routing(for model: DataModel, tableOffsets: [Table.ID: CGPoint], tieOffsets: [ZipTie.ID: CGPoint],
                  avoidingTables: Bool) -> Routing {
         if let inputs, let routing, inputs.avoiding == avoidingTables, inputs.tables == tableOffsets,
-           inputs.ties == tieOffsets, inputs.schema == schema {
+           inputs.ties == tieOffsets, inputs.model == model {
             return routing
         }
         // From the last one, so only routes whose ends, ties or nearby tables moved are worked out again.
         let route = { [routing] in
-            Routing(schema: schema, tableOffsets: tableOffsets, tieOffsets: tieOffsets, avoidingTables: avoidingTables,
+            Routing(model: model, tableOffsets: tableOffsets, tieOffsets: tieOffsets, avoidingTables: avoidingTables,
                     reusing: routing)
         }
         #if DEBUG
@@ -1250,7 +1250,7 @@ private final class RoutingCache {
         #else
         let routing = route()
         #endif
-        inputs = (schema, tableOffsets, tieOffsets, avoidingTables)
+        inputs = (model, tableOffsets, tieOffsets, avoidingTables)
         self.routing = routing
         return routing
     }

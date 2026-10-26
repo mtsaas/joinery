@@ -8,13 +8,19 @@ struct Export: Decodable { var cases: [Case] }
 struct Case: Decodable {
     var foreignKey: String
     var note: String
-    var schemaName: String
+    var modelName: String
     var routingVersion: String
     var avoidingTables: Bool
-    var schema: Schema
+    var model: DataModel
     var relationship: UUID
     var routed: [CGPoint]
     var expected: [CGPoint]
+
+    /// As saved, from when data models were called schemas.
+    enum CodingKeys: String, CodingKey {
+        case foreignKey, note, routingVersion, avoidingTables, relationship, routed, expected
+        case modelName = "schemaName", model = "schema"
+    }
 }
 
 /// `points` redistributed evenly along their length.
@@ -46,14 +52,14 @@ let export = try decoder.decode(Export.self, from: Data(contentsOf: URL(filePath
 print("routing \(Routing.version); \(export.cases.count) cases\n")
 var totals = (then: 0.0, now: 0.0)
 for item in export.cases {
-    guard let now = Routing(schema: item.schema, avoidingTables: item.avoidingTables).routes[item.relationship]?.points else {
+    guard let now = Routing(model: item.model, avoidingTables: item.avoidingTables).routes[item.relationship]?.points else {
         print("  \(item.foreignKey): no longer routed"); continue
     }
     let then = gap(item.routed, item.expected), current = gap(now, item.expected)
     totals.then += then.mean
     totals.now += current.mean
     print(String(format: "  %@ (%@, %@): when given %.1f pt off (worst %.0f), now %.1f pt (worst %.0f)%@",
-                 item.foreignKey, item.schemaName, item.routingVersion, then.mean, then.worst, current.mean, current.worst,
+                 item.foreignKey, item.modelName, item.routingVersion, then.mean, then.worst, current.mean, current.worst,
                  item.note.isEmpty ? "" : " — \(item.note)"))
 }
 let count = Double(max(export.cases.count, 1))

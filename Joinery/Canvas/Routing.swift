@@ -70,26 +70,26 @@ struct Routing {
     #endif
 
     /// - Parameters:
-    ///   - tableOffsets: How far tables being dragged have moved, not yet saved to `schema`.
+    ///   - tableOffsets: How far tables being dragged have moved, not yet saved to `model`.
     ///   - tieOffsets: The same for zip ties.
     ///   - avoidingTables: Whether wires bend around tables in their way rather than running under them.
     ///   - previous: A routing to reuse unchanged routes from.
-    init(schema: Schema, tableOffsets: [Table.ID: CGPoint] = [:], tieOffsets: [ZipTie.ID: CGPoint] = [:],
+    init(model: DataModel, tableOffsets: [Table.ID: CGPoint] = [:], tieOffsets: [ZipTie.ID: CGPoint] = [:],
          avoidingTables: Bool = false, reusing previous: Routing? = nil) {
         #if DEBUG
         Self.built += 1
         #endif
         var rows: [Column.ID: (table: Table.ID, row: Int)] = [:]
-        for table in schema.tables {
+        for table in model.tables {
             frames[table.id] = Metrics.frame(of: table).offsetBy(dx: tableOffsets[table.id]?.x ?? 0, dy: tableOffsets[table.id]?.y ?? 0)
             for (row, column) in table.columns.enumerated() { rows[column.id] = (table.id, row) }
         }
-        let tiePositions = Dictionary(schema.zipTies.map { ($0.id, $0.position + (tieOffsets[$0.id] ?? .zero)) },
+        let tiePositions = Dictionary(model.zipTies.map { ($0.id, $0.position + (tieOffsets[$0.id] ?? .zero)) },
                                       uniquingKeysWith: { first, _ in first })
 
         // Each wire leaves and enters on the side of its tables that faces where it's going.
         var ends: [Relationship.ID: (start: Waypoint, end: Waypoint)] = [:]
-        for relationship in schema.relationships {
+        for relationship in model.relationships {
             guard let from = rows[relationship.from], let to = rows[relationship.to],
                   let fromFrame = frames[from.table], let toFrame = frames[to.table] else { continue }
             let tied = relationship.zipTies.compactMap { tiePositions[$0] }
@@ -135,8 +135,8 @@ struct Routing {
         }
 
         // A tie turns to follow its wires: along the average of the way they run through it.
-        let relationships = Dictionary(schema.relationships.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for tie in schema.zipTies {
+        let relationships = Dictionary(model.relationships.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for tie in model.zipTies {
             guard let center = tiePositions[tie.id] else { continue }
             var sum = CGPoint.zero
             for case let relationship? in tie.relationships.map({ relationships[$0] }) {
@@ -148,8 +148,8 @@ struct Routing {
                                relationships: tie.relationships)
         }
 
-        // In the schema's order, so the obstacles a wire meets are listed the same way each time.
-        let tableFrames = schema.tables.compactMap { frames[$0.id] }
+        // In the model's order, so the obstacles a wire meets are listed the same way each time.
+        let tableFrames = model.tables.compactMap { frames[$0.id] }
         isAvoiding = avoidingTables
         // Where tables have moved from and to since `previous`: only wires near those can meet different tables. Nil if
         // there's nothing to compare with, or it didn't avoid tables, so every wire looks again.
@@ -159,13 +159,13 @@ struct Routing {
         }
         let margin = Self.avoidanceReach * 2
         // Close enough to push: within reach of the wire itself, not just of the box around it, which for a long
-        // diagonal wire covers half the schema. Twice the reach, for where pushes and lifts carry it.
+        // diagonal wire covers half the model. Twice the reach, for where pushes and lifts carry it.
         func isNear(_ frame: CGRect, _ curve: Route, within bounds: CGRect) -> Bool {
             frame.intersects(bounds.insetBy(dx: -margin, dy: -margin)) && curve.points.contains { frame.distance(to: $0) < margin }
         }
         // Wires to bend around tables, worked out together after the rest.
         var toAvoid: [(id: Relationship.ID, curve: Route, obstacles: [CGRect], own: [CGRect])] = []
-        for relationship in schema.relationships {
+        for relationship in model.relationships {
             guard let (start, end) = ends[relationship.id] else { continue }
             var waypoints = [start]
             for (index, id) in relationship.zipTies.enumerated() {
@@ -204,7 +204,7 @@ struct Routing {
         }
 
         // Each wire bends on its own, so they're shared among the cores: dragging a table through a crowd of wires,
-        // turning avoidance on, or opening a big schema reroutes many at once.
+        // turning avoidance on, or opening a big model reroutes many at once.
         var avoided = [Route?](repeating: nil, count: toAvoid.count)
         avoided.withUnsafeMutableBufferPointer { results in
             let results = results

@@ -6,7 +6,7 @@ import SwiftUI
 /// - Only tables in view are drawn; when text would be too small to read, it's left out.
 /// - Shapes of one color are gathered into one path and filled once, for every table together; all the cards'
 ///   shadows are one pass. Tables that overlap are drawn in layers, so the one on top covers the one beneath; most
-///   schemas are one layer.
+///   models are one layer.
 /// - Text is laid out once per string and style (`TextLayouts`) and drawn from that with Core Text.
 ///
 /// Each table is a grid like a small spreadsheet: a name header, then a row per column with its key, name and type.

@@ -19,11 +19,11 @@ private struct AIAssistantSettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Let AI assistants read and edit schemas", isOn: $isEnabled)
+                Toggle("Let AI assistants read and edit data models", isOn: $isEnabled)
                 LabeledContent("Server") { status }
             } footer: {
                 Text("""
-                    While Joinery is open, it runs an MCP server. An assistant connected to it can read the schema \
+                    While Joinery is open, it runs an MCP server. An assistant connected to it can read the data model \
                     open in the window and make changes, which appear as they're made, save themselves and undo \
                     with ⌘Z. Only apps on this Mac can reach it.
                     """)
@@ -31,7 +31,7 @@ private struct AIAssistantSettings: View {
             }
 
             Section("Claude Code") {
-                Text("Run this in Terminal, then ask Claude to work on your schema:")
+                Text("Run this in Terminal, then ask Claude to work on your data model:")
                 Snippet(text: MCPServer.setupCommand)
             }
 

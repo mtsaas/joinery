@@ -6,21 +6,21 @@ import Testing
 @MainActor
 struct JoineryTests {
     /// `users` on the left; `orders` and `reviews` to its right, each with a `user_id` referencing it.
-    private func storefront() -> Schema {
-        var schema = Schema()
+    private func storefront() -> DataModel {
+        var model = DataModel()
         for (name, position, color) in [("users", CGPoint(x: 0, y: 0), TableColor.blue),
                                         ("orders", CGPoint(x: 500, y: -100), .orange),
                                         ("reviews", CGPoint(x: 500, y: 200), .pink)] {
-            let id = schema.addTable(at: position)
-            let index = schema.tables.firstIndex { $0.id == id }!
-            schema.tables[index].name = name
-            schema.tables[index].color = color
-            if name != "users" { schema.tables[index].columns.append(Column(name: "user_id", type: .uuid)) }
+            let id = model.addTable(at: position)
+            let index = model.tables.firstIndex { $0.id == id }!
+            model.tables[index].name = name
+            model.tables[index].color = color
+            if name != "users" { model.tables[index].columns.append(Column(name: "user_id", type: .uuid)) }
         }
-        let usersID = schema.tables[0].columns[0].id
-        schema.connect(schema.tables[1].columns[1].id, to: usersID)
-        schema.connect(schema.tables[2].columns[1].id, to: usersID)
-        return schema
+        let usersID = model.tables[0].columns[0].id
+        model.connect(model.tables[1].columns[1].id, to: usersID)
+        model.connect(model.tables[2].columns[1].id, to: usersID)
+        return model
     }
 
     /// Runs the simulation until it stops, or for `limit` seconds.
@@ -32,12 +32,12 @@ struct JoineryTests {
     }
 
     @Test func wiresSpringBackOntoTheirRoutes() {
-        var schema = storefront()
+        var model = storefront()
         let simulation = WireSimulation()
-        _ = settle(simulation, on: Routing(schema: schema))
+        _ = settle(simulation, on: Routing(model: model))
 
-        schema.tables[1].position.y += 120
-        let routing = Routing(schema: schema)
+        model.tables[1].position.y += 120
+        let routing = Routing(model: model)
         let time = settle(simulation, on: routing)
 
         #expect(time > 0.2, "should visibly swing, not snap")
@@ -46,16 +46,16 @@ struct JoineryTests {
     }
 
     @Test func zipTieHoldsCrossedWiresSideBySide() throws {
-        var schema = storefront()
+        var model = storefront()
         let simulation = WireSimulation()
-        _ = settle(simulation, on: Routing(schema: schema))
+        _ = settle(simulation, on: Routing(model: model))
 
-        let tied = schema.zipTie(simulation, from: CGPoint(x: 374, y: -200), to: CGPoint(x: 374, y: 300))
+        let tied = model.zipTie(simulation, from: CGPoint(x: 374, y: -200), to: CGPoint(x: 374, y: 300))
         let tieID = try #require(tied)
-        #expect(schema.relationships.allSatisfy { $0.zipTies == [tieID] })
+        #expect(model.relationships.allSatisfy { $0.zipTies == [tieID] })
 
-        let routing = Routing(schema: schema)
-        let slots = schema.relationships.map { routing.routes[$0.id]!.points[Routing.samplesPerSegment] }
+        let routing = Routing(model: model)
+        let slots = model.relationships.map { routing.routes[$0.id]!.points[Routing.samplesPerSegment] }
         #expect(abs(slots[0].distance(to: slots[1]) - Metrics.tieSpacing) < 0.001)
         // `orders` is above `reviews`, so its wire takes the upper slot.
         #expect(slots[0].y < slots[1].y)
@@ -63,15 +63,15 @@ struct JoineryTests {
 
     /// Tying close to a socket the wires share once made them whip into a knot while settling.
     @Test func tyingNearASocketNeverFoldsAWire() throws {
-        var schema = storefront()
+        var model = storefront()
         let simulation = WireSimulation()
-        var time = settle(simulation, on: Routing(schema: schema))
-        let socket = Metrics.socket(row: 0, side: .trailing, in: Metrics.frame(of: schema.tables[0]))
+        var time = settle(simulation, on: Routing(model: model))
+        let socket = Metrics.socket(row: 0, side: .trailing, in: Metrics.frame(of: model.tables[0]))
         let x = socket.x + 28
-        let tied = schema.zipTie(simulation, from: CGPoint(x: x, y: -200), to: CGPoint(x: x, y: 300))
+        let tied = model.zipTie(simulation, from: CGPoint(x: x, y: -200), to: CGPoint(x: x, y: 300))
         try #require(tied != nil)
 
-        let routes = Routing(schema: schema).routes
+        let routes = Routing(model: model).routes
         var sharpest = 0.0
         repeat {
             time += 1.0 / 60
@@ -91,20 +91,20 @@ struct JoineryTests {
     }
 
     @Test func wiresCanBendAroundTablesInTheirWay() throws {
-        var schema = storefront()
+        var model = storefront()
         // A table squarely across the wire from orders to users, a couple of hundred points from each socket. (Closer
         // than that, a wire can't swerve fully clear without kinking, so near a socket it may pass partly under.)
-        schema.tables[1].position.x = 900
-        let blockerID = schema.addTable(at: CGPoint(x: 450, y: -60))
-        let blocker = try #require(schema.table(blockerID))
-        schema.tables[schema.tables.count - 1].columns += (1...4).map { Column(name: "c\($0)", type: .text) }
-        let wire = schema.relationships[0].id
-        let frame = Metrics.frame(of: try #require(schema.table(blocker.id)))
+        model.tables[1].position.x = 900
+        let blockerID = model.addTable(at: CGPoint(x: 450, y: -60))
+        let blocker = try #require(model.table(blockerID))
+        model.tables[model.tables.count - 1].columns += (1...4).map { Column(name: "c\($0)", type: .text) }
+        let wire = model.relationships[0].id
+        let frame = Metrics.frame(of: try #require(model.table(blocker.id)))
 
-        let straight = try #require(Routing(schema: schema).routes[wire])
+        let straight = try #require(Routing(model: model).routes[wire])
         #expect(straight.points.contains { frame.contains($0) }, "the setup should put the table in the wire's way")
 
-        let avoiding = try #require(Routing(schema: schema, avoidingTables: true).routes[wire])
+        let avoiding = try #require(Routing(model: model, avoidingTables: true).routes[wire])
         #expect(!avoiding.points.contains { frame.contains($0) })
         #expect(avoiding.points.first == straight.points.first)
         #expect(avoiding.points.last == straight.points.last)
@@ -113,21 +113,21 @@ struct JoineryTests {
     /// A table close to the socket a wire leaves once stayed under it there: the push fades in near sockets, so the
     /// wire was only lifted in the middle, to a peak.
     @Test func wiresWrapTablesCloseToTheirSockets() throws {
-        var schema = Schema()
-        let products = schema.addTable(at: .zero), reviews = schema.addTable(at: CGPoint(x: 370, y: -20))
-        let orders = schema.addTable(at: CGPoint(x: 760, y: 40))
+        var model = DataModel()
+        let products = model.addTable(at: .zero), reviews = model.addTable(at: CGPoint(x: 370, y: -20))
+        let orders = model.addTable(at: CGPoint(x: 760, y: 40))
         for (id, count) in [(products, 4), (reviews, 5), (orders, 3)] {
-            let index = schema.tables.firstIndex { $0.id == id }!
-            schema.tables[index].columns += (1...count).map { Column(name: "c\($0)", type: .uuid) }
+            let index = model.tables.firstIndex { $0.id == id }!
+            model.tables[index].columns += (1...count).map { Column(name: "c\($0)", type: .uuid) }
         }
-        let key = try #require(schema.table(products)?.columns[0].id), foreign = try #require(schema.table(orders)?.columns[2].id)
-        let connected = schema.connect(foreign, to: key)
+        let key = try #require(model.table(products)?.columns[0].id), foreign = try #require(model.table(orders)?.columns[2].id)
+        let connected = model.connect(foreign, to: key)
         let wire = try #require(connected)
-        let frame = Metrics.frame(of: try #require(schema.table(reviews)))
+        let frame = Metrics.frame(of: try #require(model.table(reviews)))
 
-        let straight = try #require(Routing(schema: schema).routes[wire])
+        let straight = try #require(Routing(model: model).routes[wire])
         #expect(straight.points.contains { frame.contains($0) }, "the setup should put the table in the wire's way")
-        let route = try #require(Routing(schema: schema, avoidingTables: true).routes[wire])
+        let route = try #require(Routing(model: model, avoidingTables: true).routes[wire])
         // Clear of it all along, points and the stretches between, with room to spare.
         let clear = frame.insetBy(dx: -Routing.avoidanceClearance / 2, dy: -Routing.avoidanceClearance / 2)
         for (a, b) in zip(route.points, route.points.dropFirst()) {
@@ -137,16 +137,16 @@ struct JoineryTests {
 
     /// Each side of a tie is its own cable: shaking one side reaches the tie, not past it.
     @Test func forcesDoNotCrossAZipTie() throws {
-        var schema = storefront()
+        var model = storefront()
         let simulation = WireSimulation()
-        var time = settle(simulation, on: Routing(schema: schema))
-        let tied = schema.zipTie(simulation, from: CGPoint(x: 374, y: -200), to: CGPoint(x: 374, y: 300))
+        var time = settle(simulation, on: Routing(model: model))
+        let tied = model.zipTie(simulation, from: CGPoint(x: 374, y: -200), to: CGPoint(x: 374, y: 300))
         try #require(tied != nil)
-        time += settle(simulation, on: Routing(schema: schema))
+        time += settle(simulation, on: Routing(model: model))
 
         // Yank the stretch between the foreign key's socket and the tie; leave the tie and beyond where they are.
-        var routes = Routing(schema: schema).routes
-        let wire = schema.relationships[0].id, n = Routing.samplesPerSegment
+        var routes = Routing(model: model).routes
+        let wire = model.relationships[0].id, n = Routing.samplesPerSegment
         for i in 1..<n { routes[wire]?.points[i].y += 40 }
         let rest = try #require(routes[wire]?.points)
         var moved = 0.0
@@ -160,36 +160,36 @@ struct JoineryTests {
     }
 
     @Test func strokeAcrossOneWireTiesNothing() {
-        var schema = storefront()
+        var model = storefront()
         let simulation = WireSimulation()
-        _ = settle(simulation, on: Routing(schema: schema))
-        #expect(schema.zipTie(simulation, from: CGPoint(x: 374, y: -200), to: CGPoint(x: 374, y: 10)) == nil)
-        #expect(schema.zipTies.isEmpty)
+        _ = settle(simulation, on: Routing(model: model))
+        #expect(model.zipTie(simulation, from: CGPoint(x: 374, y: -200), to: CGPoint(x: 374, y: 10)) == nil)
+        #expect(model.zipTies.isEmpty)
     }
 
     @Test func deletingAWireLeavesTheOtherBentThroughTheTie() throws {
-        var schema = storefront()
+        var model = storefront()
         let simulation = WireSimulation()
-        _ = settle(simulation, on: Routing(schema: schema))
-        let tie = schema.zipTie(simulation, from: CGPoint(x: 374, y: -200), to: CGPoint(x: 374, y: 300))
+        _ = settle(simulation, on: Routing(model: model))
+        let tie = model.zipTie(simulation, from: CGPoint(x: 374, y: -200), to: CGPoint(x: 374, y: 300))
         let tieID = try #require(tie)
 
-        schema.removeTable(schema.tables[2].id)
+        model.removeTable(model.tables[2].id)
 
-        #expect(schema.zipTies.map(\.relationships.count) == [1])
-        #expect(schema.relationships.count == 1)
-        #expect(schema.relationships[0].zipTies == [tieID])
+        #expect(model.zipTies.map(\.relationships.count) == [1])
+        #expect(model.relationships.count == 1)
+        #expect(model.relationships[0].zipTies == [tieID])
     }
 
     @Test func bendPointRoutesItsWireThroughIt() throws {
-        var schema = storefront()
+        var model = storefront()
         let simulation = WireSimulation()
-        _ = settle(simulation, on: Routing(schema: schema))
-        let wire = schema.relationships[0].id
-        let bend = schema.addBendPoint(on: wire, at: CGPoint(x: 360, y: 120), direction: CGPoint(x: 1, y: 0), segment: 0)
+        _ = settle(simulation, on: Routing(model: model))
+        let wire = model.relationships[0].id
+        let bend = model.addBendPoint(on: wire, at: CGPoint(x: 360, y: 120), direction: CGPoint(x: 1, y: 0), segment: 0)
         let bendID = try #require(bend)
 
-        let routing = Routing(schema: schema)
+        let routing = Routing(model: model)
         let route = try #require(routing.routes[wire]), direction = try #require(routing.ties[bendID]?.direction)
         let n = Routing.samplesPerSegment
         #expect(route.points[n] == CGPoint(x: 360, y: 120))
@@ -199,8 +199,8 @@ struct JoineryTests {
             #expect(abs(try #require(way.normalized).dot(direction)) > cos(12 * .pi / 180))
         }
 
-        schema.removeZipTie(bendID)
-        #expect(schema.relationships[0].zipTies.isEmpty)
+        model.removeZipTie(bendID)
+        #expect(model.relationships[0].zipTies.isEmpty)
     }
 
     @Test(arguments: [("int", DataType.integer, false), ("text?", .text, true), ("ts", .timestamp, false),
@@ -226,26 +226,26 @@ struct JoineryTests {
     }
 
     @Test func droppingOnATableAddsAColumnForTheForeignKey() throws {
-        var schema = storefront()
-        let users = schema.tables[0], orders = schema.tables[1]
-        let connected = schema.connect(dragging: users.columns[0].id, onto: .table(orders.id))
+        var model = storefront()
+        let users = model.tables[0], orders = model.tables[1]
+        let connected = model.connect(dragging: users.columns[0].id, onto: .table(orders.id))
         let id = try #require(connected)
 
-        let added = try #require(schema.table(orders.id)?.columns.last)
+        let added = try #require(model.table(orders.id)?.columns.last)
         #expect(added.name == "user_id_2", "orders already has a user_id")
         #expect(added.type == .uuid)
-        let relationship = try #require(schema.relationships.first { $0.id == id })
+        let relationship = try #require(model.relationships.first { $0.id == id })
         #expect(relationship.from == added.id)
         #expect(relationship.to == users.columns[0].id)
     }
 
     @Test func aForeignKeyPointsAtThePrimaryKeyWhicheverWayItsDragged() throws {
-        var schema = storefront()
-        schema.relationships = []
-        let usersID = schema.tables[0].columns[0].id, userID = schema.tables[1].columns[1].id
-        let connected = schema.connect(dragging: usersID, onto: .column(userID))
+        var model = storefront()
+        model.relationships = []
+        let usersID = model.tables[0].columns[0].id, userID = model.tables[1].columns[1].id
+        let connected = model.connect(dragging: usersID, onto: .column(userID))
         let id = try #require(connected)
-        let relationship = try #require(schema.relationships.first { $0.id == id })
+        let relationship = try #require(model.relationships.first { $0.id == id })
         #expect(relationship.from == userID)
         #expect(relationship.to == usersID)
     }
@@ -253,37 +253,37 @@ struct JoineryTests {
     @Test(arguments: [("users", "user"), ("categories", "category"), ("addresses", "address"), ("statuses", "status"),
                       ("boxes", "box"), ("batches", "batch"), ("order_items", "order_item"), ("access", "access")])
     func tableNamesMadeSingular(plural: String, singular: String) {
-        #expect(Schema.singular(plural) == singular)
+        #expect(DataModel.singular(plural) == singular)
     }
 
     @Test func aligningAndDistributingTables() throws {
-        var schema = Schema()
-        let ids = [CGPoint(x: 0, y: 10), CGPoint(x: 400, y: 90), CGPoint(x: 1000, y: 40)].map { schema.addTable(at: $0) }
-        schema.align(Set(ids), .top)
-        #expect(schema.tables.allSatisfy { $0.position.y == 10 })
+        var model = DataModel()
+        let ids = [CGPoint(x: 0, y: 10), CGPoint(x: 400, y: 90), CGPoint(x: 1000, y: 40)].map { model.addTable(at: $0) }
+        model.align(Set(ids), .top)
+        #expect(model.tables.allSatisfy { $0.position.y == 10 })
 
-        schema.distribute(Set(ids), horizontally: true)
-        let xs = schema.tables.map(\.position.x)
+        model.distribute(Set(ids), horizontally: true)
+        let xs = model.tables.map(\.position.x)
         #expect(xs[0] == 0 && xs[2] == 1000, "the outermost stay put")
         #expect(abs((xs[1] - xs[0]) - (xs[2] - xs[1])) < 0.001)
 
-        schema.align(Set(ids), .right)
-        #expect(schema.tables.allSatisfy { $0.position.x == 1000 })
+        model.align(Set(ids), .right)
+        #expect(model.tables.allSatisfy { $0.position.x == 1000 })
     }
 
     @Test func aligningTiesLinesThemUpAndHoldsThemSquare() throws {
-        var schema = storefront()
-        let wires = schema.relationships.map(\.id)
-        let first = schema.addBendPoint(on: wires[0], at: CGPoint(x: 380, y: -40), direction: CGPoint(x: 1, y: -0.3), segment: 0)
-        let second = schema.addBendPoint(on: wires[1], at: CGPoint(x: 410, y: 160), direction: CGPoint(x: 1, y: 0.4), segment: 0)
+        var model = storefront()
+        let wires = model.relationships.map(\.id)
+        let first = model.addBendPoint(on: wires[0], at: CGPoint(x: 380, y: -40), direction: CGPoint(x: 1, y: -0.3), segment: 0)
+        let second = model.addBendPoint(on: wires[1], at: CGPoint(x: 410, y: 160), direction: CGPoint(x: 1, y: 0.4), segment: 0)
         let a = try #require(first), b = try #require(second)
-        schema.align([], ties: [a, b], .center)
-        let ties = schema.zipTies
+        model.align([], ties: [a, b], .center)
+        let ties = model.zipTies
         #expect(ties.allSatisfy { $0.position.x == 395 }, "on the line through the middle of them")
         #expect(ties.allSatisfy { $0.heldDirection == CGPoint(x: 1, y: 0) }, "wires run square across the line")
         // Held as tables move, rather than turning with their wires.
-        schema.tables[1].position.y -= 300
-        let routing = Routing(schema: schema)
+        model.tables[1].position.y -= 300
+        let routing = Routing(model: model)
         #expect(routing.ties[a]?.direction == CGPoint(x: 1, y: 0))
     }
 
@@ -314,18 +314,18 @@ struct JoineryTests {
     }
 
     @Test func repairDropsDanglingReferences() {
-        var schema = storefront()
-        let tie = ZipTie(position: .zero, direction: CGPoint(x: 0, y: 3), relationships: schema.relationships.map(\.id))
-        schema.zipTies.append(tie)
-        schema.relationships[0].zipTies = [tie.id, tie.id]
-        schema.relationships[1].zipTies = [tie.id]
-        schema.relationships.append(Relationship(from: .init(), to: schema.tables[0].columns[0].id))
+        var model = storefront()
+        let tie = ZipTie(position: .zero, direction: CGPoint(x: 0, y: 3), relationships: model.relationships.map(\.id))
+        model.zipTies.append(tie)
+        model.relationships[0].zipTies = [tie.id, tie.id]
+        model.relationships[1].zipTies = [tie.id]
+        model.relationships.append(Relationship(from: .init(), to: model.tables[0].columns[0].id))
 
-        schema.repair()
+        model.repair()
 
-        #expect(schema.relationships.count == 2)
-        #expect(schema.relationships.allSatisfy { $0.zipTies == [tie.id] })
-        #expect(schema.zipTies.first?.direction == CGPoint(x: 0, y: 1))
+        #expect(model.relationships.count == 2)
+        #expect(model.relationships.allSatisfy { $0.zipTies == [tie.id] })
+        #expect(model.zipTies.first?.direction == CGPoint(x: 0, y: 1))
     }
 
     @Test func crossingFindsWhereSegmentsMeet() {
@@ -370,34 +370,34 @@ struct JoineryTests {
     }
 
     @Test func assistantToolsBuildASchemaInOneCall() throws {
-        var schema = Schema()
-        let result = try SchemaTools.call("create_tables", ["tables": [
+        var model = DataModel()
+        let result = try ModelTools.call("create_tables", ["tables": [
             ["name": "users", "columns": [["name": "id", "type": "uuid", "primary_key": true]]],
             ["name": "posts", "columns": [["name": "id", "type": "bigserial", "primary_key": true],
                                           ["name": "author_id", "type": "UUID", "references": "users"],
                                           ["name": "price", "type": "decimal(10, 2)"],
                                           ["name": "body", "type": "text?"]]],
-        ]], on: &schema)
+        ]], on: &model)
         #expect(result == "Created users, posts with 1 foreign key.")
-        let posts = try #require(schema.tables.first { $0.name == "posts" })
+        let posts = try #require(model.tables.first { $0.name == "posts" })
         #expect(posts.columns.map(\.type) == [.bigint, .uuid, .numeric, .text])
         #expect(posts.columns[3].isNullable)
-        #expect(schema.qualifiedName(of: schema.relationships[0].to) == "users.id", "a bare table name means its primary key")
-        #expect(!Metrics.frame(of: schema.tables[0]).intersects(Metrics.frame(of: posts)), "placed clear of each other")
+        #expect(model.qualifiedName(of: model.relationships[0].to) == "users.id", "a bare table name means its primary key")
+        #expect(!Metrics.frame(of: model.tables[0]).intersects(Metrics.frame(of: posts)), "placed clear of each other")
 
         // A failing call changes nothing, even after parts of it would have worked.
-        let before = schema
-        #expect(throws: SchemaTools.Failure.self) {
-            try SchemaTools.call("create_tables", ["tables": [
+        let before = model
+        #expect(throws: ModelTools.Failure.self) {
+            try ModelTools.call("create_tables", ["tables": [
                 ["name": "tags", "columns": [["name": "id", "type": "int"]]],
                 ["name": "post_tags", "columns": [["name": "tag_id", "references": "nope"]]],
-            ]], on: &schema)
+            ]], on: &model)
         }
-        #expect(schema == before)
+        #expect(model == before)
 
-        _ = try SchemaTools.call("alter_table", ["table": "POSTS", "change_columns": [["name": "author_id", "references": ""]]],
-                                 on: &schema)
-        #expect(schema.relationships.isEmpty, "an empty reference drops the foreign key")
+        _ = try ModelTools.call("alter_table", ["table": "POSTS", "change_columns": [["name": "author_id", "references": ""]]],
+                                 on: &model)
+        #expect(model.relationships.isEmpty, "an empty reference drops the foreign key")
     }
 
     @Test func columnsReadFromOlderFilesAreNotUnique() throws {
@@ -405,26 +405,26 @@ struct JoineryTests {
         let column = try JSONDecoder().decode(Column.self, from: Data(json.utf8))
         #expect(!column.isUnique && !column.isNullable && !column.isPrimaryKey)
 
-        var schema = Schema()
-        _ = try SchemaTools.call("create_tables", ["tables": [
+        var model = DataModel()
+        _ = try ModelTools.call("create_tables", ["tables": [
             ["name": "users", "columns": [["name": "email", "type": "text", "unique": true, "required": false]]],
-        ]], on: &schema)
-        let email = schema.tables[0].columns[0]
+        ]], on: &model)
+        let email = model.tables[0].columns[0]
         #expect(email.isUnique && email.isNullable)
-        #expect(try SchemaTools.describe(schema).contains("\"unique\" : true"))
+        #expect(try ModelTools.describe(model).contains("\"unique\" : true"))
     }
 
     @Test func reroutingReusesRoutesThatDidNotChange() {
-        let schema = Schema.synthetic(tables: 30, foreignKeys: 45)
+        let model = DataModel.synthetic(tables: 30, foreignKeys: 45)
         for avoiding in [false, true] {
             // From a routing with avoidance the other way, too, as when it's switched.
-            let first = Routing(schema: schema, avoidingTables: avoiding)
-            let switched = Routing(schema: schema, avoidingTables: avoiding, reusing: Routing(schema: schema, avoidingTables: !avoiding))
+            let first = Routing(model: model, avoidingTables: avoiding)
+            let switched = Routing(model: model, avoidingTables: avoiding, reusing: Routing(model: model, avoidingTables: !avoiding))
             for (id, route) in first.routes { #expect(switched.routes[id]?.points == route.points, "switched to avoiding: \(avoiding)") }
-            let moved = schema.tables[15].id
+            let moved = model.tables[15].id
             let offsets = [moved: CGPoint(x: 37, y: -21)]
-            let fresh = Routing(schema: schema, tableOffsets: offsets, avoidingTables: avoiding)
-            let reused = Routing(schema: schema, tableOffsets: offsets, avoidingTables: avoiding, reusing: first)
+            let fresh = Routing(model: model, tableOffsets: offsets, avoidingTables: avoiding)
+            let reused = Routing(model: model, tableOffsets: offsets, avoidingTables: avoiding, reusing: first)
             // Exactly the same as working everything out again.
             for (id, route) in fresh.routes { #expect(reused.routes[id]?.points == route.points, "avoiding: \(avoiding)") }
             #expect(reused.routes.count == fresh.routes.count)

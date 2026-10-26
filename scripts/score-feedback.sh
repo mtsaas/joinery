@@ -4,7 +4,7 @@
 set -e
 cd "$(dirname "$0")/.."
 out="${TMPDIR:-/tmp}/joinery-score-feedback"
-swiftc -O -o "$out" Joinery/Document/Schema.swift Joinery/Document/Schema+Editing.swift Joinery/Document/SchemaFile.swift \
+swiftc -O -o "$out" Joinery/Document/DataModel.swift Joinery/Document/DataModel+Editing.swift Joinery/Document/DataModelFile.swift \
   Joinery/Canvas/Geometry.swift Joinery/Canvas/Metrics.swift Joinery/Canvas/Routing.swift Joinery/Canvas/WireSimulation.swift \
   Joinery/Canvas/ZipTying.swift scripts/ScoreFeedback/main.swift
 "$out" "${1:?exported feedback file}"

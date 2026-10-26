@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Lets the app be checked from the command line, without clicking. Set in the environment:
 /// - `JOINERY_LIBRARY=<dir>`: use that folder as the library (see `Library`), so tests never touch the real one.
-/// - `JOINERY_OPEN=<name>`: select the schema with that name. A `.joinery` path passed as an argument is imported and
+/// - `JOINERY_OPEN=<name>`: select the model with that name. A `.joinery` path passed as an argument is imported and
 ///   selected too.
 /// - `JOINERY_APPEARANCE=light|dark`: whatever the system's set to.
 /// - `JOINERY_SNAPSHOT=out.png`: saves the front window to `out.png` and quits. `JOINERY_SNAPSHOT_FRAMES=n` saves n
@@ -11,7 +11,7 @@ import SwiftUI
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
 ///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection), `place <x> <y>` (puts the selected ties there),
-///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>|shift+cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `feedback-on`, `handle <n> <dx> <dy>`, `feedback-note <text>`, `feedback-save`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point), `focus <table> <zoom>` (centers on that table), `shake <table> <seconds>` (drags it about and prints frame stats), `generate <tables> <foreign keys>` (replaces the schema with a made-up one; see `scripts/scale-test.sh`), `quit`, `select-ties`, `hold-drag <table> <dx> <dy>` (drags it that far in view points and holds), `wheel` (prints it), `wheel-pick <direction>` (east, northWest, …), `ties` (prints them),
+///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>|shift+cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `feedback-on`, `handle <n> <dx> <dy>`, `feedback-note <text>`, `feedback-save`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point), `focus <table> <zoom>` (centers on that table), `shake <table> <seconds>` (drags it about and prints frame stats), `generate <tables> <foreign keys>` (replaces the model with a made-up one; see `scripts/scale-test.sh`), `quit`, `select-ties`, `hold-drag <table> <dx> <dy>` (drags it that far in view points and holds), `wheel` (prints it), `wheel-pick <direction>` (east, northWest, …), `ties` (prints them),
 ///   `wait <seconds>`.
 @MainActor
 enum DebugHooks {
@@ -23,7 +23,7 @@ enum DebugHooks {
         }
         if let name = environment["JOINERY_OPEN"] {
             let library = Library.shared
-            library.selection = (library.schemas + library.collections.flatMap(\.schemas)).first { Library.name(of: $0) == name }
+            library.selection = (library.models + library.collections.flatMap(\.models)).first { Library.name(of: $0) == name }
         }
         if environment["JOINERY_SCRIPT"] != nil {
             NotificationCenter.default.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { note in
@@ -55,7 +55,7 @@ enum DebugHooks {
     }
 
     @MainActor
-    static func script(_ document: Binding<Schema>, canvas: CanvasController) async {
+    static func script(_ document: Binding<DataModel>, canvas: CanvasController) async {
         guard let script = ProcessInfo.processInfo.environment["JOINERY_SCRIPT"] else { return }
         try? await Task.sleep(for: .seconds(1))
         // Menu shortcuts only reach the active app, and a launch from a shell starts in the background.
@@ -107,10 +107,10 @@ enum DebugHooks {
             case "windows":
                 print("windows:", NSApp.windows.filter(\.isVisible).map { String(describing: type(of: $0)) })
             case "cell":
-                let schema = document.wrappedValue
+                let model = document.wrappedValue
                 let row: String = switch canvas.cell?.row {
                 case .header?: "header"
-                case .column(let id)?: schema.columnLocations[id].map { $0.table.columns[$0.row].name } ?? "?"
+                case .column(let id)?: model.columnLocations[id].map { $0.table.columns[$0.row].name } ?? "?"
                 case nil: "none"
                 }
                 print("cell \(row).\(canvas.cell.map { "\($0.part)" } ?? "-") editing=\(canvas.isEditingCell) draft=\"\(canvas.draft)\"")
@@ -185,19 +185,19 @@ enum DebugHooks {
             case "clock":
                 print(String(format: "clock %.3f s", ProcessInfo.processInfo.systemUptime))
             case "counts":
-                let schema = document.wrappedValue
-                print("tables \(schema.tables.count), foreign keys \(schema.relationships.count), ties \(schema.zipTies.count),",
+                let model = document.wrappedValue
+                print("tables \(model.tables.count), foreign keys \(model.relationships.count), ties \(model.zipTies.count),",
                       "selected wires \(canvas.selection.filter { if case .relationship = $0 { true } else { false } }.count)")
             case "drop-preview" where words.count == 4 && numbers.count == 2:
                 // Shows a wire dragged from table.column to a point, as if mid-drag.
                 let parts = words[1].split(separator: ".").map(String.init)
-                let schema = document.wrappedValue
-                if let table = schema.tables.first(where: { $0.name == parts.first }),
+                let model = document.wrappedValue
+                if let table = model.tables.first(where: { $0.name == parts.first }),
                    let row = table.columns.firstIndex(where: { $0.name == parts.last }) {
                     let end = CGPoint(x: numbers[0], y: numbers[1])
                     canvas.connection = .init(from: table.columns[row].id,
                                               start: Metrics.socket(row: row, side: .trailing, in: Metrics.frame(of: table)),
-                                              end: end, target: schema.dropTarget(at: end))
+                                              end: end, target: model.dropTarget(at: end))
                 }
             case "palette":
                 print("palette open:", canvas.showsPalette, "highlight:", canvas.paletteHighlight)

@@ -3,7 +3,7 @@ import Foundation
 
 /// A database design: tables placed on the canvas, the foreign keys between their columns, and the zip ties that
 /// bundle those keys' wires.
-struct Schema: Codable, Equatable {
+struct DataModel: Codable, Equatable {
     var tables: [Table] = []
     var relationships: [Relationship] = []
     var zipTies: [ZipTie] = []

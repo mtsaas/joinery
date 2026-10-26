@@ -19,7 +19,7 @@ extension Table {
     }
 }
 
-extension Schema {
+extension DataModel {
     func table(_ id: Table.ID) -> Table? {
         tables.first { $0.id == id }
     }
@@ -33,7 +33,7 @@ extension Schema {
         return locations
     }
 
-    /// "orders.user_id", or nil for a column that isn't in the schema.
+    /// "orders.user_id", or nil for a column that isn't in the model.
     func qualifiedName(of column: Column.ID) -> String? {
         columnLocations[column].map { "\($0.table.name).\($0.table.columns[$0.row].name)" }
     }

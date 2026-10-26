@@ -1,18 +1,18 @@
 # Joinery
 
-An infinite canvas for sketching SQL schemas on macOS, in the spirit of Freeform. Tables sit on the canvas. Each column has a socket on both sides, and you drag from one socket to another to add a foreign key. Foreign keys are drawn as springy wires, and you can zip-tie wires together into bundles.
+An infinite canvas for sketching SQL data models on macOS, in the spirit of Freeform. Tables sit on the canvas. Each column has a socket on both sides, and you drag from one socket to another to add a foreign key. Foreign keys are drawn as springy wires, and you can zip-tie wires together into bundles.
 
 Requires macOS 26 and Xcode 26 or later. Open `Joinery.xcodeproj` and press ⌘R.
 
 ## Library
 
-Schemas live in a library you browse as in Freeform. The sidebar has All Schemas, Recents (opened or changed in the last month), Favorites, and your collections. The main area shows the chosen group's schemas as a grid of live previews, or as a list with table counts. Search matches schema and table names. Each schema is a plain `.joinery` file (readable JSON) in the app's own storage, and each collection is a folder. File ▸ Show Library in Finder shows where they are.
+Data models live in a library you browse as in Freeform. The sidebar has All Data Models, Recents (opened or changed in the last month), Favorites, and your collections. The main area shows the chosen group's data models as a grid of live previews, or as a list with table counts. Search matches data model and table names. Each data model is a plain `.joinery` file (readable JSON) in the app's own storage, and each collection is a folder. File ▸ Show Library in Finder shows where they are.
 
-- **Open:** double-click a schema, or click it and press Return. It fills the window. ⌘↑ or the back button returns to the library.
-- **New:** ⌘N or the toolbar's compose button makes a schema, in the collection being shown, and opens it. ⇧⌘N or the folder button makes a collection, which you can name straight away.
-- **Rename, duplicate, favorite, move, delete:** right-click a schema or collection. You can also drag schemas onto a collection in the sidebar. Delete moves the clicked schema to the Trash, from where it can be put back. Favorites and when a schema was last opened are kept on the file itself, so they follow it through renames and moves.
-- **Saving and undo:** changes save themselves, half a second after you stop and whenever you switch schemas. Undo (⌘Z) covers the open schema.
-- **Opening and importing:** double-clicking a `.joinery` file in Finder, or File ▸ Import Schema… (⌘O), copies it into the library and opens it.
+- **Open:** double-click a data model, or click it and press Return. It fills the window. ⌘↑ or the back button returns to the library.
+- **New:** ⌘N or the toolbar's compose button makes a data model, in the collection being shown, and opens it. ⇧⌘N or the folder button makes a collection, which you can name straight away.
+- **Rename, duplicate, favorite, move, delete:** right-click a data model or collection. You can also drag data models onto a collection in the sidebar. Delete moves the clicked data model to the Trash, from where it can be put back. Favorites and when a data model was last opened are kept on the file itself, so they follow it through renames and moves.
+- **Saving and undo:** changes save themselves, half a second after you stop and whenever you switch data models. Undo (⌘Z) covers the open data model.
+- **Opening and importing:** double-clicking a `.joinery` file in Finder, or File ▸ Import Data Model… (⌘O), copies it into the library and opens it.
 - **Examples:** a new library starts with an Examples collection containing Chinook, Northwind, Sakila, the Stack Overflow data dump, and Storefront. File ▸ Add Examples puts back any you've deleted. `scripts/make_examples.py` generates them.
 
 ## Using it
@@ -44,7 +44,7 @@ ties and bend points square to them.
 
 ## AI assistants (MCP)
 
-While Joinery is open it runs an MCP server at `http://127.0.0.1:8723/mcp`, reachable only from this Mac. An assistant connected to it can read and edit the schema open in the window. Changes show up as they're made, save themselves, and undo with ⌘Z.
+While Joinery is open it runs an MCP server at `http://127.0.0.1:8723/mcp`, reachable only from this Mac. An assistant connected to it can read and edit the data model open in the window. Changes show up as they're made, save themselves, and undo with ⌘Z.
 
 Joinery ▸ Settings (⌘,) ▸ AI Assistants shows whether the server is running, has copyable setup for each kind of assistant, and can turn the server off. "Connect an AI Assistant" in the ⌘K palette opens it. To connect Claude Code, run:
 
@@ -56,9 +56,9 @@ Other assistants can use the same URL. Those that only run local commands can br
 
 | Tool | Does |
 | --- | --- |
-| `list_schemas`, `open_schema`, `new_schema` | Choose what to work on |
-| `get_schema` | Every table, column, type, key and foreign key |
-| `create_tables` | Adds tables, placed clear of the others. A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole schema can be made in one call |
+| `list_models`, `open_model`, `new_model` | Choose what to work on |
+| `get_model` | Every table, column, type, key and foreign key |
+| `create_tables` | Adds tables, placed clear of the others. A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole data model can be made in one call |
 | `alter_table` | Renames, recolors, adds, drops or changes columns |
 | `drop_tables`, `add_foreign_key`, `remove_foreign_key` | What they say |
 
@@ -70,7 +70,7 @@ The bottom-left corner shows frames per second while anything moves, and what th
 
 ## Scale test
 
-`scripts/scale-test.sh` builds an optimized copy with the debug hooks. For schemas of 10 to 200 made-up tables (the same each run), it drags a table about, zoomed to fit and at 50%, with wires running under tables and then avoiding them. It prints frames per second, our own work per frame (routing and drawing wires), and the whole view update each move causes. Give it other sizes as `scripts/scale-test.sh <derived-data-dir> "300:450 500:800"`.
+`scripts/scale-test.sh` builds an optimized copy with the debug hooks. For data models of 10 to 200 made-up tables (the same each run), it drags a table about, zoomed to fit and at 50%, with wires running under tables and then avoiding them. It prints frames per second, our own work per frame (routing and drawing wires), and the whole view update each move causes. Give it other sizes as `scripts/scale-test.sh <derived-data-dir> "300:450 500:800"`.
 
 At 200 tables and 300 foreign keys, with wires avoiding tables, a drag holds 120 fps, and our work plus the view update takes about 6 ms of the 8.3 ms a frame allows.
 
@@ -83,7 +83,7 @@ To show how a cable *should* run, use Debug ▸ Routing Feedback Mode (⌥⌘R, 
 3. Optionally add a note, then press Return to save or Esc to discard.
 
 Each saved correction records:
-- **Replay data:** the whole schema as it was, which foreign key, and whether wires were avoiding tables.
+- **Replay data:** the whole data model as it was, which foreign key, and whether wires were avoiding tables.
 - **The routing that produced the line:** `Routing.version` and its parameters.
 - **Both lines:** the routed line and the expected one, plus your control points and note.
 
@@ -94,19 +94,19 @@ Corrections are kept inside the library. Debug ▸ Export Routing Feedback… wr
 ```
 Joinery/
   App/         App entry, menu commands, debug hooks
-  Library/     The library of files and collections, the sidebar, the editor for an open schema
-  Document/    Schema model (Codable JSON, .joinery), its edits, reading and writing files
-  Examples/    The bundled example schemas
-  Debug/       Routing feedback mode, frame-rate readout, made-up schemas for the scale test (Debug builds only)
-  MCP/         The MCP server for AI assistants, and its schema tools
+  Library/     The library of files and collections, the sidebar, the editor for an open data model
+  Document/    The data model (Codable JSON, .joinery), its edits, reading and writing files
+  Examples/    The bundled example data models
+  Debug/       Routing feedback mode, frame-rate readout, made-up data models for the scale test (Debug builds only)
+  MCP/         The MCP server for AI assistants, and its data model tools
   Canvas/      Canvas view, table drawing, routing, wire physics, zip tying
-JoineryTests/  Swift Testing: physics, zip ties and bend points, type parsing, schema repair, library file operations
+JoineryTests/  Swift Testing: physics, zip ties and bend points, type parsing, data model repair, library file operations
 scripts/       build.sh (unsandboxed CLI build), make_icon.swift, make_examples.py, score-feedback.sh
 ```
 
 The wires work in two steps. `Routing` computes each wire's rest curve: Bézier segments from socket to socket that pass through the wire's zip ties. `WireSimulation` then springs a chain of points toward that curve. The ends of each wire are stiff and the middle is loose, and neighboring points pull on each other, so a wobble travels along the wire. The simulation runs only while something is moving.
 
-It stays fast as schemas grow:
+It stays fast as data models grow:
 - **Routing:** each wire's route is reused until its ends, ties or nearby tables move, so dragging a table reroutes only its own wires and those near it. Wires that do need bending around tables are spread across the cores.
 - **Tables:** all tables are drawn directly in one layer (`TableLayer`), not as views. Only tables in view are drawn, shapes of one color are filled together, and text is laid out once per string and drawn with Core Text, so it's sharp at any zoom.
 

@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The window: the library's browser, or when a schema is open, its canvas, with a way back.
+/// The window: the library's browser, or when a model is open, its canvas, with a way back.
 struct LibraryView: View {
     @Bindable var library: Library
     @Environment(\.undoManager) private var undoManager
@@ -8,13 +8,13 @@ struct LibraryView: View {
     var body: some View {
         Group {
             if let open = library.open {
-                SchemaEditor(open: open) { library.selection = nil }
+                ModelEditor(open: open) { library.selection = nil }
                     .id(open.url)
             } else {
                 LibraryBrowser(library: library)
             }
         }
-        // Undo belongs to the schema it was done in.
+        // Undo belongs to the model it was done in.
         .onChange(of: library.selection) { undoManager?.removeAllActions() }
         .alert("Something Went Wrong", isPresented: Binding { library.failure != nil } set: { if !$0 { library.failure = nil } }) {
             Button("OK") { library.failure = nil }
@@ -49,30 +49,30 @@ struct RenameField: View {
     }
 }
 
-/// A schema's canvas and toolbar.
-struct SchemaEditor: View {
-    let open: OpenSchema
+/// A model's canvas and toolbar.
+struct ModelEditor: View {
+    let open: OpenModel
     /// Back to the library.
     let close: () -> Void
     @State private var canvas = CanvasController()
     @Environment(\.undoManager) private var undoManager
 
     var body: some View {
-        let schema = Binding { open.schema } set: { open.change(to: $0) }
-        CanvasView(schema: schema, canvas: canvas)
-            // Under the toolbar, which floats over it, but not the sidebar, so fitting the schema fits what's visible.
+        let model = Binding { open.model } set: { open.change(to: $0) }
+        CanvasView(model: model, canvas: canvas)
+            // Under the toolbar, which floats over it, but not the sidebar, so fitting the model fits what's visible.
             .ignoresSafeArea(edges: .top)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
-                    Button("All Schemas", systemImage: "chevron.left", action: close)
+                    Button("All Data Models", systemImage: "chevron.left", action: close)
                         .keyboardShortcut(.upArrow, modifiers: .command)
-                        .help("Back to all schemas (⌘↑)")
+                        .help("Back to all data models (⌘↑)")
                 }
                 ToolbarItem(placement: .navigation) {
-                    ZoomMenu(canvas: canvas, bounds: open.schema.bounds)
+                    ZoomMenu(canvas: canvas, bounds: open.model.bounds)
                 }
                 ToolbarItemGroup(placement: .principal) {
-                    Button("Table", systemImage: "tablecells") { canvas.addTable(to: &schema.wrappedValue) }
+                    Button("Table", systemImage: "tablecells") { canvas.addTable(to: &model.wrappedValue) }
                         .help("Add a table (T)")
                     Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)
                         .help("Zip-tie tool: drag across wires to tie them (Z)")
@@ -83,9 +83,9 @@ struct SchemaEditor: View {
             .onAppear { open.undoManager = undoManager }
             .onChange(of: undoManager) { open.undoManager = undoManager }
             .focusedSceneValue(\.canvasController, canvas)
-            .focusedSceneValue(\.schema, schema)
+            .focusedSceneValue(\.model, model)
             #if DEBUG
-            .task { await DebugHooks.script(schema, canvas: canvas) }
+            .task { await DebugHooks.script(model, canvas: canvas) }
             #endif
     }
 }

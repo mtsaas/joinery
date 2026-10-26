@@ -23,7 +23,7 @@ struct JoineryApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `.joinery` files opened from Finder (or passed on the command line) are copied into the library.
     func application(_ application: NSApplication, open urls: [URL]) {
-        for url in urls where url.pathExtension == "joinery" { Library.shared.importSchema(from: url) }
+        for url in urls where url.pathExtension == "joinery" { Library.shared.importModel(from: url) }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -40,23 +40,23 @@ struct LibraryCommands: Commands {
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
-            Button("New Schema") { library.newSchema(in: library.selection.flatMap(library.collection(of:))) }
+            Button("New Data Model") { library.newModel(in: library.selection.flatMap(library.collection(of:))) }
                 .keyboardShortcut("n")
             Button("New Collection") { library.newCollection() }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Divider()
-            Button("Import Schema…") { importSchema() }
+            Button("Import Data Model…") { importModel() }
                 .keyboardShortcut("o")
             Button("Add Examples") { try? library.addExamples() }
             Button("Show Library in Finder") { library.showInFinder(library.root) }
         }
     }
 
-    private func importSchema() {
+    private func importModel() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.joinerySchema]
+        panel.allowedContentTypes = [.joineryDataModel]
         panel.allowsMultipleSelection = true
         guard panel.runModal() == .OK else { return }
-        for url in panel.urls { library.importSchema(from: url) }
+        for url in panel.urls { library.importModel(from: url) }
     }
 }

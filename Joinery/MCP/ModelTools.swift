@@ -1,10 +1,10 @@
 import CoreGraphics
 import Foundation
 
-/// What an AI assistant can do to a schema over MCP: read it, add, change and drop tables, and add and remove foreign
+/// What an AI assistant can do to a model over MCP: read it, add, change and drop tables, and add and remove foreign
 /// keys. Each call works on a copy and either applies whole or not at all, so it's one change, and one undo.
 @MainActor
-enum SchemaTools {
+enum ModelTools {
     struct Failure: LocalizedError {
         let message: String
         init(_ message: String) { self.message = message }
@@ -31,14 +31,14 @@ enum SchemaTools {
 
     static let definitions: [[String: Any]] = [
         [
-            "name": "get_schema",
-            "description": "The open schema: every table with its columns (type, primary key, nullable, unique) and the foreign keys between them. Columns not marked nullable are required. Read this before changing anything.",
+            "name": "get_model",
+            "description": "The open data model: every table with its columns (type, primary key, nullable, unique) and the foreign keys between them. Columns not marked nullable are required. Read this before changing anything.",
             "inputSchema": ["type": "object", "properties": [String: Any]()],
             "annotations": ["readOnlyHint": true],
         ],
         [
             "name": "create_tables",
-            "description": "Adds one or more tables, placed clear of the others. Columns can reference tables created in the same call, so a whole schema can be made at once.",
+            "description": "Adds one or more tables, placed clear of the others. Columns can reference tables created in the same call, so a whole data model can be made at once.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -124,13 +124,13 @@ enum SchemaTools {
 
     // MARK: Calls
 
-    /// Runs `name` on `schema`, which is left alone if it fails.
+    /// Runs `name` on `model`, which is left alone if it fails.
     /// - Returns: What happened, for the assistant.
-    static func call(_ name: String, _ arguments: [String: Any], on schema: inout Schema) throws -> String {
-        var draft = schema
+    static func call(_ name: String, _ arguments: [String: Any], on model: inout DataModel) throws -> String {
+        var draft = model
         let result: String
         switch name {
-        case "get_schema": return try describe(schema)
+        case "get_model": return try describe(model)
         case "create_tables": result = try createTables(arguments, in: &draft)
         case "alter_table": result = try alterTable(arguments, in: &draft)
         case "drop_tables": result = try dropTables(arguments, in: &draft)
@@ -148,15 +148,15 @@ enum SchemaTools {
             result = "Removed \(count - draft.relationships.count) foreign key\(count - draft.relationships.count == 1 ? "" : "s")."
         default: throw Failure("There's no tool called \(name).")
         }
-        schema = draft
+        model = draft
         return result
     }
 
-    /// The schema as JSON: tables in order, each column's foreign key as "table.column".
-    static func describe(_ schema: Schema) throws -> String {
-        let references = Dictionary(schema.relationships.compactMap { r in schema.qualifiedName(of: r.to).map { (r.from, $0) } },
+    /// The model as JSON: tables in order, each column's foreign key as "table.column".
+    static func describe(_ model: DataModel) throws -> String {
+        let references = Dictionary(model.relationships.compactMap { r in model.qualifiedName(of: r.to).map { (r.from, $0) } },
                                     uniquingKeysWith: { first, _ in first })
-        let tables: [[String: Any]] = schema.tables.map { table in
+        let tables: [[String: Any]] = model.tables.map { table in
             [
                 "name": table.name,
                 "color": table.color.rawValue,
@@ -174,86 +174,86 @@ enum SchemaTools {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private static func createTables(_ arguments: [String: Any], in schema: inout Schema) throws -> String {
+    private static func createTables(_ arguments: [String: Any], in model: inout DataModel) throws -> String {
         guard let specs = arguments["tables"] as? [[String: Any]], !specs.isEmpty else { throw Failure("Give at least one table.") }
         // Every table first, so columns can reference any of them.
         var pending: [(column: Column.ID, references: String)] = []
         var names: [String] = []
         for spec in specs {
             let name = try string("name", in: spec)
-            guard schema.tables.allSatisfy({ $0.name.lowercased() != name.lowercased() }) else {
+            guard model.tables.allSatisfy({ $0.name.lowercased() != name.lowercased() }) else {
                 throw Failure("There's already a table called \(name).")
             }
-            let id = schema.addTable(at: .zero)
-            let index = schema.tables.count - 1
-            schema.tables[index].name = name
-            if let color = spec["color"] as? String { schema.tables[index].color = try tableColor(color) }
+            let id = model.addTable(at: .zero)
+            let index = model.tables.count - 1
+            model.tables[index].name = name
+            if let color = spec["color"] as? String { model.tables[index].color = try tableColor(color) }
             let columns = try (spec["columns"] as? [Any] ?? []).map { try column($0) }
-            if !columns.isEmpty { schema.tables[index].columns = columns.map(\.column) }
-            try requireUniqueColumns(schema.tables[index])
+            if !columns.isEmpty { model.tables[index].columns = columns.map(\.column) }
+            try requireUniqueColumns(model.tables[index])
             pending += columns.compactMap { column in column.references.map { (column.column.id, $0) } }
-            schema.tables[index].position = schema.openSpot(for: schema.tables[index], excluding: id)
+            model.tables[index].position = model.openSpot(for: model.tables[index], excluding: id)
             names.append(name)
         }
         for (column, reference) in pending {
-            schema.connect(column, to: try self.column(named: reference, in: schema))
+            model.connect(column, to: try self.column(named: reference, in: model))
         }
         let keys = pending.count
         return "Created \(names.joined(separator: ", "))" + (keys > 0 ? " with \(keys) foreign key\(keys == 1 ? "" : "s")." : ".")
     }
 
-    private static func alterTable(_ arguments: [String: Any], in schema: inout Schema) throws -> String {
-        let id = try table(named: string("table", in: arguments), in: schema).id
-        var index: Int { schema.tables.firstIndex { $0.id == id }! }
+    private static func alterTable(_ arguments: [String: Any], in model: inout DataModel) throws -> String {
+        let id = try table(named: string("table", in: arguments), in: model).id
+        var index: Int { model.tables.firstIndex { $0.id == id }! }
         var changes: [String] = []
         if let name = arguments["rename_to"] as? String, !name.isEmpty {
-            guard schema.tables.allSatisfy({ $0.id == id || $0.name.lowercased() != name.lowercased() }) else {
+            guard model.tables.allSatisfy({ $0.id == id || $0.name.lowercased() != name.lowercased() }) else {
                 throw Failure("There's already a table called \(name).")
             }
-            schema.tables[index].name = name
+            model.tables[index].name = name
             changes.append("renamed it \(name)")
         }
         if let color = arguments["color"] as? String {
-            schema.tables[index].color = try tableColor(color)
+            model.tables[index].color = try tableColor(color)
             changes.append("made it \(color)")
         }
         for name in arguments["drop_columns"] as? [String] ?? [] {
-            schema.removeColumn(try column(named: name, in: schema.tables[index]).id)
+            model.removeColumn(try column(named: name, in: model.tables[index]).id)
             changes.append("dropped \(name)")
         }
         for spec in arguments["change_columns"] as? [[String: Any]] ?? [] {
             let name = try string("name", in: spec)
-            let columnID = try column(named: name, in: schema.tables[index]).id
-            let row = schema.tables[index].columns.firstIndex { $0.id == columnID }!
-            if let newName = spec["rename_to"] as? String, !newName.isEmpty { schema.tables[index].columns[row].name = newName }
+            let columnID = try column(named: name, in: model.tables[index]).id
+            let row = model.tables[index].columns.firstIndex { $0.id == columnID }!
+            if let newName = spec["rename_to"] as? String, !newName.isEmpty { model.tables[index].columns[row].name = newName }
             if let type = spec["type"] as? String {
                 let parsed = try dataType(type)
-                schema.tables[index].columns[row].type = parsed.type
-                if parsed.isNullable { schema.tables[index].columns[row].isNullable = true }
+                model.tables[index].columns[row].type = parsed.type
+                if parsed.isNullable { model.tables[index].columns[row].isNullable = true }
             }
-            if let isPrimaryKey = spec["primary_key"] as? Bool { schema.tables[index].columns[row].isPrimaryKey = isPrimaryKey }
-            if let isNullable = nullability(spec) { schema.tables[index].columns[row].isNullable = isNullable }
-            if let isUnique = spec["unique"] as? Bool { schema.tables[index].columns[row].isUnique = isUnique }
+            if let isPrimaryKey = spec["primary_key"] as? Bool { model.tables[index].columns[row].isPrimaryKey = isPrimaryKey }
+            if let isNullable = nullability(spec) { model.tables[index].columns[row].isNullable = isNullable }
+            if let isUnique = spec["unique"] as? Bool { model.tables[index].columns[row].isUnique = isUnique }
             if let reference = spec["references"] as? String {
-                schema.removeRelationships { $0.from == columnID }
-                if !reference.isEmpty { schema.connect(columnID, to: try column(named: reference, in: schema)) }
+                model.removeRelationships { $0.from == columnID }
+                if !reference.isEmpty { model.connect(columnID, to: try column(named: reference, in: model)) }
             }
             changes.append("changed \(name)")
         }
         let added = try (arguments["add_columns"] as? [Any] ?? []).map { try column($0) }
-        schema.tables[index].columns += added.map(\.column)
+        model.tables[index].columns += added.map(\.column)
         for (column, reference) in added.compactMap({ c in c.references.map { (c.column.id, $0) } }) {
-            schema.connect(column, to: try self.column(named: reference, in: schema))
+            model.connect(column, to: try self.column(named: reference, in: model))
         }
         if !added.isEmpty { changes.append("added \(added.map(\.column.name).joined(separator: ", "))") }
-        try requireUniqueColumns(schema.tables[index])
+        try requireUniqueColumns(model.tables[index])
         guard !changes.isEmpty else { throw Failure("Nothing to change: give rename_to, color, add_columns, drop_columns or change_columns.") }
-        return "\(schema.tables[index].name): " + changes.joined(separator: "; ") + "."
+        return "\(model.tables[index].name): " + changes.joined(separator: "; ") + "."
     }
 
-    private static func dropTables(_ arguments: [String: Any], in schema: inout Schema) throws -> String {
+    private static func dropTables(_ arguments: [String: Any], in model: inout DataModel) throws -> String {
         guard let names = arguments["tables"] as? [String], !names.isEmpty else { throw Failure("Give the tables to drop.") }
-        for name in names { schema.removeTable(try table(named: name, in: schema).id) }
+        for name in names { model.removeTable(try table(named: name, in: model).id) }
         return "Dropped \(names.joined(separator: ", "))."
     }
 
@@ -295,9 +295,9 @@ enum SchemaTools {
         return color
     }
 
-    private static func table(named name: String, in schema: Schema) throws -> Table {
-        guard let table = schema.tables.first(where: { $0.name.lowercased() == name.lowercased() }) else {
-            throw Failure("There's no table called \(name). Tables: \(schema.tables.map(\.name).joined(separator: ", ")).")
+    private static func table(named name: String, in model: DataModel) throws -> Table {
+        guard let table = model.tables.first(where: { $0.name.lowercased() == name.lowercased() }) else {
+            throw Failure("There's no table called \(name). Tables: \(model.tables.map(\.name).joined(separator: ", ")).")
         }
         return table
     }
@@ -310,9 +310,9 @@ enum SchemaTools {
     }
 
     /// "table.column", or "table" for its primary key.
-    private static func column(named reference: String, in schema: Schema) throws -> Column.ID {
+    private static func column(named reference: String, in model: DataModel) throws -> Column.ID {
         let parts = reference.split(separator: ".", maxSplits: 1).map(String.init)
-        let table = try table(named: parts.first ?? reference, in: schema)
+        let table = try table(named: parts.first ?? reference, in: model)
         if parts.count == 2 { return try column(named: parts[1], in: table).id }
         let keys = table.columns.filter(\.isPrimaryKey)
         guard keys.count == 1 else {
@@ -329,7 +329,7 @@ enum SchemaTools {
     }
 }
 
-extension Schema {
+extension DataModel {
     /// Where `table` can go without crowding the others: the first gap, reading left to right in rows over the area
     /// they cover, or below them all.
     func openSpot(for table: Table, excluding id: Table.ID) -> CGPoint {

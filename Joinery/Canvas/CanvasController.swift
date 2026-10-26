@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// One window's view of its schema: where it's looking, what's selected, and gestures in progress. None of this is
+/// One window's view of its model: where it's looking, what's selected, and gestures in progress. None of this is
 /// saved; gestures write to the document only when they end, so each is a single undo step.
 @MainActor @Observable
 final class CanvasController {
@@ -21,7 +21,7 @@ final class CanvasController {
         static func name(of table: Table.ID) -> Cell { Cell(table: table, row: .header, part: .name) }
     }
 
-    /// What a key pressed on the grid asks for; the view carries it out against the schema.
+    /// What a key pressed on the grid asks for; the view carries it out against the model.
     enum CellCommand: Equatable {
         case move(CellMove)
         /// Starts editing, with the text replaced by this (typing over the cell) or kept, caret at the end (F2).
@@ -51,7 +51,7 @@ final class CanvasController {
         var from: Column.ID
         var start: CGPoint
         var end: CGPoint
-        var target: Schema.DropTarget?
+        var target: DataModel.DropTarget?
     }
 
     /// A line being drawn across wires to tie them, in canvas points.
@@ -65,7 +65,7 @@ final class CanvasController {
     var zoom: CGFloat = 1
     /// Where the canvas origin appears in the view.
     var offset = CGPoint.zero
-    /// Until the person pans or zooms, the view keeps the whole schema fitted as the window resizes.
+    /// Until the person pans or zooms, the view keeps the whole model fitted as the window resizes.
     private(set) var isFitted = true
     private(set) var viewSize = CGSize.zero
     var selection: Set<Item> = []
@@ -279,11 +279,11 @@ final class CanvasController {
 
     /// Adds a table in the middle of the view, stepped down and right from any already there, and starts naming it.
     /// Adds a table around `point` (in canvas points), or mid-view, and starts naming it.
-    func addTable(to schema: inout Schema, at point: CGPoint? = nil) {
+    func addTable(to model: inout DataModel, at point: CGPoint? = nil) {
         let middle = point ?? canvasPoint(CGPoint(x: viewSize.width / 2, y: viewSize.height / 2))
         var position = CGPoint(x: (middle.x - Metrics.tableWidth / 2).rounded(), y: (middle.y - (point == nil ? 80 : 12)).rounded())
-        while schema.tables.contains(where: { $0.position.distance(to: position) < 8 }) { position += CGPoint(x: 24, y: 24) }
-        let id = schema.addTable(at: position)
+        while model.tables.contains(where: { $0.position.distance(to: position) < 8 }) { position += CGPoint(x: 24, y: 24) }
+        let id = model.addTable(at: position)
         selection = [.table(id)]
         edit(.name(of: id))
     }
@@ -320,12 +320,12 @@ final class CanvasController {
         }
     }
 
-    func deleteSelection(in schema: inout Schema) {
+    func deleteSelection(in model: inout DataModel) {
         for item in selection {
             switch item {
-            case .table(let id): schema.removeTable(id)
-            case .relationship(let id): schema.removeRelationships { $0.id == id }
-            case .zipTie(let id): schema.removeZipTie(id)
+            case .table(let id): model.removeTable(id)
+            case .relationship(let id): model.removeRelationships { $0.id == id }
+            case .zipTie(let id): model.removeZipTie(id)
             }
         }
         selection = []
@@ -339,5 +339,5 @@ extension CoordinateSpaceProtocol where Self == NamedCoordinateSpace {
 
 extension FocusedValues {
     @Entry var canvasController: CanvasController?
-    @Entry var schema: Binding<Schema>?
+    @Entry var model: Binding<DataModel>?
 }

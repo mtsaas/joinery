@@ -3,15 +3,15 @@ import SwiftUI
 /// The Insert menu and the View menu's zoom items, acting on the frontmost document.
 struct CanvasCommands: Commands {
     @FocusedValue(\.canvasController) private var canvas
-    @FocusedBinding(\.schema) private var schema
+    @FocusedBinding(\.model) private var model
     @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
 
     var body: some Commands {
         CommandMenu("Insert") {
             Button("Table") {
-                guard let canvas, var updated = schema else { return }
+                guard let canvas, var updated = model else { return }
                 canvas.addTable(to: &updated)
-                schema = updated
+                model = updated
             }
             .keyboardShortcut("t", modifiers: [.command, .option])
             .disabled(canvas == nil)
@@ -40,7 +40,7 @@ struct CanvasCommands: Commands {
                 .keyboardShortcut("-")
             Button("Actual Size") { canvas.map { $0.zoom(by: 1 / $0.zoom) } }
                 .keyboardShortcut("0")
-            Button("Zoom to Fit") { canvas?.zoomToFit(schema?.bounds) }
+            Button("Zoom to Fit") { canvas?.zoomToFit(model?.bounds) }
                 .keyboardShortcut("1")
             Divider()
         }

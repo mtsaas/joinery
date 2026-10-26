@@ -1,13 +1,13 @@
 import AppKit
 import Foundation
 
-/// The schemas on disk: `.joinery` files in a folder, whose subfolders are collections. Plain files, so nothing is
+/// The models on disk: `.joinery` files in a folder, whose subfolders are collections. Plain files, so nothing is
 /// kept in a database and Finder sees exactly what the sidebar does.
 @MainActor @Observable
 final class Library {
     struct Collection: Identifiable, Hashable {
         let url: URL
-        var schemas: [URL]
+        var models: [URL]
         var id: URL { url }
         var name: String { url.lastPathComponent }
     }
@@ -25,18 +25,18 @@ final class Library {
     }
 
     let root: URL
-    /// Schemas not in any collection.
-    private(set) var schemas: [URL] = []
+    /// Models not in any collection.
+    private(set) var models: [URL] = []
     private(set) var collections: [Collection] = []
-    /// The schema being edited.
-    private(set) var open: OpenSchema?
+    /// The model being edited.
+    private(set) var open: OpenModel?
     var selection: URL? {
         didSet { if selection != oldValue { openSelection() } }
     }
     /// What last went wrong, to tell the person.
     var failure: String?
 
-    /// What the browser shows about a schema besides its name.
+    /// What the browser shows about a model besides its name.
     struct Details {
         var modified: Date
         /// When it was last opened here, if it has been.
@@ -49,8 +49,8 @@ final class Library {
 
     private(set) var details: [URL: Details] = [:]
 
-    /// Every schema, in collections or not.
-    var allSchemas: [URL] { schemas + collections.flatMap(\.schemas) }
+    /// Every model, in collections or not.
+    var allModels: [URL] { models + collections.flatMap(\.models) }
 
     private let files = FileManager.default
 
@@ -74,7 +74,7 @@ final class Library {
         url.pathExtension == "joinery" ? url.deletingPathExtension().lastPathComponent : url.lastPathComponent
     }
 
-    /// The collection a schema is in, or nil if it's at the top.
+    /// The collection a model is in, or nil if it's at the top.
     func collection(of url: URL) -> URL? {
         let folder = url.deletingLastPathComponent()
         return folder.standardizedFileURL == root.standardizedFileURL ? nil : folder
@@ -92,11 +92,11 @@ final class Library {
             }
         }
         let top = contents(of: root)
-        schemas = top.filter { $0.pathExtension == "joinery" }.sorted(by: byName)
+        models = top.filter { $0.pathExtension == "joinery" }.sorted(by: byName)
         collections = top.filter { $0.hasDirectoryPath }.sorted(by: byName).map { folder in
-            Collection(url: folder, schemas: contents(of: folder).filter { $0.pathExtension == "joinery" }.sorted(by: byName))
+            Collection(url: folder, models: contents(of: folder).filter { $0.pathExtension == "joinery" }.sorted(by: byName))
         }
-        details = Dictionary(uniqueKeysWithValues: allSchemas.map { url in
+        details = Dictionary(uniqueKeysWithValues: allModels.map { url in
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
             let opened = url.extendedAttribute(Self.openedAttribute).flatMap { Double(String(decoding: $0, as: UTF8.self)) }
             return (url, Details(modified: modified, opened: opened.map(Date.init(timeIntervalSinceReferenceDate:)),
@@ -106,7 +106,7 @@ final class Library {
 
     // MARK: Favorites and recents
     //
-    // Kept on the files themselves, as extended attributes, so they go wherever a schema is moved or renamed.
+    // Kept on the files themselves, as extended attributes, so they go wherever a model is moved or renamed.
 
     private static let favoriteAttribute = URL.attributePrefix + "favorite"
     private static let openedAttribute = URL.attributePrefix + "opened"
@@ -116,20 +116,20 @@ final class Library {
         details[url]?.isFavorite = isFavorite
     }
 
-    /// Schemas opened or changed in the last month, most recent first.
+    /// Models opened or changed in the last month, most recent first.
     var recents: [URL] {
         let month = Date.now.addingTimeInterval(-30 * 24 * 3600)
-        return allSchemas.filter { (details[$0]?.lastUsed ?? .distantPast) > month }
+        return allModels.filter { (details[$0]?.lastUsed ?? .distantPast) > month }
             .sorted { details[$0]!.lastUsed > details[$1]!.lastUsed }
     }
 
     // MARK: Changes
 
-    /// Starts an empty schema, in `collection` or at the top, and selects it.
-    func newSchema(in collection: URL? = nil) {
-        attempt("make a schema") {
-            let url = unique("Untitled Schema", extension: "joinery", in: collection ?? root)
-            try Schema().write(to: url)
+    /// Starts an empty model, in `collection` or at the top, and selects it.
+    func newModel(in collection: URL? = nil) {
+        attempt("make a data model") {
+            let url = unique("Untitled Data Model", extension: "joinery", in: collection ?? root)
+            try DataModel().write(to: url)
             reload()
             selection = url
         }
@@ -146,7 +146,7 @@ final class Library {
         }
     }
 
-    /// Renames a schema or collection. The name can't be empty or contain "/" or ":".
+    /// Renames a model or collection. The name can't be empty or contain "/" or ":".
     func rename(_ url: URL, to name: String) {
         let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard name != Self.name(of: url) else { return }
@@ -163,7 +163,7 @@ final class Library {
         relocate(url, to: destination, doing: "rename it")
     }
 
-    /// Moves a schema into a collection, or to the top with nil.
+    /// Moves a model into a collection, or to the top with nil.
     func move(_ url: URL, to collection: URL?) {
         let folder = collection ?? root
         guard url.pathExtension == "joinery", url.deletingLastPathComponent().standardizedFileURL != folder.standardizedFileURL else { return }
@@ -182,7 +182,7 @@ final class Library {
         }
     }
 
-    /// Moves a schema or collection to the Trash, where it can be put back from.
+    /// Moves a model or collection to the Trash, where it can be put back from.
     func trash(_ url: URL) {
         attempt("move it to the Trash") {
             if let selection, selection.path.hasPrefix(url.path) { self.selection = nil }
@@ -192,13 +192,13 @@ final class Library {
     }
 
     /// Opens a `.joinery` file from elsewhere by copying it in; one already in the library is just selected.
-    func importSchema(from url: URL) {
+    func importModel(from url: URL) {
         if url.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path) {
             selection = url
             return
         }
         attempt("open “\(url.lastPathComponent)”") {
-            _ = try Schema(contentsOf: url)
+            _ = try DataModel(contentsOf: url)
             let copy = unique(Self.name(of: url), extension: "joinery", in: root)
             try files.copyItem(at: url, to: copy)
             reload()
@@ -229,7 +229,7 @@ final class Library {
         // Back in the browser: what was open has changed.
         guard let selection else { return reload() }
         do {
-            open = try OpenSchema(url: selection)
+            open = try OpenModel(url: selection)
             selection.setExtendedAttribute(Self.openedAttribute, to: Data(String(Date.now.timeIntervalSinceReferenceDate).utf8))
             details[selection]?.opened = .now
         } catch {
@@ -237,7 +237,7 @@ final class Library {
         }
     }
 
-    /// Moves `url` (a schema or collection), keeping the selection on whatever moved.
+    /// Moves `url` (a model or collection), keeping the selection on whatever moved.
     private func relocate(_ url: URL, to destination: URL, doing description: String) {
         attempt(description) {
             open?.saveNow()
@@ -275,26 +275,26 @@ final class Library {
     }
 }
 
-/// A schema file being edited: changes save themselves shortly after, and can be undone.
+/// A model file being edited: changes save themselves shortly after, and can be undone.
 @MainActor @Observable
-final class OpenSchema {
+final class OpenModel {
     let url: URL
-    private(set) var schema: Schema
+    private(set) var model: DataModel
     /// The window's, set by the editor, for registering changes.
     @ObservationIgnored weak var undoManager: UndoManager?
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
 
     init(url: URL) throws {
         self.url = url
-        schema = try Schema(contentsOf: url)
+        model = try DataModel(contentsOf: url)
     }
 
     var name: String { Library.name(of: url) }
 
-    func change(to new: Schema) {
-        guard new != schema else { return }
-        let old = schema
-        schema = new
+    func change(to new: DataModel) {
+        guard new != model else { return }
+        let old = model
+        model = new
         undoManager?.registerUndo(withTarget: self) { target in
             MainActor.assumeIsolated { target.change(to: old) }
         }
@@ -311,7 +311,7 @@ final class OpenSchema {
         pendingSave = nil
         guard FileManager.default.fileExists(atPath: url.path) else { return }
         do {
-            try schema.write(to: url)
+            try model.write(to: url)
         } catch {
             Library.shared.failure = "Couldn't save “\(name)”: \(error.localizedDescription)"
         }

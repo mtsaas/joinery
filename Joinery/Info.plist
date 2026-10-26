@@ -6,7 +6,7 @@
 	<array>
 		<dict>
 			<key>CFBundleTypeName</key>
-			<string>Joinery Schema</string>
+			<string>Joinery Data Model</string>
 			<key>CFBundleTypeRole</key>
 			<string>Editor</string>
 			<key>LSHandlerRank</key>
@@ -23,7 +23,7 @@
 			<key>UTTypeIdentifier</key>
 			<string>com.clarkmccauley.joinery.schema</string>
 			<key>UTTypeDescription</key>
-			<string>Joinery Schema</string>
+			<string>Joinery Data Model</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.json</string>

@@ -1,6 +1,6 @@
 import CoreGraphics
 
-extension Schema {
+extension DataModel {
     /// Ties together every wire the line from `start` to `end` crosses, where it crosses them, if there are at least
     /// two.
     @discardableResult

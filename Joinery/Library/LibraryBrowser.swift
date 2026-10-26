@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// The library, as Freeform shows its boards: All Schemas, Recents, Favorites and the collections in the sidebar, and
-/// the schemas in whichever is chosen as a grid of previews or a list, searchable by schema or table name. Opening one
+/// The library, as Freeform shows its boards: All Models, Recents, Favorites and the collections in the sidebar, and
+/// the models in whichever is chosen as a grid of previews or a list, searchable by model or table name. Opening one
 /// gives the window over to it.
 struct LibraryBrowser: View {
     @Bindable var library: Library
@@ -19,12 +19,12 @@ struct LibraryBrowser: View {
     @State private var columns = NavigationSplitViewVisibility.all
     @AppStorage("libraryLayout") private var layout = Layout.grid
     @State private var search = ""
-    /// The schema picked out with a click, to open with Return.
+    /// The model picked out with a click, to open with Return.
     @State private var highlighted: URL?
-    /// The schema or collection being renamed in place.
+    /// The model or collection being renamed in place.
     @State private var renaming: URL?
     @State private var collectionToTrash: Library.Collection?
-    @State private var previews = SchemaPreviews()
+    @State private var previews = ModelPreviews()
     @State private var layouts = TextLayouts()
 
     var body: some View {
@@ -44,7 +44,7 @@ struct LibraryBrowser: View {
                 library.trash(collection.url)
             }
         } message: { collection in
-            Text("Its \(collection.schemas.count) schemas go with it. You can put them back from the Trash.")
+            Text("Its \(collection.models.count) data models go with it. You can put them back from the Trash.")
         }
         // A collection that's gone, renamed or trashed, can't stay chosen.
         .onChange(of: library.collections.map(\.url)) {
@@ -56,11 +56,11 @@ struct LibraryBrowser: View {
 
     private var sidebar: some View {
         List(selection: Binding { scope } set: { if let new = $0 { scope = new } }) {
-            Section("Schemas") {
-                smartRow(.all, "All Schemas", symbol: "square.grid.2x2.fill", color: .blue, count: library.allSchemas.count)
+            Section("Data Models") {
+                smartRow(.all, "All Data Models", symbol: "square.grid.2x2.fill", color: .blue, count: library.allModels.count)
                 smartRow(.recents, "Recents", symbol: "clock.fill", color: .orange, count: library.recents.count)
                 smartRow(.favorites, "Favorites", symbol: "heart.fill", color: .red,
-                         count: library.allSchemas.count { library.details[$0]?.isFavorite == true })
+                         count: library.allModels.count { library.details[$0]?.isFavorite == true })
             }
             if !library.collections.isEmpty {
                 Section("Collections") {
@@ -109,34 +109,34 @@ struct LibraryBrowser: View {
                 }
             } else {
                 Label(collection.name, systemImage: collection.name == Library.examplesName ? "books.vertical" : "folder")
-                    .badge(collection.schemas.count)
+                    .badge(collection.models.count)
             }
         }
         .tag(Scope.collection(collection.url))
         .dropDestination(for: URL.self) { urls, _ in move(urls, into: collection.url) }
         .contextMenu {
-            Button("New Schema", systemImage: "square.and.pencil") { library.newSchema(in: collection.url) }
+            Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: collection.url) }
             Button("Rename", systemImage: "pencil") { renaming = collection.url }
             Button("Show in Finder", systemImage: "finder") { library.showInFinder(collection.url) }
             Divider()
             Button("Move to Trash", systemImage: "trash", role: .destructive) {
-                if collection.schemas.isEmpty { library.trash(collection.url) } else { collectionToTrash = collection }
+                if collection.models.isEmpty { library.trash(collection.url) } else { collectionToTrash = collection }
             }
         }
     }
 
     @discardableResult
     private func move(_ urls: [URL], into collection: URL?) -> Bool {
-        let schemas = urls.filter { $0.pathExtension == "joinery" }
-        for url in schemas { library.move(url, to: collection) }
-        return !schemas.isEmpty
+        let models = urls.filter { $0.pathExtension == "joinery" }
+        for url in models { library.move(url, to: collection) }
+        return !models.isEmpty
     }
 
-    // MARK: Schemas
+    // MARK: Models
 
     private var title: String {
         switch scope {
-        case .all: "All Schemas"
+        case .all: "All Data Models"
         case .recents: "Recents"
         case .favorites: "Favorites"
         case .collection(let url): url.lastPathComponent
@@ -145,24 +145,24 @@ struct LibraryBrowser: View {
 
     /// What's in the chosen group, and matches the search: most recently changed first, or for Recents, used.
     private var shown: [URL] {
-        let schemas: [URL] = switch scope {
-        case .all: library.allSchemas.sorted { modified($0) > modified($1) }
+        let models: [URL] = switch scope {
+        case .all: library.allModels.sorted { modified($0) > modified($1) }
         case .recents: library.recents
-        case .favorites: library.allSchemas.filter { library.details[$0]?.isFavorite == true }.sorted { modified($0) > modified($1) }
-        case .collection(let url): (library.collections.first { $0.url == url }?.schemas ?? []).sorted { modified($0) > modified($1) }
+        case .favorites: library.allModels.filter { library.details[$0]?.isFavorite == true }.sorted { modified($0) > modified($1) }
+        case .collection(let url): (library.collections.first { $0.url == url }?.models ?? []).sorted { modified($0) > modified($1) }
         }
         let query = search.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return schemas }
+        guard !query.isEmpty else { return models }
         // By name, or the name of a table in it.
-        return schemas.filter { url in
+        return models.filter { url in
             Library.name(of: url).localizedStandardContains(query)
-                || preview(of: url)?.schema.tables.contains { $0.name.localizedStandardContains(query) } == true
+                || preview(of: url)?.model.tables.contains { $0.name.localizedStandardContains(query) } == true
         }
     }
 
     private func modified(_ url: URL) -> Date { library.details[url]?.modified ?? .distantPast }
 
-    private func preview(of url: URL) -> SchemaPreviews.Preview? {
+    private func preview(of url: URL) -> ModelPreviews.Preview? {
         previews.preview(of: url, modified: modified(url))
     }
 
@@ -171,7 +171,7 @@ struct LibraryBrowser: View {
             Text(title)
                 .font(.system(size: 30, weight: .bold))
                 .foregroundStyle(.tint)
-            Text(count == 1 ? "1 Schema" : "\(count) Schemas")
+            Text(count == 1 ? "1 Data Model" : "\(count) Data Models")
                 .font(.callout)
                 .foregroundStyle(.secondary)
         }
@@ -201,7 +201,7 @@ struct LibraryBrowser: View {
                         .padding(.bottom, 20)
                     }
                 }
-                // A click on the background lets go of the highlighted schema.
+                // A click on the background lets go of the highlighted model.
                 .background { Color.clear.contentShape(.rect).onTapGesture { highlighted = nil } }
             } else {
                 VStack(alignment: .leading, spacing: 14) {
@@ -222,8 +222,8 @@ struct LibraryBrowser: View {
             // At the trailing end, with the search, as in Freeform.
             ToolbarSpacer(.flexible)
             ToolbarItem(placement: .primaryAction) {
-                Button("New Schema", systemImage: "square.and.pencil") { library.newSchema(in: selectedCollection) }
-                    .help("New schema (⌘N)")
+                Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: selectedCollection) }
+                    .help("New data model (⌘N)")
             }
             ToolbarItem(placement: .primaryAction) {
                 Picker("View", selection: $layout) {
@@ -236,7 +236,7 @@ struct LibraryBrowser: View {
         }
     }
 
-    /// Where a new schema goes: the collection being shown.
+    /// Where a new model goes: the collection being shown.
     private var selectedCollection: URL? {
         if case .collection(let url) = scope { url } else { nil }
     }
@@ -250,17 +250,17 @@ struct LibraryBrowser: View {
                 switch scope {
                 case .favorites:
                     ContentUnavailableView("No Favorites", systemImage: "heart",
-                                           description: Text("Right-click a schema and choose Add to Favorites."))
+                                           description: Text("Right-click a data model and choose Add to Favorites."))
                 case .recents:
-                    ContentUnavailableView("No Recent Schemas", systemImage: "clock",
-                                           description: Text("Schemas you open or change show up here for a month."))
+                    ContentUnavailableView("No Recent Data Models", systemImage: "clock",
+                                           description: Text("Data models you open or change show up here for a month."))
                 default:
                     ContentUnavailableView {
-                        Label("No Schemas", systemImage: "tablecells")
+                        Label("No Data Models", systemImage: "tablecells")
                     } description: {
-                        Text("Start one, or drag schemas here from another collection.")
+                        Text("Start one, or drag data models here from another collection.")
                     } actions: {
-                        Button("New Schema") { library.newSchema(in: selectedCollection) }
+                        Button("New Data Model") { library.newModel(in: selectedCollection) }
                     }
                 }
             }
@@ -269,7 +269,7 @@ struct LibraryBrowser: View {
     }
 
     private func card(_ url: URL) -> some View {
-        SchemaCard(name: Library.name(of: url), date: modified(url), isFavorite: library.details[url]?.isFavorite == true,
+        ModelCard(name: Library.name(of: url), date: modified(url), isFavorite: library.details[url]?.isFavorite == true,
                    isHighlighted: highlighted == url, preview: preview(of: url), layouts: layouts,
                    isRenaming: renaming == url) { name in
             renaming = nil
@@ -300,14 +300,14 @@ struct LibraryBrowser: View {
                 }
             }
             TableColumn("Tables") { row in
-                Text(preview(of: row.url).map { "\($0.schema.tables.count)" } ?? "—").monospacedDigit()
+                Text(preview(of: row.url).map { "\($0.model.tables.count)" } ?? "—").monospacedDigit()
             }
             .width(min: 50, ideal: 60, max: 80)
             TableColumn("Collection") { row in
                 Text(library.collection(of: row.url)?.lastPathComponent ?? "—").foregroundStyle(.secondary)
             }
             TableColumn("Date Modified") { row in
-                Text(SchemaCard.describe(modified(row.url))).foregroundStyle(.secondary)
+                Text(ModelCard.describe(modified(row.url))).foregroundStyle(.secondary)
             }
         }
         .contextMenu(forSelectionType: URL.self) { urls in
@@ -347,13 +347,13 @@ struct LibraryBrowser: View {
     }
 }
 
-/// A schema in the grid: a picture of it, its name and when it last changed.
-private struct SchemaCard: View {
+/// A model in the grid: a picture of it, its name and when it last changed.
+private struct ModelCard: View {
     let name: String
     let date: Date
     let isFavorite: Bool
     let isHighlighted: Bool
-    let preview: SchemaPreviews.Preview?
+    let preview: ModelPreviews.Preview?
     let layouts: TextLayouts
     let isRenaming: Bool
     let rename: (String?) -> Void
@@ -368,7 +368,7 @@ private struct SchemaCard: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SchemaThumbnail(preview: preview, layouts: layouts)
+            ModelThumbnail(preview: preview, layouts: layouts)
                 .frame(height: 128)
                 .background(Theme.canvas)
             VStack(alignment: .leading, spacing: 2) {
@@ -416,9 +416,9 @@ private struct SchemaCard: View {
     }
 }
 
-/// A schema in miniature: its tables and wires, fitted to the space, drawn as on the canvas.
-private struct SchemaThumbnail: View {
-    let preview: SchemaPreviews.Preview?
+/// A model in miniature: its tables and wires, fitted to the space, drawn as on the canvas.
+private struct ModelThumbnail: View {
+    let preview: ModelPreviews.Preview?
     let layouts: TextLayouts
 
     var body: some View {
@@ -435,7 +435,7 @@ private struct SchemaThumbnail: View {
                             context.stroke(wire.path, with: .color(wire.color), lineWidth: 1.25 / zoom)
                         }
                     }
-                    TableLayer(tables: preview.schema.tables, offsets: [:], zoom: zoom, viewOffset: offset, viewSize: geometry.size,
+                    TableLayer(tables: preview.model.tables, offsets: [:], zoom: zoom, viewOffset: offset, viewSize: geometry.size,
                                selected: [], cursor: nil, targetColumn: nil, foreignKeys: preview.foreignKeys, socketColors: [:],
                                hoveredSocket: nil, layouts: layouts)
                 }
@@ -446,11 +446,11 @@ private struct SchemaThumbnail: View {
     }
 }
 
-/// Each schema read and routed once for its preview, again only when its file changes.
+/// Each model read and routed once for its preview, again only when its file changes.
 @MainActor
-final class SchemaPreviews {
+final class ModelPreviews {
     struct Preview {
-        let schema: Schema
+        let model: DataModel
         let wires: [(path: Path, color: Color)]
         let foreignKeys: [Column.ID: Color]
         let bounds: CGRect?
@@ -460,19 +460,19 @@ final class SchemaPreviews {
 
     func preview(of url: URL, modified: Date) -> Preview? {
         if let cached = previews[url], cached.modified == modified { return cached.preview }
-        let preview = (try? Schema(contentsOf: url)).map { schema in
-            let routing = Routing(schema: schema)
-            let locations = schema.columnLocations
-            let colors = Dictionary(schema.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
+        let preview = (try? DataModel(contentsOf: url)).map { model in
+            let routing = Routing(model: model)
+            let locations = model.columnLocations
+            let colors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
                                     uniquingKeysWith: { first, _ in first })
             return Preview(
-                schema: schema,
-                wires: schema.relationships.compactMap { r in
+                model: model,
+                wires: model.relationships.compactMap { r in
                     routing.routes[r.id].map { (Path(smoothing: $0.points), colors[r.id] ?? .gray) }
                 },
-                foreignKeys: Dictionary(schema.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
+                foreignKeys: Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
                                         uniquingKeysWith: { first, _ in first }),
-                bounds: schema.bounds)
+                bounds: model.bounds)
         }
         previews[url] = (modified, preview)
         return preview

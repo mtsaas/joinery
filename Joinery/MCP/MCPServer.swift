@@ -2,8 +2,8 @@ import AppKit
 import Foundation
 import Network
 
-/// An MCP server, so AI assistants can read and edit schemas: Streamable HTTP at `url`, on this Mac only. Edits go to
-/// the schema open in the window, appear as they're made, save themselves, and undo like any other.
+/// An MCP server, so AI assistants can read and edit models: Streamable HTTP at `url`, on this Mac only. Edits go to
+/// the model open in the window, appear as they're made, save themselves, and undo like any other.
 ///
 /// Stateless and answered with plain JSON: every request is a POST of JSON-RPC, so there are no sessions or event
 /// streams to keep.
@@ -82,7 +82,7 @@ final class MCPServer {
 
     /// Each tool's name and what it does, in a sentence, for Settings.
     static var toolSummaries: [(name: String, summary: String)] {
-        (libraryTools + SchemaTools.definitions).compactMap { tool in
+        (libraryTools + ModelTools.definitions).compactMap { tool in
             guard let name = tool["name"] as? String, let description = tool["description"] as? String else { return nil }
             return (name, description.split(separator: ".").first.map { $0 + "." } ?? description)
         }
@@ -174,15 +174,15 @@ final class MCPServer {
                 "capabilities": ["tools": ["listChanged": false]],
                 "serverInfo": ["name": "joinery", "title": "Joinery", "version": "1.0"],
                 "instructions": """
-                    Joinery is a Mac app for designing SQL schemas on a canvas. These tools edit the schema open in its \
-                    window: changes appear there at once, save themselves and can be undone. Call get_schema before \
+                    Joinery is a Mac app for designing SQL databases on a canvas. These tools edit the data model open in its \
+                    window: changes appear there at once, save themselves and can be undone. Call get_model before \
                     changing anything. create_tables can make many related tables in one call.
                     """,
             ])
         case "ping":
             return result(id: id, [:])
         case "tools/list":
-            return result(id: id, ["tools": libraryTools + SchemaTools.definitions])
+            return result(id: id, ["tools": libraryTools + ModelTools.definitions])
         case "tools/call":
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
@@ -208,54 +208,54 @@ final class MCPServer {
 
     private static let libraryTools: [[String: Any]] = [
         [
-            "name": "list_schemas",
-            "description": "The schemas in Joinery's library, by collection, and which one is open.",
+            "name": "list_models",
+            "description": "The data models in Joinery's library, by collection, and which one is open.",
             "inputSchema": ["type": "object", "properties": [String: Any]()],
             "annotations": ["readOnlyHint": true],
         ],
         [
-            "name": "open_schema",
-            "description": "Opens a schema from the library in the window, for the other tools to work on.",
+            "name": "open_model",
+            "description": "Opens a data model from the library in the window, for the other tools to work on.",
             "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]],
         ],
         [
-            "name": "new_schema",
-            "description": "Starts an empty schema and opens it.",
+            "name": "new_model",
+            "description": "Starts an empty data model and opens it.",
             "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]],
         ],
     ]
 
     private static func call(_ name: String, _ arguments: [String: Any]) throws -> String {
         let library = Library.shared
-        let all = library.schemas + library.collections.flatMap(\.schemas)
+        let all = library.models + library.collections.flatMap(\.models)
         switch name {
-        case "list_schemas":
+        case "list_models":
             let lines = all.map { url in
                 let collection = library.collection(of: url).map { $0.lastPathComponent + "/" } ?? ""
                 return "- " + collection + Library.name(of: url) + (url == library.selection ? " (open)" : "")
             }
             return lines.isEmpty ? "The library is empty." : lines.joined(separator: "\n")
-        case "open_schema":
+        case "open_model":
             let wanted = (arguments["name"] as? String ?? "").lowercased()
             guard let url = all.first(where: { Library.name(of: $0).lowercased() == wanted }) else {
-                throw SchemaTools.Failure("There's no schema called \(arguments["name"] ?? ""). Use list_schemas to see them.")
+                throw ModelTools.Failure("There's no data model called \(arguments["name"] ?? ""). Use list_models to see them.")
             }
             library.selection = url
             return "Opened \(Library.name(of: url))."
-        case "new_schema":
-            library.newSchema(in: library.selection.flatMap(library.collection(of:)))
+        case "new_model":
+            library.newModel(in: library.selection.flatMap(library.collection(of:)))
             if let url = library.selection, let wanted = arguments["name"] as? String, !wanted.isEmpty {
                 library.rename(url, to: wanted)
             }
-            return "Opened a new, empty schema: \(library.open?.name ?? "Untitled Schema")."
+            return "Opened a new, empty data model: \(library.open?.name ?? "Untitled Data Model")."
         default:
-            guard SchemaTools.names.contains(name) else { throw SchemaTools.Failure("There's no tool called \(name).") }
+            guard ModelTools.names.contains(name) else { throw ModelTools.Failure("There's no tool called \(name).") }
             guard let open = library.open else {
-                throw SchemaTools.Failure("No schema is open in Joinery. Use open_schema or new_schema first.")
+                throw ModelTools.Failure("No data model is open in Joinery. Use open_model or new_model first.")
             }
-            var schema = open.schema
-            let result = try SchemaTools.call(name, arguments, on: &schema)
-            open.change(to: schema)
+            var model = open.model
+            let result = try ModelTools.call(name, arguments, on: &model)
+            open.change(to: model)
             return result
         }
     }

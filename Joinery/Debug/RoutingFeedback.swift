@@ -87,17 +87,17 @@ struct FeedbackEdit {
     }
 }
 
-/// One saved correction, with everything needed to replay it: the schema as it was, which wire, how routing was set
+/// One saved correction, with everything needed to replay it: the model as it was, which wire, how routing was set
 /// up, what it drew, and what it should have drawn.
 struct RoutingFeedbackCase: Codable {
     var id = UUID()
     var created = Date()
-    var schemaName: String
+    var modelName: String
     var note: String
     var routingVersion: String
     var routingParameters: [String: Double]
     var avoidingTables: Bool
-    var schema: Schema
+    var model: DataModel
     var relationship: Relationship.ID
     /// "orders.user_id → users.id", for reading.
     var foreignKey: String
@@ -107,6 +107,13 @@ struct RoutingFeedbackCase: Codable {
     var expected: [CGPoint]
     /// The spline's points, sockets and ties included.
     var controlPoints: [CGPoint]
+
+    /// As saved, from when data models were called schemas.
+    enum CodingKeys: String, CodingKey {
+        case id, created, note, routingVersion, routingParameters, avoidingTables, relationship, foreignKey, routed, expected
+        case controlPoints
+        case modelName = "schemaName", model = "schema"
+    }
 }
 
 @MainActor

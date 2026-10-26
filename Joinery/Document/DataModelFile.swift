@@ -2,13 +2,13 @@ import Foundation
 import UniformTypeIdentifiers
 
 extension UTType {
-    static let joinerySchema = UTType(exportedAs: "com.clarkmccauley.joinery.schema")
+    static let joineryDataModel = UTType(exportedAs: "com.clarkmccauley.joinery.schema")
 }
 
-extension Schema {
+extension DataModel {
     /// Reads a `.joinery` file, dropping anything it refers to that isn't there.
     init(contentsOf url: URL) throws {
-        self = try JSONDecoder().decode(Schema.self, from: Data(contentsOf: url))
+        self = try JSONDecoder().decode(DataModel.self, from: Data(contentsOf: url))
         repair()
     }
 
