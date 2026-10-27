@@ -39,6 +39,13 @@ struct CanvasCommands: Commands {
                 .keyboardShortcut("x")
             Button("Copy") { edit(#selector(NSText.copy(_:))) { canvas, model in canvas.copySelection(from: model) } }
                 .keyboardShortcut("c")
+            Button("Copy as Markdown") {
+                guard let canvas, let model else { return }
+                canvas.copyMarkdown(from: model, title: Library.shared.open?.name ?? "Data Model")
+            }
+            .keyboardShortcut("c", modifiers: [.command, .shift])
+            .disabled(canvas == nil)
+            .help("The selected tables, or all of them, as Markdown to give an AI assistant: columns, SQL and notes")
             Button("Paste") { edit(#selector(NSText.paste(_:))) { $0.paste(into: &$1) } }
                 .keyboardShortcut("v")
             Button("Select All") { edit(#selector(NSText.selectAll(_:))) { canvas, model in canvas.selectAll(in: model) } }

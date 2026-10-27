@@ -578,6 +578,27 @@ struct JoineryTests {
         #expect(clip.groups.map(\.id) == [sales] && clip.members(of: sales).map(\.id) == [orders])
     }
 
+    @Test func selectedTablesCopyAsMarkdownWithTheirSQLAndNotes() {
+        var model = storefront()
+        let orders = model.tables[1].id
+        model.group([orders], named: "sales")
+        model.tables[1].notes = "One per checkout."
+        model.tables[0].name = "User Accounts"
+
+        let markdown = model.markdown(of: [orders], title: "Shop")
+        #expect(markdown.hasPrefix("# Shop\n\n1 of the 3 tables"))
+        #expect(markdown.contains("### orders\nSchema: `sales`"))
+        #expect(markdown.contains("| user_id | uuid | FK | yes | User Accounts.id |"))
+        // Names that aren't plain identifiers are quoted; a schema is made before its tables.
+        #expect(markdown.contains("CREATE SCHEMA IF NOT EXISTS sales;"))
+        #expect(markdown.contains("CREATE TABLE sales.orders (\n  id uuid PRIMARY KEY,\n  user_id uuid NOT NULL REFERENCES \"User Accounts\" (id)\n);"))
+        #expect(markdown.contains("## Notes\n\n### orders\n\nOne per checkout."))
+        // Every table, with no selection; no notes section when none have notes.
+        model.tables[1].notes = ""
+        let all = model.markdown(of: nil, title: "Shop")
+        #expect(!all.contains("of the") && !all.contains("## Notes") && all.contains("Referenced by: orders.user_id, reviews.user_id"))
+    }
+
     @Test func copiedTablesPasteWithTheirKeysTiesAndSchema() throws {
         var model = storefront()
         let orders = model.tables[1], reviews = model.tables[2]

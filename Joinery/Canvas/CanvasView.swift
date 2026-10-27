@@ -309,6 +309,7 @@ struct CanvasView: View {
             ]
         }
         let tables = canvas.selectedTables
+        commands.append(copyMarkdown)
         if let (aligned, ties) = canvas.alignable {
             let count = [(aligned.count, "table"), (ties.count, "tie")].filter { $0.0 > 0 }
                 .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }.formatted()
@@ -476,6 +477,7 @@ struct CanvasView: View {
         let deleteSelection = PaletteCommand(id: "delete", title: "Delete", symbol: "trash", shortcut: "⌫", isDestructive: true) {
             canvas.deleteSelection(in: &model)
         }
+        let copyMarkdown = self.copyMarkdown
         let groupSelection = PaletteCommand(id: "group", title: "Group", symbol: "rectangle.dashed", shortcut: "⌘G") {
             canvas.groupSelection(in: &model)
         }
@@ -496,7 +498,7 @@ struct CanvasView: View {
                 slots[.southEast] = PaletteCommand(id: "distribute-v", title: "Distribute Vertically",
                                                    symbol: "distribute.vertical.center") { model.distribute(tables, horizontally: false) }
             }
-            extras = [groupSelection, untangle, deleteSelection]
+            extras = [groupSelection, untangle, copyMarkdown, deleteSelection]
             // The selected tables' color, all at once.
             if let first = model.tables.first(where: { tables.contains($0.id) }) {
                 color = (first.color, { color in model.recolor(tables: tables, groups: [], color) })
@@ -516,7 +518,7 @@ struct CanvasView: View {
             color = (table.color, { binding(for: id).wrappedValue.color = $0 })
             extras = [PaletteCommand(id: "design", title: "Open in Designer", symbol: "tablecells.badge.ellipsis") {
                 withAnimation(.smooth(duration: 0.25)) { canvas.designing = id }
-            }]
+            }, copyMarkdown]
             if table.group != nil {
                 slots[.west] = PaletteCommand(id: "ungroup-table", title: "Remove from Group", symbol: "rectangle.dashed.badge.record") {
                     canvas.removeSelectionFromGroups(in: &model)
@@ -530,7 +532,7 @@ struct CanvasView: View {
             slots[.south] = PaletteCommand(id: "ungroup", title: "Ungroup", symbol: "rectangle.dashed", shortcut: "⇧⌘G") {
                 canvas.ungroupSelection(in: &model)
             }
-            extras = [untangle] + portCommands(for: [id]) + [deleteSelection]
+            extras = [untangle] + portCommands(for: [id]) + [copyMarkdown, deleteSelection]
             color = (group.color, { color in
                 if let index = model.groups.firstIndex(where: { $0.id == id }) { model.groups[index].color = color }
             })
@@ -595,7 +597,7 @@ struct CanvasView: View {
             }
             slots[.northEast] = PaletteCommand(id: "avoid", title: "Wires Avoid Tables", subtitle: wiresAvoidTables ? "On" : "Off",
                                                symbol: "point.topleft.down.to.point.bottomright.curvepath") { wiresAvoidTables.toggle() }
-            if !canvas.selection.isEmpty { extras = [deleteSelection] }
+            extras = canvas.selection.isEmpty ? [copyMarkdown] : [copyMarkdown, deleteSelection]
         }
         return (slots, extras, color)
     }
@@ -908,6 +910,15 @@ struct CanvasView: View {
             routed.setZipTies(onCable: drag.cable, ties)
         }
         return routed
+    }
+
+    /// Copies the selected tables, or all of them, as Markdown for an AI assistant.
+    private var copyMarkdown: PaletteCommand {
+        let count = canvas.selectedTablesAndMembers(in: model).count
+        return PaletteCommand(id: "copy-markdown", title: "Copy as Markdown", subtitle: count == 0 ? "every table" : count == 1 ? "1 table" : "\(count) tables",
+                              symbol: "doc.richtext", shortcut: "⇧⌘C") {
+            canvas.copyMarkdown(from: model, title: Library.shared.open?.name ?? "Data Model")
+        }
     }
 
     /// Where the offer to copy more tables, after copying some, opens: over them, or atop the view if they're out of it.

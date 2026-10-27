@@ -64,6 +64,14 @@ final class CanvasController {
         return true
     }
 
+    /// The selected tables (and selected groups' tables), or every table with none selected, as Markdown for an AI
+    /// assistant: their columns, the SQL to make them, and their notes.
+    func copyMarkdown(from model: DataModel, title: String) {
+        let ids = model.clip(tables: selectedTables, groups: selectedGroups).tables.map(\.id)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(model.markdown(of: ids.isEmpty ? nil : Set(ids), title: title), forType: .string)
+    }
+
     /// Tables just copied that are joined to others: offered more of those to copy with them, until dismissed.
     var copiedTables: Set<Table.ID>?
 

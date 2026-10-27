@@ -424,6 +424,10 @@ enum DebugHooks {
                                               start: Metrics.socket(row: row, side: .trailing, in: Metrics.frame(of: table)),
                                               end: end, target: model.dropTarget(at: end))
                 }
+            case "markdown":
+                // What Copy as Markdown would copy for the selection.
+                canvas.copyMarkdown(from: document.wrappedValue, title: "Storefront")
+                print(NSPasteboard.general.string(forType: .string) ?? "")
             case "drop-finish":
                 // Lets go of the wire shown by drop-preview, as a real drop would.
                 NotificationCenter.default.post(name: .pull, object: canvas, userInfo: ["step": "drop-wire"])
