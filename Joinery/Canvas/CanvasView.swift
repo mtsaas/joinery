@@ -43,10 +43,20 @@ struct CanvasView: View {
         let foreignKeys = Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
                                      uniquingKeysWith: { first, _ in first })
         let socketColors = socketColors(routing, colors: colors)
-        let groupFrames = model.groups.compactMap { group in model.frame(of: group.id, offsets: canvas.tableOffsets).map { (group, $0) } }
+        // While tables are dragged, groups as dropping them there would leave them: one they'd join reaches round them.
+        let grouping = canvas.dragOffset.map { offset in
+            var dropped = model
+            dropped.move(tables: canvas.selectedTables, ties: [], by: offset)
+            dropped.regroup(canvas.selectedTables)
+            return dropped
+        } ?? model
+        let joining = Set(grouping.tables.filter { canvas.selectedTables.contains($0.id) && $0.group != model.table($0.id)?.group }.compactMap(\.group))
+        let groupFrames = grouping.groups.compactMap { group in
+            grouping.frame(of: group.id, offsets: canvas.dragOffset == nil ? canvas.tableOffsets : [:]).map { (group, $0) }
+        }
         ZStack(alignment: .topLeading) {
             GridLayer(zoom: canvas.zoom, offset: canvas.offset)
-            GroupLayer(groups: groupFrames, zoom: canvas.zoom, viewOffset: canvas.offset, selected: canvas.selectedGroups,
+            GroupLayer(groups: groupFrames, zoom: canvas.zoom, viewOffset: canvas.offset, selected: canvas.selectedGroups, joining: joining,
                        renaming: canvas.renamingGroup, focused: focusedTables.map { focused in
                            Set(model.tables.filter { focused.contains($0.id) }.compactMap(\.group))
                        })
@@ -242,6 +252,9 @@ struct CanvasView: View {
             guard note.object as AnyObject? === canvas, let id = note.userInfo?["table"] as? Table.ID,
                   let translation = note.userInfo?["translation"] as? CGSize else { return }
             dragItem(.table(id), by: translation)
+            if note.userInfo?["drop"] as? Bool == true {
+                dropItem(.table(id), at: .zero, translation: translation, click: nil) { _ in }
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .pull)) { debugPull($0) }
         .onReceive(NotificationCenter.default.publisher(for: .pressAt)) { note in

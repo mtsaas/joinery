@@ -337,9 +337,10 @@ enum DebugHooks {
                              canvas.isTying ? "on" : "off"),
                       "focus:", canvas.focus.map { focus in document.wrappedValue.tables.filter { focus.contains($0.id) }.map(\.name) } ?? ["off"])
             case "hold-drag" where table != nil && numbers.count == 2:
-                // A table dragged this far (view points) and held there, through the real drag, snapping and all.
+                // A table dragged this far (view points) and held there, through the real drag, snapping and all; and let go, with `drop`.
                 NotificationCenter.default.post(name: .holdDrag, object: canvas, userInfo: [
                     "table": document.wrappedValue.tables[table!].id, "translation": CGSize(width: numbers[0], height: numbers[1]),
+                    "drop": words.last == "drop",
                 ])
             case "group" where words.count > 1:
                 // Groups the named tables, as ⌘G would with them selected.

@@ -100,11 +100,4 @@ extension DataModel {
             if let index = tables.firstIndex(where: { $0.id == id }) { tables[index].position = origin + position }
         }
     }
-
-    /// A group's frame without some of its tables, nil if that leaves none.
-    private func frame(of group: TableGroup.ID, excluding: Set<Table.ID>) -> CGRect? {
-        var rest = self
-        rest.tables.removeAll { excluding.contains($0.id) }
-        return rest.frame(of: group)
-    }
 }

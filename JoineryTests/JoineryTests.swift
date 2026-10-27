@@ -490,6 +490,12 @@ struct JoineryTests {
         model.tables[0].position = CGPoint(x: frame.midX - Metrics.tableWidth / 2, y: frame.midY - 20)
         model.regroup([users])
         #expect(model.tables[0].group == group)
+        // Anywhere in its boundary as drawn counts, its name's band too.
+        model.removeFromGroups([users])
+        let height = Metrics.size(of: model.tables[0]).height
+        model.tables[0].position = CGPoint(x: frame.midX - Metrics.tableWidth / 2, y: frame.minY + 4 - height / 2)
+        model.regroup([users])
+        #expect(model.tables[0].group == group)
 
         // Moved with its whole group, a table stays in it, wherever the group goes.
         model.move(tables: [users, orders, reviews], ties: [], by: CGPoint(x: 5000, y: 0))

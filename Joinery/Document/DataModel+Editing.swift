@@ -353,9 +353,9 @@ extension DataModel {
     }
 
     /// The boundary drawn around a group's tables, with room for its name above them; nil while it has none. Moves
-    /// along with tables being dragged, by `offsets`.
-    func frame(of group: TableGroup.ID, offsets: [Table.ID: CGPoint] = [:]) -> CGRect? {
-        let frames = tables.filter { $0.group == group }.map { table in
+    /// along with tables being dragged, by `offsets`; without the `excluding` ones.
+    func frame(of group: TableGroup.ID, offsets: [Table.ID: CGPoint] = [:], excluding: Set<Table.ID> = []) -> CGRect? {
+        let frames = tables.filter { $0.group == group && !excluding.contains($0.id) }.map { table in
             Metrics.frame(of: table).offsetBy(dx: offsets[table.id]?.x ?? 0, dy: offsets[table.id]?.y ?? 0)
         }
         guard let union = frames.reduce(nil, { $0?.union($1) ?? $1 }) else { return nil }
@@ -399,14 +399,8 @@ extension DataModel {
     /// After `moved` tables are dropped, each that landed (by its middle) inside another group's boundary joins it.
     /// One moved along with the rest of its own group stays in it; leaving a group is done on purpose, not by dragging.
     mutating func regroup(_ moved: Set<Table.ID>) {
-        // Boundaries around the tables that stayed put.
-        let still = Dictionary(grouping: tables.filter { !moved.contains($0.id) && $0.group != nil }, by: { $0.group! })
-        let boundaries = groups.compactMap { group -> (id: TableGroup.ID, frame: CGRect)? in
-            guard let members = still[group.id] else { return nil }
-            let union = members.map(Metrics.frame).reduce(members.map(Metrics.frame)[0]) { $0.union($1) }
-            let padding = Metrics.groupPadding
-            return (group.id, union.insetBy(dx: -padding, dy: -padding))
-        }
+        // Boundaries, as drawn, around the tables that stayed put.
+        let boundaries = groups.compactMap { group in frame(of: group.id, excluding: moved).map { (id: group.id, frame: $0) } }
         for index in tables.indices where moved.contains(tables[index].id) {
             let frame = Metrics.frame(of: tables[index])
             let middle = CGPoint(x: frame.midX, y: frame.midY)
