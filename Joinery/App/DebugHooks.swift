@@ -239,6 +239,20 @@ enum DebugHooks {
                 NotificationCenter.default.post(name: .pull, object: canvas, userInfo: ["step": "tie"])
             case "pull-end":
                 NotificationCenter.default.post(name: .pull, object: canvas, userInfo: ["step": "end"])
+            case "merge-preview":
+                // The newest zip tie dragged onto the one before it, and held there.
+                let ties = document.wrappedValue.zipTies
+                guard ties.count >= 2 else { break }
+                let (dragged, target) = (ties[ties.count - 1], ties[ties.count - 2])
+                canvas.selection = [.zipTie(dragged.id)]
+                canvas.dragOffset = target.position - dragged.position
+                canvas.tieMerge = (dragged.id, target.id, target.direction)
+                canvas.hoveredTie = target.id
+            case "merge-drop":
+                guard let merge = canvas.tieMerge else { break }
+                document.wrappedValue.merge(merge.tie, by: canvas.dragOffset ?? .zero, into: merge.target, along: merge.direction)
+                (canvas.tieMerge, canvas.dragOffset, canvas.hoveredTie) = (nil, nil, nil)
+                print("merge-drop:", document.wrappedValue.zipTies.map(\.relationships.count))
             case "tie-wires" where numbers.count >= 2:
                 // Wires tied together where they're nearest each other's middle: "tie-wires 0 1".
                 var model = document.wrappedValue

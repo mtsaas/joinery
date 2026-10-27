@@ -841,7 +841,7 @@ struct JoineryTests {
         let placed = model.addBendPoint(on: third, at: CGPoint(x: 250, y: 30), direction: CGPoint(x: 1, y: 0), segment: 0)
         let bend = try #require(placed)
 
-        model.join(bend: bend, into: tie.id, along: CGPoint(x: 1, y: 0))
+        model.merge(bend, into: tie.id, along: CGPoint(x: 1, y: 0))
         #expect(!model.zipTies.contains { $0.id == bend }, "the bend point goes")
         #expect(model.zipTies.first { $0.id == tie.id }?.relationships == wires + [third], "in the slot on its side")
         #expect(model.zipTies(onCable: third) == [tie.id])
@@ -894,5 +894,27 @@ struct JoineryTests {
         #expect(model.zipTies(onCable: wires[0]) == [other.id])
         model.repair()
         #expect(model.zipTies.first { $0.id == other.id }?.relationships.count == 2)
+    }
+
+    @Test func zipTiesDroppedOnOthersCombine() throws {
+        var model = DataModel.synthetic(tables: 6, foreignKeys: 5)
+        let wires = model.relationships.map(\.id)
+        func tie(_ cables: [UUID], at point: CGPoint) -> ZipTie.ID {
+            let tie = ZipTie(position: point, direction: CGPoint(x: 1, y: 0), relationships: cables)
+            model.zipTies.append(tie)
+            for cable in cables { model.setZipTies(onCable: cable, (model.zipTies(onCable: cable) ?? []) + [tie.id]) }
+            return tie.id
+        }
+        // One tie of the first two wires below another of the next two and the second again.
+        let target = tie([wires[2], wires[1], wires[3]], at: CGPoint(x: 300, y: 300))
+        let dragged = tie([wires[0], wires[1]], at: CGPoint(x: 300, y: 340))
+        model.merge(dragged, into: target, along: CGPoint(x: 1, y: 0))
+        #expect(!model.zipTies.contains { $0.id == dragged })
+        let combined = try #require(model.zipTies.first { $0.id == target })
+        #expect(Set(combined.relationships) == Set(wires.prefix(4)) && combined.relationships.count == 4, "no wire twice")
+        #expect(combined.relationships.last == wires[0], "coming from below, the bottom slot")
+        for wire in wires.prefix(4) { #expect(model.zipTies(onCable: wire) == [target]) }
+        model.repair()
+        #expect(model.zipTies.first { $0.id == target }?.relationships.count == 4)
     }
 }

@@ -53,7 +53,11 @@ struct CanvasView: View {
             wireLayer(routing, colors: colors)
             tableLayer(socketColors: socketColors, foreignKeys: foreignKeys)
             ForEach(model.zipTies) { tie in
-                if let frame = routing.ties[tie.id] { tieHandle(tie, frame) }
+                // One being combined into another isn't routed, but is still being dragged: its handle stays.
+                let merging = canvas.tieMerge?.tie == tie.id
+                    ? Routing.Tie(center: tie.position + (canvas.dragOffset ?? .zero), direction: tie.direction, relationships: tie.relationships)
+                    : nil
+                if let frame = routing.ties[tie.id] ?? merging { tieHandle(tie, frame) }
             }
             cellEditor
             groupNameEditor(groupFrames)
@@ -822,9 +826,13 @@ struct CanvasView: View {
 
     /// The model the wires are routed for: with a port being dragged where it's got to.
     private var routedModel: DataModel {
-        guard canvas.portDrag != nil || canvas.cableDrag != nil else { return model }
+        guard canvas.portDrag != nil || canvas.cableDrag != nil || canvas.tieMerge != nil else { return model }
         var routed = model
         if let drag = canvas.portDrag { routed.movePort(drag.port, to: (drag.side, drag.along)) }
+        // A zip tie over another: shown combined.
+        if let merge = canvas.tieMerge {
+            routed.merge(merge.tie, by: canvas.dragOffset ?? .zero, into: merge.target, along: merge.direction)
+        }
         // A cable being pulled: out of the ties it's been tugged out of, and through the pointer, as if a bend point
         // were there, so it springs along after it.
         if let drag = canvas.cableDrag {
@@ -955,6 +963,7 @@ struct CanvasView: View {
                     canvas.connection = nil
                     canvas.columnDrag = nil
                     canvas.cableDrag = nil
+                    canvas.tieMerge = nil
                 }
                 // With the zip-tie tool, every drag ties, wherever it starts.
                 let press = self.press ?? (canvas.isTying ? .background : self.press(at: canvas.canvasPoint(value.startLocation)))
@@ -1146,15 +1155,18 @@ struct CanvasView: View {
         (canvas.dragOffset, canvas.guides) = move(by: translation)
         // A bend point dragged alone over a zip tie: the tie shows it'll take its cable.
         if case .zipTie(let id) = item, canvas.selection == [item] {
-            canvas.hoveredTie = tieToJoin(dragging: id, by: canvas.dragOffset ?? .zero)?.id
+            let target = tieToJoin(dragging: id, by: canvas.dragOffset ?? .zero)
+            canvas.hoveredTie = target?.id
+            let merge = target.map { (tie: id, target: $0.id, direction: $0.direction) }
+            if merge?.target != canvas.tieMerge?.target { canvas.tieMerge = merge }
         }
     }
 
-    /// The zip tie a bend point dragged alone by `offset` is over, to join its cable to, with the way it runs.
+    /// The zip tie a zip tie or bend point dragged alone by `offset` is over, to combine into, with the way it runs.
     private func tieToJoin(dragging id: ZipTie.ID, by offset: CGPoint) -> (id: ZipTie.ID, direction: CGPoint)? {
-        guard canvas.selection == [.zipTie(id)], let bend = model.zipTies.first(where: { $0.id == id }), bend.relationships.count == 1,
+        guard canvas.selection == [.zipTie(id)], let dragged = model.zipTies.first(where: { $0.id == id }),
               let ties = routingCache.current?.ties else { return nil }
-        let point = bend.position + offset
+        let point = dragged.position + offset
         return ties.first { other, tie in
             other != id && tie.relationships.count > 1
                 && tie.center.distance(to: point) <= Metrics.tieHalfLength(holding: tie.relationships.count) + Metrics.socketHitRadius
@@ -1279,11 +1291,12 @@ struct CanvasView: View {
             var moved = model
             moved.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
             moved.regroup(canvas.selectedTables)
-            // A bend point dropped on a zip tie: its cable joins the tie.
+            // A zip tie or bend point dropped on a zip tie: combined into it.
             if case .zipTie(let id) = item, let tie = tieToJoin(dragging: id, by: delta) {
-                moved.join(bend: id, into: tie.id, along: tie.direction)
+                moved.merge(id, into: tie.id, along: tie.direction)
                 canvas.selection = [.zipTie(tie.id)]
             }
+            canvas.tieMerge = nil
             model = moved
             lastClick = nil
             return

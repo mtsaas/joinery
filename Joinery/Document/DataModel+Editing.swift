@@ -245,13 +245,20 @@ extension DataModel {
         return bend.id
     }
 
-    /// Puts the cable through `bend`, a bend point, into the zip tie `tie` instead, in the slot nearest where the bend
-    /// point is across it, and takes the bend point away. `direction` is the way the tie runs, as routed.
-    mutating func join(bend: ZipTie.ID, into tie: ZipTie.ID, along direction: CGPoint) {
-        guard bend != tie, let point = zipTies.first(where: { $0.id == bend }), point.relationships.count == 1,
-              let cable = point.relationships.first, let place = zipTies(onCable: cable)?.firstIndex(of: bend) else { return }
-        untie(cable, from: bend)
-        self.tie(cable, into: tie, at: place, from: point.position, along: direction)
+    /// Combines the zip tie (or bend point) `tie`, moved by `offset`, into `target`: each of its cables goes into the
+    /// target where it ran through `tie`, in the slot across the target nearest where it was, and `tie` goes. `direction`
+    /// is the way the target runs, as routed.
+    mutating func merge(_ tie: ZipTie.ID, by offset: CGPoint = .zero, into target: ZipTie.ID, along direction: CGPoint) {
+        guard tie != target, let merged = zipTies.first(where: { $0.id == tie }) else { return }
+        // Where each of its cables runs through it: a tie's spacing apart across it, either side of its middle.
+        let across = (merged.heldDirection ?? merged.direction).perpendicular
+        for (slot, cable) in merged.relationships.enumerated() {
+            guard let place = zipTies(onCable: cable)?.firstIndex(of: tie) else { continue }
+            let point = merged.position + offset + across * ((CGFloat(slot) - CGFloat(merged.relationships.count - 1) / 2) * Metrics.tieSpacing)
+            untie(cable, from: tie)
+            self.tie(cable, into: target, at: place, from: point, along: direction)
+        }
+        zipTies.removeAll { $0.id == tie }
     }
 
     /// Puts `cable` into the zip tie `tie`, as its `index`th tie along it, in the slot across the tie nearest `point`.

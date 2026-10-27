@@ -147,6 +147,9 @@ final class CanvasController {
         var target: (id: ZipTie.ID, direction: CGPoint)?
     }
     var cableDrag: CableDrag?
+    /// A zip tie or bend point dragged alone over another zip tie, and that tie and the way it runs: the two are shown
+    /// combined, and are when let go.
+    var tieMerge: (tie: ZipTie.ID, target: ZipTie.ID, direction: CGPoint)?
 
     /// A column being dragged to another place in its table, and where it'd go: before the column at `insertion`, or
     /// last if that's past them all.
