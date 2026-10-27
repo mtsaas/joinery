@@ -828,7 +828,7 @@ struct CanvasView: View {
         // A cable being pulled: out of the ties it's been tugged out of, and through the pointer, as if a bend point
         // were there, so it springs along after it.
         if let drag = canvas.cableDrag {
-            for tie in drag.popped { routed.untie(drag.cable, from: tie) }
+            for tie in drag.popped { routed.untie(drag.cable, from: tie.id) }
             var grab = ZipTie(position: drag.point, direction: drag.direction, relationships: [drag.cable])
             grab.id = Self.grabID
             routed.zipTies.append(grab)
@@ -1177,20 +1177,28 @@ struct CanvasView: View {
     }
 
     /// A cable pulled to `point` (canvas points) by where it was grabbed: out of each tie next to that, in turn, once
-    /// it's pulled `tiePopPull` further from it than where it was grabbed; over the zip tie under the pointer, to go in.
+    /// it's pulled `tiePopPull` further from it than where it was grabbed, and back into the last it came out of once
+    /// it's come back to within `tieSnapPull`; over the zip tie under the pointer, to go in.
     private func pullCable(_ hit: WireSimulation.Hit, to point: CGPoint) {
         var drag = canvas.cableDrag ?? CanvasController.CableDrag(cable: hit.relationship, start: hit.point, point: hit.point,
                                                                   direction: hit.tangent, segment: hit.segment)
         if canvas.cableDrag == nil { canvas.selection = [.relationship(hit.relationship)] }
         drag.point = point
-        var ties = (model.zipTies(onCable: drag.cable) ?? []).filter { !drag.popped.contains($0) }
+        let pull = { (id: ZipTie.ID) in
+            model.zipTies.first { $0.id == id }.map { point.distance(to: $0.position) - drag.start.distance(to: $0.position) }
+        }
+        // Back into the ties it came out of, last first, while it's close enough to each.
+        while let last = drag.popped.last, let stretch = pull(last.id), stretch < Metrics.tieSnapPull {
+            drag.popped.removeLast()
+            if last.isBefore { drag.segment += 1 }
+        }
+        var ties = (model.zipTies(onCable: drag.cable) ?? []).filter { id in !drag.popped.contains { $0.id == id } }
         var isPopping = true
         while isPopping {
             isPopping = false
             for (index, isBefore) in [(drag.segment - 1, true), (drag.segment, false)] where ties.indices.contains(index) {
-                guard let tie = model.zipTies.first(where: { $0.id == ties[index] }),
-                      point.distance(to: tie.position) - drag.start.distance(to: tie.position) > Metrics.tiePopPull else { continue }
-                drag.popped.append(tie.id)
+                guard let stretch = pull(ties[index]), stretch > Metrics.tiePopPull else { continue }
+                drag.popped.append((ties[index], isBefore))
                 ties.remove(at: index)
                 if isBefore { drag.segment -= 1 }
                 isPopping = true
@@ -1210,7 +1218,7 @@ struct CanvasView: View {
     /// springs back where it was. One change.
     private func letGo(_ drag: CanvasController.CableDrag) {
         var changed = model
-        for tie in drag.popped { changed.untie(drag.cable, from: tie) }
+        for tie in drag.popped { changed.untie(drag.cable, from: tie.id) }
         if let target = drag.target {
             changed.tie(drag.cable, into: target.id, at: drag.segment, from: drag.point, along: target.direction)
             canvas.selection = [.zipTie(target.id)]

@@ -142,7 +142,8 @@ final class CanvasController {
         var direction: CGPoint
         /// Between its `segment - 1`th tie (or its start) and its `segment`th (or its end), not counting those popped.
         var segment: Int
-        var popped: [ZipTie.ID] = []
+        /// The ties it's been tugged out of, in order, and whether each was before the grab along it or after.
+        var popped: [(id: ZipTie.ID, isBefore: Bool)] = []
         var target: (id: ZipTie.ID, direction: CGPoint)?
     }
     var cableDrag: CableDrag?

@@ -53,6 +53,9 @@ enum Metrics {
 
     /// How much further a cable has to be pulled from a zip tie or bend point, than where it was grabbed, to pop out.
     static let tiePopPull: CGFloat = 80
+    /// How near it has to come back, as against where it was grabbed, to snap back into one it popped out of: well
+    /// short of popping, so it doesn't flick in and out at the edge.
+    static let tieSnapPull: CGFloat = 30
 
     /// How far apart wires plugging into a port's inside end are: as a zip tie holds them.
     static let portSlotSpacing: CGFloat = tieSpacing
