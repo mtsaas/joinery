@@ -109,7 +109,9 @@ struct CanvasView: View {
         }
         .overlay(alignment: .trailing) {
             if let id = canvas.designing {
-                TableDesigner(model: $model, id: id) { withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil } }
+                TableDesigner(model: $model, id: id, command: $canvas.designerCommand) {
+                    withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil }
+                }
                     .padding(.top, 60)
                     .padding([.trailing, .bottom], 12)
                     .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -1131,7 +1133,7 @@ struct CanvasView: View {
                 editor
                     .fixedSize()
                     .frame(minWidth: 12 * zoom, alignment: .leading)
-                    .padding(.leading, Metrics.cellInset * zoom - inset)
+                    .padding(.leading, Metrics.gripWidth * zoom - inset)
                     .frame(width: rect.width * zoom - inset * 2, height: rect.height * zoom - inset * 2, alignment: .leading)
                     .position(canvas.viewPoint(CGPoint(x: rect.midX, y: rect.midY)))
             } else {

@@ -107,8 +107,18 @@ struct CanvasEventMonitor: NSViewRepresentable {
             switch event.type {
             case .keyDown where canvas.wheel != nil && event.keyCode == Key.escape:
                 canvas.wheel = nil
-            case .keyDown where canvas.designing != nil && !isTyping && event.keyCode == Key.escape:
-                withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil }
+            case .keyDown where canvas.designing != nil:
+                // The table designer's keys, even while typing in it: what's typed applies as it closes.
+                let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
+                switch (event.keyCode, modifiers, event.charactersIgnoringModifiers?.lowercased()) {
+                case (Key.escape, [], _): withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil }
+                case (Key.return, .command, _): canvas.designerCommand = .insert
+                case (Key.delete, .command, _): canvas.designerCommand = .delete
+                case (_, [.command, .shift], "k"): canvas.designerCommand = .primaryKey
+                case (_, [.command, .shift], "r"): canvas.designerCommand = .required
+                case (_, [.command, .shift], "u"): canvas.designerCommand = .unique
+                default: return false
+                }
             case .keyDown where isTyping && canvas.showsPalette:
                 switch event.keyCode {
                 case Key.down: canvas.paletteHighlight += 1

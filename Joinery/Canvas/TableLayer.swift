@@ -153,8 +153,8 @@ struct TableLayer: View {
                 rings.addPath(Path(roundedRect: frame.insetBy(dx: -inner - width / 2, dy: -inner - width / 2),
                                    cornerRadius: radius + inner + width / 2, style: .circular))
             }
-            // Not while its name's edited: the field there is all that shows.
-            if let cursor, cursor.table == table.id, table.id != renaming, let rect = cellRect(cursor, of: table, in: frame) {
+            // Not on a header: it's a name, not a cell in the grid, and its selection is the table's.
+            if let cursor, cursor.table == table.id, cursor.row != .header, let rect = cellRect(cursor, of: table, in: frame) {
                 // Just inside the cell, as in a spreadsheet, a point clear of its edges on screen.
                 let width = max(2, 1.5 / zoom), inset = 1 / zoom + width / 2
                 cursors.addPath(Path(roundedRect: rect.insetBy(dx: inset, dy: inset), cornerRadius: max(2 - inset, 0)))
@@ -192,12 +192,13 @@ struct TableLayer: View {
         let inset = Metrics.cellInset
         for (table, frame) in visible {
             let header = Metrics.cell(row: nil, part: .name, in: frame)
-            // The name, short of the grip at the header's right end, where the table's grabbed to move it.
+            // The grip at the header's left end, where the table's grabbed to move it, and the name after it.
             if table.id != renaming {
-                text(table.name, .header, width: header.width - inset * 2 - Metrics.gripWidth, in: header.insetBy(dx: inset, dy: 0), color: primary)
+                let name = CGRect(x: header.minX + Metrics.gripWidth, y: header.minY, width: header.width - Metrics.gripWidth - inset, height: header.height)
+                text(table.name, .header, width: name.width, in: name, color: primary)
             }
-            let dot: CGFloat = 2.2, gap: CGFloat = 3.4
-            let grip = CGPoint(x: header.maxX - inset - gap - dot / 2, y: header.midY - gap)
+            let dot: CGFloat = 3, gap: CGFloat = 4.5
+            let grip = CGPoint(x: header.minX + inset + dot / 2, y: header.midY - gap)
             for column in 0..<2 { for row in 0..<3 {
                 let center = grip + CGPoint(x: CGFloat(column) * gap, y: CGFloat(row) * gap)
                 grips.addEllipse(in: CGRect(x: center.x - dot / 2, y: center.y - dot / 2, width: dot, height: dot))
@@ -235,7 +236,7 @@ struct TableLayer: View {
             }
         }
         context.fill(badges, with: .color(Color.secondary.opacity(0.16)))
-        context.fill(grips, with: .color(Color(cgColor: quaternary)))
+        context.fill(grips, with: .color(Color(cgColor: secondary).opacity(0.75)))
         context.withCGContext { cg in
             // Core Text draws upward; the canvas runs down.
             cg.textMatrix = CGAffineTransform(scaleX: 1, y: -1)

@@ -156,6 +156,9 @@ final class CanvasController {
     var columnDrag: (table: Table.ID, column: Column.ID, insertion: Int)?
     /// The table open in the table designer, beside the canvas.
     var designing: Table.ID?
+    /// A shortcut for the table designer, caught before the field being typed in there could take it.
+    enum DesignerCommand: Equatable { case primaryKey, required, unique, insert, delete }
+    var designerCommand: DesignerCommand?
     /// The table whose header the pointer's over, where it's grabbed to move it.
     var hoveredHeader: Table.ID?
 

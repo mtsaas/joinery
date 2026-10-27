@@ -8,8 +8,8 @@ enum Metrics {
     static let keyColumnWidth: CGFloat = 30
     static let typeColumnWidth: CGFloat = 86
     static let headerHeight: CGFloat = 30
-    /// Room at a header's right end for the grip it's grabbed by.
-    static let gripWidth: CGFloat = 14
+    /// Room at a header's left end for the grip it's grabbed by, and the gap before the name.
+    static let gripWidth: CGFloat = 26
     static let rowHeight: CGFloat = 22
     /// From a cell's edges to its text, the same on both sides.
     static let cellInset: CGFloat = 8
