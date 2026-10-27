@@ -177,6 +177,8 @@ private struct ModelTitle: View {
     let rename: (String) -> Void
     @State private var draft: String?
     @FocusState private var isFocused: Bool
+    /// Watches for a click anywhere else while editing: the canvas doesn't take focus from the field, so it would stay.
+    @State private var clickMonitor: Any?
 
     var body: some View {
         Group {
@@ -188,7 +190,19 @@ private struct ModelTitle: View {
                     .onSubmit(commit)
                     .onExitCommand { self.draft = nil }
                     .onChange(of: isFocused) { if !isFocused { commit() } }
-                    .onAppear { isFocused = true }
+                    .onAppear {
+                        isFocused = true
+                        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
+                            // The window's whole frame, toolbar and all, as the field is in the toolbar.
+                            let hit = event.window?.contentView?.superview?.hitTest(event.locationInWindow)
+                            if !(hit is NSText || hit is NSTextField) { commit() }
+                            return event
+                        }
+                    }
+                    .onDisappear {
+                        if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+                        clickMonitor = nil
+                    }
                     .padding(.horizontal, 6)
                     .padding(.vertical, 3)
                     .background(.quaternary, in: .rect(cornerRadius: 6))
