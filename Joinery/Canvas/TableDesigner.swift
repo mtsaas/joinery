@@ -2,10 +2,10 @@ import SwiftUI
 
 /// A large panel over the canvas's right side for working on one table: its name and color, its columns (name, type,
 /// key, required, unique, what each references), made-up rows to show the kind of data it holds, as in a spreadsheet,
-/// and notes. Opened by double-clicking a table's header.
+/// and notes. Opened from a table's right-click menu or ⌘K.
 ///
-/// Made to be used from the keyboard: it opens with the first column's name ready to type over. Tab moves across, and
-/// Return down to the same field a row on, past the last adding another; ⌘↩ inserts below and ⌘⌫ deletes the column or
+/// Made to be used from the keyboard: it opens with the first column's name ready to type over. Tab moves across and on
+/// to the next row (past the last, a new one), and Return down to the same field a row on, past the last adding another; ⌘↩ inserts below and ⌘⌫ deletes the column or
 /// row; ⇧⌘K, ⇧⌘R and ⇧⌘U set the column's key, required and unique; Escape closes. Text applies on Return, Tab or
 /// clicking away, one undoable change each.
 struct TableDesigner: View {
@@ -13,6 +13,8 @@ struct TableDesigner: View {
     let id: Table.ID
     /// A shortcut pressed while it's open, caught before the field being typed in can take it.
     @Binding var command: CanvasController.DesignerCommand?
+    /// Set while the focus is in a grid, so Tab is caught for it.
+    @Binding var isInGrid: Bool
     /// As wide as it can be, in the window as it is.
     var maxWidth: CGFloat = .infinity
     let close: () -> Void
@@ -22,33 +24,44 @@ struct TableDesigner: View {
     /// Its width when a drag on its edge began.
     @State private var widthBeforeDrag: Double?
 
+    // Corners step in with the padding, each the one around it less the space between: concentric.
+    private static let panelRadius: CGFloat = 24
+    private static let inset: CGFloat = 12
+    private static let cardRadius = panelRadius - inset
+    private static let cellRadius: CGFloat = 6
+
     var body: some View {
         if let table = model.table(id) {
             VStack(spacing: 0) {
                 header(table)
-                Divider()
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 28) {
+                    VStack(alignment: .leading, spacing: 22) {
                         section("Columns") { columns(table) }
                         section("Sample Data") { samples(table) }
                         section("Notes") {
-                            NotesEditor(text: table.notes) { notes in change { $0.notes = notes } }
+                            NotesEditor(text: table.notes, radius: Self.cardRadius) { notes in change { $0.notes = notes } }
                         }
                     }
-                    .padding(20)
+                    .padding(.horizontal, Self.inset)
+                    .padding(.bottom, Self.inset)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Divider()
+                .scrollEdgeEffectStyle(.soft, for: .top)
                 hints
             }
             .frame(width: shownWidth)
             .frame(maxHeight: .infinity)
-            .glassEffect(.regular, in: .rect(cornerRadius: 18))
+            .glassEffect(.regular, in: .rect(cornerRadius: Self.panelRadius))
             .overlay(alignment: .leading) { resizeHandle }
             .onAppear {
                 // Ready to type: the first column's name, or with none, the table's.
                 DispatchQueue.main.async { focus = table.columns.first.map { .name($0.id) } ?? .tableName }
             }
+            .onChange(of: focus) {
+                // Any of its fields; not the notes, where Tab is Tab.
+                if (focus != nil) != isInGrid { isInGrid = focus != nil }
+            }
+            .onDisappear { isInGrid = false }
             .onChange(of: command) {
                 guard let command else { return }
                 self.command = nil
@@ -81,7 +94,7 @@ struct TableDesigner: View {
     // MARK: Parts
 
     private func header(_ table: Table) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 10) {
             Menu {
                 ForEach(TableColor.allCases) { color in
                     Button { change { $0.color = color } } label: {
@@ -90,10 +103,11 @@ struct TableDesigner: View {
                     .tint(color.color)
                 }
             } label: {
-                Circle().fill(table.color.color).frame(width: 18, height: 18)
+                Circle().fill(table.color.color.gradient).frame(width: 16, height: 16)
             }
             .menuStyle(.button)
             .buttonStyle(.plain)
+            .menuIndicator(.hidden)
             .fixedSize()
             .help("Color")
             CommitField(text: table.name, prompt: "Table name", field: .tableName, focus: $focus) { name in
@@ -105,143 +119,207 @@ struct TableDesigner: View {
             .font(.title2.weight(.semibold))
             .textFieldStyle(.plain)
             Spacer()
-            Button("Close", systemImage: "xmark", action: close)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .help("Close (Esc)")
+            Button(action: close) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 16, height: 16)
+            }
+            .buttonStyle(.glass)
+            .buttonBorderShape(.circle)
+            .controlSize(.large)
+            .help("Close (Esc)")
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.leading, Self.inset + 8)
+        .padding(.trailing, Self.inset)
+        .padding(.vertical, Self.inset)
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.headline)
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.leading, 8)
             content()
         }
     }
 
+    /// A rounded, grouped box, as in Settings.
+    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        content()
+            .background(.fill.quaternary, in: .rect(cornerRadius: Self.cardRadius))
+            .overlay(RoundedRectangle(cornerRadius: Self.cardRadius).strokeBorder(.separator.opacity(0.5), lineWidth: 0.5))
+    }
+
+    /// A row at the end of a card that adds another.
+    private func addRow(_ title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: "plus.circle.fill")
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(.tint)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+    }
+
     private func columns(_ table: Table) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 6) {
-                GridRow {
-                    Text("Key"); Text("Name"); Text("Type"); Text("Required"); Text("Unique"); Text("References"); Color.clear.frame(width: 1, height: 1)
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                ForEach(table.columns) { column in
+        card {
+            VStack(spacing: 0) {
+                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 0) {
                     GridRow {
-                        Button { changeColumn(column.id) { $0.isPrimaryKey.toggle() } } label: {
-                            Image(systemName: column.isPrimaryKey ? "key.fill" : "key")
-                                .foregroundStyle(column.isPrimaryKey ? AnyShapeStyle(table.color.color) : AnyShapeStyle(.tertiary))
-                                .frame(width: 22)
-                        }
-                        .buttonStyle(.borderless)
-                        .gridColumnAlignment(.center)
-                        .help(column.isPrimaryKey ? "Primary key: click to make it not one (⇧⌘K)" : "Make it the primary key (⇧⌘K)")
-                        CommitField(text: column.name, prompt: "name", field: .name(column.id), focus: $focus) { name in
-                            let name = name.trimmingCharacters(in: .whitespaces)
-                            if !name.isEmpty { changeColumn(column.id) { $0.name = name } }
-                        } onReturn: {
-                            down(from: column.id, to: DesignerField.name)
-                        }
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 180)
-                        CommitField(text: column.type.rawValue, prompt: "type", field: .type(column.id), focus: $focus) { typed in
-                            guard let parsed = DataType.parse(typed) else { return }
-                            changeColumn(column.id) {
-                                $0.type = parsed.type
-                                if parsed.isNullable { $0.isNullable = true }
-                            }
-                        } onReturn: {
-                            down(from: column.id, to: DesignerField.type)
-                        }
-                        .textFieldStyle(.roundedBorder)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(width: 120)
-                        Toggle("Required", isOn: Binding { !column.isNullable } set: { isOn in changeColumn(column.id) { $0.isNullable = !isOn } })
-                            .labelsHidden()
-                            .gridColumnAlignment(.center)
-                            .help("Required (⇧⌘R)")
-                        Toggle("Unique", isOn: flag(column, \.isUnique))
-                            .labelsHidden()
-                            .gridColumnAlignment(.center)
-                            .help("Unique (⇧⌘U)")
-                        Text(references(column) ?? "–")
-                            .foregroundStyle(references(column) == nil ? .tertiary : .secondary)
-                            .lineLimit(1)
-                            .frame(width: 130, alignment: .leading)
-                        Button("Delete Column", systemImage: "minus.circle") { deleteColumn(column.id, in: table) }
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.secondary)
-                            .help("Delete column (⌘⌫)")
+                        Text("Key").gridColumnAlignment(.center)
+                        Text("Name"); Text("Type")
+                        Text("Required").gridColumnAlignment(.center)
+                        Text("Unique").gridColumnAlignment(.center)
+                        Text("References"); Color.clear.frame(width: 1, height: 1)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+                    ForEach(table.columns) { column in
+                        Divider().gridCellUnsizedAxes(.horizontal)
+                        columnRow(column, in: table)
                     }
                 }
+                .padding(.horizontal, 6)
+                Divider()
+                addRow("Add Column") { addColumn(after: table.columns.last?.id, focusing: DesignerField.name) }
             }
-            Button("Add Column", systemImage: "plus") { addColumn(after: table.columns.last?.id, focusing: DesignerField.name) }
-                .buttonStyle(.borderless)
         }
+    }
+
+    private func columnRow(_ column: Column, in table: Table) -> some View {
+        GridRow {
+            Button { changeColumn(column.id) { $0.isPrimaryKey.toggle() } } label: {
+                Image(systemName: column.isPrimaryKey ? "key.fill" : "key")
+                    .foregroundStyle(column.isPrimaryKey ? AnyShapeStyle(table.color.color) : AnyShapeStyle(.tertiary))
+                    .frame(width: 24, height: 24)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help(column.isPrimaryKey ? "Primary key: click to make it not one (⇧⌘K)" : "Make it the primary key (⇧⌘K)")
+            CommitField(text: column.name, prompt: "name", field: .name(column.id), focus: $focus) { name in
+                let name = name.trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { changeColumn(column.id) { $0.name = name } }
+            } onReturn: {
+                down(from: column.id, to: DesignerField.name)
+            }
+            .modifier(Cell(isFocused: focus == .name(column.id)))
+            .frame(minWidth: 140, maxWidth: 220)
+            CommitField(text: column.type.rawValue, prompt: "type", field: .type(column.id), focus: $focus) { typed in
+                guard let parsed = DataType.parse(typed) else { return }
+                changeColumn(column.id) {
+                    $0.type = parsed.type
+                    if parsed.isNullable { $0.isNullable = true }
+                }
+            } onReturn: {
+                down(from: column.id, to: DesignerField.type)
+            }
+            .font(.system(.body, design: .monospaced))
+            .foregroundStyle(.secondary)
+            .modifier(Cell(isFocused: focus == .type(column.id)))
+            .frame(width: 120)
+            Toggle("Required", isOn: Binding { !column.isNullable } set: { isOn in changeColumn(column.id) { $0.isNullable = !isOn } })
+                .labelsHidden()
+                .help("Required (⇧⌘R)")
+            Toggle("Unique", isOn: flag(column, \.isUnique))
+                .labelsHidden()
+                .help("Unique (⇧⌘U)")
+            Text(references(column) ?? "–")
+                .foregroundStyle(references(column) == nil ? .tertiary : .secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Button("Delete Column", systemImage: "minus.circle.fill") { deleteColumn(column.id, in: table) }
+                .labelStyle(.iconOnly)
+                .symbolRenderingMode(.hierarchical)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Delete column (⌘⌫)")
+        }
+        .padding(.vertical, 4)
     }
 
     /// The made-up rows, a column per column, as in a spreadsheet: as wide as the panel, shared out, unless there are
     /// so many columns that it has to scroll.
     private func samples(_ table: Table) -> some View {
-        let available = shownWidth - 40 - Self.rowButtonWidth
+        let available = shownWidth - Self.inset * 2 - Self.rowButtonWidth
         let cellWidth = max(Self.minimumCellWidth, available / CGFloat(max(table.columns.count, 1)))
-        return VStack(alignment: .leading, spacing: 10) {
-            ScrollView(.horizontal) {
-                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-                    GridRow {
-                        ForEach(table.columns) { column in
-                            Text(column.name)
-                                .font(.callout.weight(.semibold))
-                                .lineLimit(1)
-                                .padding(.horizontal, 8)
-                                .frame(width: cellWidth, height: 28, alignment: .leading)
-                                .background(table.color.headerFill)
-                                .border(.separator, width: 0.5)
-                        }
-                        Color.clear.frame(width: Self.rowButtonWidth, height: 28)
-                    }
-                    ForEach(table.samples.indices, id: \.self) { row in
-                        GridRow {
-                            ForEach(table.columns) { column in
-                                CommitField(text: table.sample(row, column.id), field: .sample(row, column.id), focus: $focus) { value in
-                                    change { $0.setSample(row, column.id, to: value) }
-                                } onReturn: {
-                                    if row + 1 == table.samples.count { change { $0.samples.append([:]) } }
-                                    DispatchQueue.main.async { focus = .sample(row + 1, column.id) }
-                                }
-                                .textFieldStyle(.plain)
-                                .font(column.type == .text || column.type == .varchar ? .callout : .system(.callout, design: .monospaced))
-                                .padding(.horizontal, 8)
-                                .frame(width: cellWidth, height: 26, alignment: .leading)
-                                .background(focus == .sample(row, column.id) ? AnyShapeStyle(Color.accentColor.opacity(0.12)) : AnyShapeStyle(.background.opacity(0.5)))
-                                .border(.separator, width: 0.5)
+        return card {
+            VStack(spacing: 0) {
+                ScrollView(.horizontal) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        HStack(spacing: 0) {
+                            ForEach(Array(table.columns.enumerated()), id: \.element.id) { index, column in
+                                if index > 0 { Divider() }
+                                Text(column.name)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 10)
+                                    .frame(width: cellWidth, height: 28, alignment: .leading)
                             }
-                            Button("Delete Row", systemImage: "minus.circle") { deleteRow(row, in: table) }
-                                .labelStyle(.iconOnly)
-                                .buttonStyle(.borderless)
-                                .foregroundStyle(.secondary)
-                                .frame(width: Self.rowButtonWidth)
-                                .help("Delete row (⌘⌫)")
+                            Color.clear.frame(width: Self.rowButtonWidth, height: 28)
+                        }
+                        .fixedSize(horizontal: false, vertical: true)
+                        ForEach(table.samples.indices, id: \.self) { row in
+                            Divider()
+                            sampleRow(row, in: table, cellWidth: cellWidth)
                         }
                     }
                 }
+                .scrollIndicators(.automatic)
+                if table.samples.isEmpty {
+                    Divider()
+                    Text("No rows yet: add some to show the kind of data this table holds.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                Divider()
+                addRow("Add Row") { insertRow(at: table.samples.count, column: table.columns.first?.id) }
             }
-            if table.samples.isEmpty {
-                Text("No rows yet: add some to show the kind of data this table holds.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            Button("Add Row", systemImage: "plus") { insertRow(at: table.samples.count, column: table.columns.first?.id) }
-                .buttonStyle(.borderless)
+            .clipShape(.rect(cornerRadius: Self.cardRadius))
         }
     }
 
+    private func sampleRow(_ row: Int, in table: Table, cellWidth: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(table.columns.enumerated()), id: \.element.id) { index, column in
+                if index > 0 { Divider() }
+                CommitField(text: table.sample(row, column.id), field: .sample(row, column.id), focus: $focus) { value in
+                    change { $0.setSample(row, column.id, to: value) }
+                } onReturn: {
+                    if row + 1 == table.samples.count { change { $0.samples.append([:]) } }
+                    DispatchQueue.main.async { focus = .sample(row + 1, column.id) }
+                }
+                .textFieldStyle(.plain)
+                .font(column.type == .text || column.type == .varchar ? .callout : .system(.callout, design: .monospaced))
+                .padding(.horizontal, 6)
+                .frame(maxHeight: .infinity)
+                .background(focus == .sample(row, column.id) ? Color.accentColor.opacity(0.15) : .clear,
+                            in: .rect(cornerRadius: Self.cellRadius))
+                .padding(.horizontal, 4)
+                .padding(.vertical, 3)
+                .frame(width: cellWidth, height: 30, alignment: .leading)
+            }
+            Button("Delete Row", systemImage: "minus.circle.fill") { deleteRow(row, in: table) }
+                .labelStyle(.iconOnly)
+                .symbolRenderingMode(.hierarchical)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .frame(width: Self.rowButtonWidth)
+                .help("Delete row (⌘⌫)")
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
     private static let minimumCellWidth: CGFloat = 110
-    private static let rowButtonWidth: CGFloat = 28
+    private static let rowButtonWidth: CGFloat = 32
 
     /// The keys, as on the canvas's grid.
     private var hints: some View {
@@ -249,13 +327,14 @@ struct TableDesigner: View {
             ForEach([("⇥", "Next"), ("↩", "Down"), ("⌘↩", "Insert"), ("⌘⌫", "Delete"), ("⇧⌘K", "Key"),
                      ("⇧⌘R", "Required"), ("⇧⌘U", "Unique"), ("⎋", "Close")], id: \.0) { key, action in
                 HStack(spacing: 4) {
-                    Text(key).fontWeight(.semibold)
-                    Text(action).foregroundStyle(.secondary)
+                    Text(key).fontWeight(.semibold).foregroundStyle(.secondary)
+                    Text(action).foregroundStyle(.tertiary)
                 }
             }
         }
         .font(.caption)
-        .padding(.horizontal, 20)
+        .lineLimit(1)
+        .padding(.horizontal, Self.inset + 8)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -277,12 +356,41 @@ struct TableDesigner: View {
             case .type(let id)?: addColumn(after: id, focusing: DesignerField.type)
             default: addColumn(after: column ?? table.columns.last?.id, focusing: DesignerField.name)
             }
+        case .next, .previous:
+            tab(forward: command == .next, in: table)
         case .delete:
             switch focus {
             case .sample(let row, _)?: deleteRow(row, in: table)
             case .name(let id)?, .type(let id)?: deleteColumn(id, in: table)
             default: break
             }
+        }
+    }
+
+    /// Tab in a grid: across, then on to the next row's first field, past the last adding another; Shift-Tab back.
+    private func tab(forward: Bool, in table: Table) {
+        let columns = table.columns.map(\.id)
+        guard !columns.isEmpty else { return }
+        switch focus {
+        case .sample(let row, let column)?:
+            let cells = table.samples.indices.flatMap { row in columns.map { DesignerField.sample(row, $0) } }
+            guard let index = cells.firstIndex(of: .sample(row, column)) else { return }
+            if forward, index + 1 == cells.count {
+                change { $0.samples.append([:]) }
+                DispatchQueue.main.async { focus = .sample(row + 1, columns[0]) }
+            } else {
+                focus = cells[max(min(index + (forward ? 1 : -1), cells.count - 1), 0)]
+            }
+        case let field?:
+            let fields = [DesignerField.tableName] + columns.flatMap { [DesignerField.name($0), .type($0)] }
+            guard let index = fields.firstIndex(of: field) else { return }
+            if forward, index + 1 == fields.count {
+                addColumn(after: columns.last, focusing: DesignerField.name)
+            } else {
+                focus = fields[max(min(index + (forward ? 1 : -1), fields.count - 1), 0)]
+            }
+        case nil:
+            break
         }
     }
 
@@ -347,6 +455,19 @@ struct TableDesigner: View {
     }
 }
 
+/// A plain field in a grid row, tinted while it's being typed in.
+private struct Cell: ViewModifier {
+    let isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .textFieldStyle(.plain)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .background(isFocused ? Color.accentColor.opacity(0.15) : .clear, in: .rect(cornerRadius: 6))
+    }
+}
+
 /// Each field in the table designer, to move between them from the keyboard.
 enum DesignerField: Hashable {
     case tableName
@@ -387,6 +508,7 @@ struct CommitField: View {
 /// The table's notes: saved when you click away, or close the designer.
 private struct NotesEditor: View {
     let text: String
+    var radius: CGFloat = 12
     let commit: (String) -> Void
     @State private var draft = ""
     @FocusState private var isFocused: Bool
@@ -396,9 +518,9 @@ private struct NotesEditor: View {
             .font(.body)
             .scrollContentBackground(.hidden)
             .padding(8)
-            .frame(minHeight: 160)
-            .background(.background.opacity(0.5), in: .rect(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.separator))
+            .frame(minHeight: 140)
+            .background(.fill.quaternary, in: .rect(cornerRadius: radius))
+            .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(.separator.opacity(0.5), lineWidth: 0.5))
             .overlay(alignment: .topLeading) {
                 if draft.isEmpty {
                     Text("What it's for, where its data comes from, anything to remember…")

@@ -178,8 +178,10 @@ final class CanvasController {
     /// The table open in the table designer, beside the canvas.
     var designing: Table.ID?
     /// A shortcut for the table designer, caught before the field being typed in there could take it.
-    enum DesignerCommand: Equatable { case primaryKey, required, unique, insert, delete }
+    enum DesignerCommand: Equatable { case primaryKey, required, unique, insert, delete, next, previous }
     var designerCommand: DesignerCommand?
+    /// Whether the designer's focus is in one of its grids, where Tab goes cell to cell, row after row.
+    var isDesignerInGrid = false
     /// The table whose header the pointer's over, where it's grabbed to move it.
     var hoveredHeader: Table.ID?
 

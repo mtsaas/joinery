@@ -112,6 +112,8 @@ struct CanvasEventMonitor: NSViewRepresentable {
                 let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
                 switch (event.keyCode, modifiers, event.charactersIgnoringModifiers?.lowercased()) {
                 case (Key.escape, [], _): withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil }
+                case (Key.tab, [], _) where canvas.isDesignerInGrid: canvas.designerCommand = .next
+                case (Key.tab, .shift, _) where canvas.isDesignerInGrid: canvas.designerCommand = .previous
                 case (Key.return, .command, _): canvas.designerCommand = .insert
                 case (Key.delete, .command, _): canvas.designerCommand = .delete
                 case (_, [.command, .shift], "k"): canvas.designerCommand = .primaryKey
