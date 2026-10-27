@@ -109,7 +109,7 @@ struct CanvasView: View {
         }
         .overlay(alignment: .trailing) {
             if let id = canvas.designing {
-                TableDesigner(model: $model, id: id, command: $canvas.designerCommand) {
+                TableDesigner(model: $model, id: id, command: $canvas.designerCommand, maxWidth: canvas.viewSize.width - 24) {
                     withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil }
                 }
                     .padding(.top, 60)

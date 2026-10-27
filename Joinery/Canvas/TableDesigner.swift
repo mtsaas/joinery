@@ -13,8 +13,14 @@ struct TableDesigner: View {
     let id: Table.ID
     /// A shortcut pressed while it's open, caught before the field being typed in can take it.
     @Binding var command: CanvasController.DesignerCommand?
+    /// As wide as it can be, in the window as it is.
+    var maxWidth: CGFloat = .infinity
     let close: () -> Void
     @FocusState private var focus: DesignerField?
+    /// As wide as it was last left, dragged by its left edge.
+    @AppStorage("tableDesignerWidth") private var width: Double = 680
+    /// Its width when a drag on its edge began.
+    @State private var widthBeforeDrag: Double?
 
     var body: some View {
         if let table = model.table(id) {
@@ -35,9 +41,10 @@ struct TableDesigner: View {
                 Divider()
                 hints
             }
-            .frame(width: Self.width)
+            .frame(width: shownWidth)
             .frame(maxHeight: .infinity)
             .glassEffect(.regular, in: .rect(cornerRadius: 18))
+            .overlay(alignment: .leading) { resizeHandle }
             .onAppear {
                 // Ready to type: the first column's name, or with none, the table's.
                 DispatchQueue.main.async { focus = table.columns.first.map { .name($0.id) } ?? .tableName }
@@ -50,7 +57,26 @@ struct TableDesigner: View {
         }
     }
 
-    private static let width: CGFloat = 680
+    private static let widths: ClosedRange<Double> = 520...1600
+
+    /// Its width, kept inside the window however wide it was left.
+    private var shownWidth: CGFloat { max(min(width, maxWidth), min(Self.widths.lowerBound, maxWidth)) }
+
+    /// Its left edge, dragged to make it wider or narrower.
+    private var resizeHandle: some View {
+        Color.clear
+            .frame(width: 8)
+            .contentShape(.rect)
+            .pointerStyle(.frameResize(position: .leading))
+            .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                .onChanged { value in
+                    let start = widthBeforeDrag ?? shownWidth
+                    widthBeforeDrag = start
+                    width = min(max(start - value.translation.width, Self.widths.lowerBound), min(Self.widths.upperBound, maxWidth))
+                }
+                .onEnded { _ in widthBeforeDrag = nil })
+            .help("Drag to resize")
+    }
 
     // MARK: Parts
 
@@ -161,7 +187,7 @@ struct TableDesigner: View {
     /// The made-up rows, a column per column, as in a spreadsheet: as wide as the panel, shared out, unless there are
     /// so many columns that it has to scroll.
     private func samples(_ table: Table) -> some View {
-        let available = Self.width - 40 - Self.rowButtonWidth
+        let available = shownWidth - 40 - Self.rowButtonWidth
         let cellWidth = max(Self.minimumCellWidth, available / CGFloat(max(table.columns.count, 1)))
         return VStack(alignment: .leading, spacing: 10) {
             ScrollView(.horizontal) {
