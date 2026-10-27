@@ -557,7 +557,7 @@ struct JoineryTests {
         }
     }
 
-    @Test func copyingCanTakeTheTablesTheSelectionIsJoinedTo() throws {
+    @Test func copyingCanOfferTheTablesTheSelectionIsJoinedTo() throws {
         var model = storefront()
         let users = model.tables[0].id, orders = model.tables[1].id, reviews = model.tables[2].id
         let sales = model.group([orders, reviews], named: "sales")
@@ -567,15 +567,15 @@ struct JoineryTests {
         model.tables[index].columns.append(Column(name: "order_id", type: .uuid))
         model.connect(model.tables[index].columns[1].id, to: model.tables[1].columns[0].id)
 
-        func names(_ clip: DataModel) -> Set<String> { Set(clip.tables.map(\.name)) }
-        // Without: only what's selected.
-        #expect(names(model.clip(tables: [orders])) == ["orders"])
-        // With: one key away, either way, but not the tables those are joined to.
-        let clip = model.clip(tables: [orders], joined: true)
-        #expect(names(clip) == ["orders", "users", model.tables[index].name])
-        // Its group comes, holding only the tables copied.
+        // How far each table is from orders, either way along keys: users and payments one key, reviews two.
+        let distances = model.joinedTables(to: [orders])
+        #expect(distances == [users: 1, payments: 1, reviews: 2])
+        #expect(model.joinedTables(to: [orders, users]) == [payments: 1, reviews: 1])
+
+        // Copying orders and a table chosen from those: its group comes, holding only the tables copied.
+        let clip = model.clip(tables: [orders, payments])
+        #expect(Set(clip.tables.map(\.id)) == [orders, payments])
         #expect(clip.groups.map(\.id) == [sales] && clip.members(of: sales).map(\.id) == [orders])
-        #expect(names(model.clip(tables: [users], joined: true)) == ["users", "orders", "reviews"])
     }
 
     @Test func copiedTablesPasteWithTheirKeysTiesAndSchema() throws {

@@ -42,12 +42,21 @@ final class CanvasController {
 
     // MARK: Copy and paste
 
-    /// Puts the selected tables (and selected groups' tables) on the pasteboard, with their foreign keys, ties and groups.
+    /// Puts the selected tables (and selected groups' tables) on the pasteboard, with their foreign keys, ties and groups;
+    /// then, if they're joined to others, offers to copy some of those too.
     /// - Returns: Whether there was anything to copy.
     @discardableResult
-    func copySelection(from model: DataModel) -> Bool {
-        let joined = UserDefaults.standard.object(forKey: Self.copiesJoinedTablesKey) as? Bool ?? true
-        let clip = model.clip(tables: selectedTables, groups: selectedGroups, joined: joined)
+    func copySelection(from model: DataModel, offeringMore: Bool = true) -> Bool {
+        let ids = model.clip(tables: selectedTables, groups: selectedGroups).tables.map(\.id)
+        guard copy(Set(ids), from: model) else { return false }
+        if offeringMore, !model.joinedTables(to: Set(ids)).isEmpty { copiedTables = Set(ids) }
+        return true
+    }
+
+    /// Puts `ids` on the pasteboard, with their foreign keys, ties and groups (holding only them).
+    @discardableResult
+    func copy(_ ids: Set<Table.ID>, from model: DataModel) -> Bool {
+        let clip = model.clip(tables: ids)
         guard !clip.tables.isEmpty, let data = try? JSONEncoder().encode(clip) else { return false }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setData(data, forType: DataModel.pasteboardType)
@@ -55,11 +64,11 @@ final class CanvasController {
         return true
     }
 
-    /// The setting for whether copying takes the tables the selection is joined to as well; on unless turned off.
-    static let copiesJoinedTablesKey = "copiesJoinedTables"
+    /// Tables just copied that are joined to others: offered more of those to copy with them, until dismissed.
+    var copiedTables: Set<Table.ID>?
 
     func cutSelection(from model: inout DataModel) {
-        if copySelection(from: model) { deleteSelection(in: &model) }
+        if copySelection(from: model, offeringMore: false) { deleteSelection(in: &model) }
     }
 
     /// Adds what was copied, here or from another data model, and selects it. Over the original, if it's in view, it

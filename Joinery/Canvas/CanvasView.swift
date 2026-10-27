@@ -66,6 +66,7 @@ struct CanvasView: View {
                        })
             wireLayer(routing, colors: colors)
             tableLayer(socketColors: socketColors, foreignKeys: foreignKeys)
+            copyMoreAnchor
             ForEach(model.zipTies) { tie in
                 // One being combined into another isn't routed, but is still being dragged: its handle stays.
                 let merging = canvas.tieMerge?.tie == tie.id
@@ -907,6 +908,28 @@ struct CanvasView: View {
             routed.setZipTies(onCable: drag.cable, ties)
         }
         return routed
+    }
+
+    /// Where the offer to copy more tables, after copying some, opens: over them, or atop the view if they're out of it.
+    @ViewBuilder private var copyMoreAnchor: some View {
+        if let copied = canvas.copiedTables {
+            let frame = model.tables.filter { copied.contains($0.id) }.map(Metrics.frame).reduce(CGRect.null) { $0.union($1) }
+            let view = CGRect(origin: frame.origin * canvas.zoom + canvas.offset, size: frame.size * canvas.zoom)
+                .intersection(CGRect(origin: .zero, size: canvas.viewSize).insetBy(dx: 0, dy: 50))
+            let anchor = view.isNull ? CGRect(x: canvas.viewSize.width / 2, y: 50, width: 1, height: 1) : view
+            Color.clear
+                .frame(width: anchor.width, height: anchor.height)
+                .popover(isPresented: Binding { canvas.copiedTables != nil } set: { if !$0 { canvas.copiedTables = nil } },
+                         arrowEdge: .top) {
+                    CopyMore(model: model, copied: copied) { ids in
+                        canvas.copy(ids, from: model)
+                        canvas.copiedTables = nil
+                    }
+                }
+                .padding(.leading, anchor.minX)
+                .padding(.top, anchor.minY)
+                .allowsHitTesting(false)
+        }
     }
 
     /// What a press on the canvas is for, from where it started.
