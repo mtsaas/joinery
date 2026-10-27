@@ -25,9 +25,29 @@ struct Routing {
         /// Along the bundle, a unit vector.
         var direction: CGPoint
         var relationships: [Relationship.ID]
+        /// How far across from its middle each cable runs through it: side by side, each as wide as it's drawn (a bus
+        /// twice a wire), the same gap between each.
+        private(set) var offsets: [CGFloat]
+        /// From its middle to either end.
+        let halfLength: CGFloat
+
+        /// `widths` are its cables' as drawn; by default, all wires.
+        init(center: CGPoint, direction: CGPoint, relationships: [Relationship.ID], widths: [CGFloat]? = nil) {
+            (self.center, self.direction, self.relationships) = (center, direction, relationships)
+            let widths = widths ?? relationships.map { _ in Metrics.wireWidth }
+            let gap = Metrics.tieSpacing - Metrics.wireWidth
+            let span = widths.reduce(0, +) + gap * CGFloat(max(widths.count - 1, 0))
+            var edge = -span / 2
+            offsets = widths.map { width in
+                defer { edge += width + gap }
+                return edge + width / 2
+            }
+            // As far as a tie of wires alone would reach past its outermost, from wherever that is.
+            halfLength = max(span / 2 - Metrics.wireWidth / 2, 0) + Metrics.tieOverhang
+        }
 
         func slot(_ index: Int) -> CGPoint {
-            center + direction.perpendicular * ((CGFloat(index) - CGFloat(relationships.count - 1) / 2) * Metrics.tieSpacing)
+            center + direction.perpendicular * (offsets.indices.contains(index) ? offsets[index] : 0)
         }
     }
 
@@ -202,7 +222,8 @@ struct Routing {
                 sum += way.dot(tie.direction) < 0 ? -way : way
             }
             ties[tie.id] = Tie(center: center, direction: tie.heldDirection ?? sum.normalized ?? tie.direction,
-                               relationships: tie.relationships)
+                               relationships: tie.relationships,
+                               widths: tie.relationships.map { ports[$0] == nil ? Metrics.wireWidth : Metrics.busWidth })
         }
 
         // In the model's order, so the obstacles a wire meets are listed the same way each time.

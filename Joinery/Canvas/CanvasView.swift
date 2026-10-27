@@ -395,7 +395,7 @@ struct CanvasView: View {
         let reach = Metrics.wireHitRadius / canvas.zoom
         let target: CanvasController.Wheel.Target
         if let (id, _) = routing.ties.first(where: { _, tie in
-            tie.center.distance(to: point) <= Metrics.tieHalfLength(holding: tie.relationships.count) + reach
+            tie.center.distance(to: point) <= tie.halfLength + reach
         }) {
             target = .tie(id)
             if !canvas.selection.contains(.zipTie(id)) { canvas.selection = [.zipTie(id)] }
@@ -585,8 +585,11 @@ struct CanvasView: View {
 
                 context.translateBy(x: offset.x, y: offset.y)
                 context.scaleBy(x: zoom, y: zoom)
-                // Highlighted wires last, so they're on top.
-                let ordered = relationships.sorted { !(highlighted?.contains($0.id) ?? false) && (highlighted?.contains($1.id) ?? false) }
+                // Highlighted wires last, so they're on top; otherwise always in the model's order, so wires that overlap
+                // never swap which is on top from one frame to the next.
+                let ordered = highlighted.map { highlighted in
+                    relationships.filter { !highlighted.contains($0.id) } + relationships.filter { highlighted.contains($0.id) }
+                } ?? relationships
                 for relationship in ordered {
                     guard let wire = simulation.wires[relationship.id] else { continue }
                     let path = wirePaths.path(for: relationship.id, through: wire.points)
@@ -601,7 +604,8 @@ struct CanvasView: View {
                                    style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round))
                 }
                 // Each port's bus, then the port over where its wires meet it.
-                for (id, port) in routing.ports {
+                // In a fixed order, as dictionaries' can change from one routing to the next.
+                for (id, port) in routing.ports.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
                     let color = colors[id] ?? Theme.socket
                     let isDimmed = highlighted.map { highlighted in !highlighted.contains(id) && !port.wires.contains(where: highlighted.contains) } ?? false
                     if let bus = simulation.wires[id] {
@@ -628,7 +632,7 @@ struct CanvasView: View {
                 let wasEasing = portShapes.isEasing
                 portShapes.advance(toward: routing.ports.mapValues(\.shape), to: timeline.date.timeIntervalSinceReferenceDate)
                 if portShapes.isEasing != wasEasing { Task { isAnimating = isAnimating || portShapes.isEasing } }
-                for (id, tie) in routing.ties {
+                for (id, tie) in routing.ties.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
                     drawTie(tie, id: id, isSelected: selectedTies.contains(id), isHovered: id == hoveredTie,
                             color: tie.relationships.first.flatMap { colors[$0] } ?? .gray,
                             isFaded: isFocused && !tie.relationships.contains { highlighted?.contains($0) == true },
@@ -729,7 +733,7 @@ struct CanvasView: View {
             return
         }
         context.rotate(by: .radians(atan2(tie.direction.y, tie.direction.x)))
-        let halfLength = Metrics.tieHalfLength(holding: tie.relationships.count)
+        let halfLength = tie.halfLength
         let band = CGRect(x: -Metrics.tieThickness / 2, y: -halfLength, width: Metrics.tieThickness, height: halfLength * 2)
         let shape = Path(roundedRect: band, cornerRadius: Metrics.tieThickness / 2)
         context.fill(shape, with: .color(isSelected ? Color.accentColor : isHovered ? Theme.tieHovered : Theme.tie))
@@ -1169,7 +1173,7 @@ struct CanvasView: View {
         let point = dragged.position + offset
         return ties.first { other, tie in
             other != id && tie.relationships.count > 1
-                && tie.center.distance(to: point) <= Metrics.tieHalfLength(holding: tie.relationships.count) + Metrics.socketHitRadius
+                && tie.center.distance(to: point) <= tie.halfLength + Metrics.socketHitRadius
         }.map { ($0.key, $0.value.direction) }
     }
 
@@ -1220,7 +1224,7 @@ struct CanvasView: View {
         // Over a zip tie, or another cable's bend point, it isn't in: that's where it'd go.
         drag.target = routingCache.current?.ties.first { id, tie in
             id != Self.grabID && !tie.relationships.contains(drag.cable)
-                && tie.center.distance(to: point) <= Metrics.tieHalfLength(holding: tie.relationships.count) + Metrics.socketHitRadius
+                && tie.center.distance(to: point) <= tie.halfLength + Metrics.socketHitRadius
         }.map { ($0.key, $0.value.direction) }
         canvas.hoveredTie = drag.target?.id
         canvas.cableDrag = drag
@@ -1511,7 +1515,7 @@ struct CanvasView: View {
 
     private func tieHandle(_ tie: ZipTie, _ frame: Routing.Tie) -> some View {
         let isBendPoint = tie.relationships.count == 1
-        let length = Metrics.tieHalfLength(holding: tie.relationships.count) * 2 + Metrics.socketHitRadius
+        let length = frame.halfLength * 2 + Metrics.socketHitRadius
         // Never smaller than a comfortable target on screen, however far out you've zoomed.
         return Color.clear
             .frame(width: max(Metrics.socketHitRadius * 2 * canvas.zoom, Metrics.minimumTarget),

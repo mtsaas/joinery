@@ -917,4 +917,18 @@ struct JoineryTests {
         model.repair()
         #expect(model.zipTies.first { $0.id == target }?.relationships.count == 4)
     }
+
+    @Test func aBusTakesItsOwnWidthInAZipTie() throws {
+        let wire = Routing.Tie(center: .zero, direction: CGPoint(x: 1, y: 0), relationships: [UUID(), UUID(), UUID()])
+        #expect(wire.slot(1) == .zero && wire.slot(2).y == Metrics.tieSpacing, "wires alone, a tie's spacing apart as ever")
+        #expect(wire.halfLength == Metrics.tieHalfLength(holding: 3))
+        // A bus between two wires: its edges as far from theirs as wires' are from each other.
+        let gap = Metrics.tieSpacing - Metrics.wireWidth
+        let mixed = Routing.Tie(center: .zero, direction: CGPoint(x: 1, y: 0), relationships: [UUID(), UUID(), UUID()],
+                                widths: [Metrics.wireWidth, Metrics.busWidth, Metrics.wireWidth])
+        let (a, b, c) = (mixed.slot(0).y, mixed.slot(1).y, mixed.slot(2).y)
+        #expect(abs((b - Metrics.busWidth / 2) - (a + Metrics.wireWidth / 2) - gap) < 0.001)
+        #expect(abs((c - Metrics.wireWidth / 2) - (b + Metrics.busWidth / 2) - gap) < 0.001)
+        #expect(abs(a + c) < 0.001 && mixed.halfLength > wire.halfLength, "centered, and longer for the bus")
+    }
 }

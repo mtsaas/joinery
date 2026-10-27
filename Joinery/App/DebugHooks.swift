@@ -253,11 +253,13 @@ enum DebugHooks {
                 document.wrappedValue.merge(merge.tie, by: canvas.dragOffset ?? .zero, into: merge.target, along: merge.direction)
                 (canvas.tieMerge, canvas.dragOffset, canvas.hoveredTie) = (nil, nil, nil)
                 print("merge-drop:", document.wrappedValue.zipTies.map(\.relationships.count))
-            case "tie-wires" where numbers.count >= 2:
-                // Wires tied together where they're nearest each other's middle: "tie-wires 0 1".
+            case "tie-wires" where numbers.count >= 2 || words.contains("bus"):
+                // Wires tied together where they're nearest each other's middle: "tie-wires 0 1"; "bus" is the first
+                // port's bus.
                 var model = document.wrappedValue
                 let routing = Routing(model: model)
-                let ids = numbers.map { model.relationships[Int($0)].id }
+                let bus = words.contains("bus") ? model.groups.lazy.flatMap(\.ports).first(where: { $0.column != nil })?.id : nil
+                let ids = numbers.map { model.relationships[Int($0)].id } + [bus].compactMap { $0 }
                 let middles = ids.compactMap { routing.routes[$0].map { $0.points[$0.points.count / 2] } }
                 let center = middles.reduce(.zero, +) / CGFloat(middles.count)
                 let tie = ZipTie(position: center, direction: CGPoint(x: 1, y: 0), relationships: ids)
