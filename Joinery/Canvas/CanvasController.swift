@@ -208,6 +208,20 @@ final class CanvasController {
     private(set) var isFitted = true
     private(set) var viewSize = CGSize.zero
     var selection: Set<Item> = []
+    /// Showing something that can't be changed, such as a comparison: dragging pans, and nothing is picked or edited.
+    var isReadOnly = false {
+        didSet {
+            guard isReadOnly else { return }
+            selection = []
+            cell = nil
+            isEditingCell = false
+            designing = nil
+            wheel = nil
+            isTying = false
+            showsPalette = false
+            focus = nil
+        }
+    }
     /// The grid's cursor, as in a spreadsheet: the cell that typing goes to.
     var cell: Cell?
     var isEditingCell = false

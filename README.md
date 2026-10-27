@@ -18,6 +18,7 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
   - A changed column shows twice, as it was (struck through) and then as it is, marked ~ in orange.
   - Foreign keys added are green; removed ones are dashed red.
   - Everything unchanged fades, and the bar sums it up.
+  - It stays when the popover closes, until Done (or Escape). Until then the canvas is read-only: dragging pans it, and nothing can be selected or changed.
   - Columns and tables are matched by ID, so a rename shows as a change. Moving tables isn't a change.
 - **Opening and importing:** double-clicking a `.joinery` file in Finder, or File ▸ Import Data Model… (⌘O), copies it into the library and opens it.
 - **Examples:** a new library starts with an Examples collection containing Chinook, Northwind, Sakila, the Stack Overflow data dump, and Storefront. File ▸ Add Examples puts back any you've deleted. `scripts/make_examples.py` generates them.

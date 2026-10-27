@@ -490,6 +490,17 @@ enum DebugHooks {
                 }
                 try? await Task.sleep(for: .seconds(0.05))
                 post(.rightMouseUp, endView)
+            case "window-click" where numbers.count == 2:
+                // A real left click at a point in the window, from its top left: on a control, say.
+                guard let window = NSApp.windows.first(where: \.isVisible), let height = window.contentView?.bounds.height else { break }
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let event = NSEvent.mouseEvent(with: type, location: CGPoint(x: numbers[0], y: height - numbers[1]), modifierFlags: [],
+                                                      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                      context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        NSApp.postEvent(event, atStart: false)
+                    }
+                    try? await Task.sleep(for: .seconds(0.05))
+                }
             case "feedback-on":
                 canvas.isFeedbackMode = true
             case "handle" where numbers.count == 3:

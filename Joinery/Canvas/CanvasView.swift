@@ -82,7 +82,7 @@ struct CanvasView: View {
             #if DEBUG
             if let edit = canvas.feedback { feedbackHandles(edit) }
             #endif
-            if canvas.isSpaceHeld { panSurface }
+            if canvas.isSpaceHeld || canvas.isReadOnly { panSurface }
         }
         .coordinateSpace(.canvas)
         .clipped()
@@ -178,7 +178,8 @@ struct CanvasView: View {
         .onChange(of: canvas.showsPalette) { if !canvas.showsPalette { isCanvasFocused = true } }
         // Opening a model puts the keys straight to work on it: T, Z and the rest, without a click first.
         .onAppear { isCanvasFocused = true }
-        .focusable()
+        // Read-only, keys such as T and Delete have nothing to do.
+        .focusable(!canvas.isReadOnly)
         .focused($isCanvasFocused)
         .focusEffectDisabled()
         // Key presses reach these even while a cell has focus, so each checks that none does. (`isCanvasFocused` won't

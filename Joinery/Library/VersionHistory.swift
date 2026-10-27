@@ -47,11 +47,12 @@ struct VersionHistory: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { footer }
         .onAppear {
             load()
+            // Still showing a version from before it closed: that one's selected.
+            if let preview { selection = .version(preview.version) }
             isFocused = true
         }
         .onChange(of: open.model) { load() }
         .onChange(of: selection) { show(selection) }
-        .onDisappear { preview = nil }
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: .pickVersion)) { note in
             guard let index = note.object as? Int else { return }

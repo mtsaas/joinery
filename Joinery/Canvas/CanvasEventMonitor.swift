@@ -173,7 +173,7 @@ struct CanvasEventMonitor: NSViewRepresentable {
                 if panLocation != nil {
                     panLocation = nil
                     NSCursor.pop()
-                } else {
+                } else if !canvas.isReadOnly {
                     canvas.wheelRequest = convert(down.locationInWindow, from: nil)
                 }
             case .magnify, .scrollWheel:

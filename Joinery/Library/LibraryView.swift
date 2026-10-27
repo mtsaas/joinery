@@ -66,7 +66,8 @@ struct ModelEditor: View {
         // Showing an earlier version, it can't be changed: it's only there to look at.
         let diff = preview.flatMap { comparison == .changes ? SchemaDiff(from: $0.model, to: open.model) : nil }
         let shown = preview.map { comparison == .then ? $0.model : diff?.model ?? open.model }
-        let model = Binding { shown ?? canvas.shown(open.model) } set: { if preview == nil { open.change(to: $0) } }
+        let isComparing = preview != nil
+        let model = Binding { shown ?? canvas.shown(open.model) } set: { if !isComparing { open.change(to: $0) } }
         CanvasView(model: model, canvas: canvas, diff: diff)
             // Under the toolbar, which floats over it, but not the sidebar, so fitting the model fits what's visible.
             .ignoresSafeArea(edges: .top)
@@ -91,9 +92,11 @@ struct ModelEditor: View {
                     ModelTitle(name: open.name) { Library.shared.rename(open.url, to: $0) }
                 }
                 .sharedBackgroundVisibility(.hidden)
+                // Editing tools, with nothing to edit while comparing.
                 ToolbarItemGroup(placement: .principal) {
                     Button("Table", systemImage: "tablecells") { canvas.addTable(to: &model.wrappedValue) }
                         .help("Add a table (T)")
+                        .disabled(isComparing)
                     Menu("Layout", systemImage: "rectangle.3.group") {
                         // The selection, if there is one; otherwise everything.
                         let selected = canvas.selectedTablesAndMembers(in: model.wrappedValue)
@@ -110,44 +113,44 @@ struct ModelEditor: View {
                         .disabled(canvas.selectedTablesAndMembers(in: model.wrappedValue).isEmpty)
                     }
                     .help("Lay the selected tables out afresh, or every table with none selected; ⌘Z puts them back")
+                    .disabled(isComparing)
                     Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)
                         .help("Zip-tie tool: drag across wires to tie them (Z)")
+                        .disabled(isComparing)
                     Toggle("Focus", systemImage: "scope", isOn: Binding { canvas.isFocusing } set: { _ in
                         canvas.toggleFocus(in: model.wrappedValue)
                     })
                     .help("Focus mode: fade everything but the selection and what it's joined to, until turned off (F)")
+                    .disabled(isComparing)
                 }
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             // For the Window menu and Mission Control; shown by `ModelTitle` instead, to be renamed in place.
             .navigationTitle(open.name)
             .toolbar(removing: .title)
-            // Comparing, at the bottom, clear of the version history's popover.
-            .overlay(alignment: preview == nil ? .top : .bottom) {
-                if preview != nil || open.notice != nil {
-                    HStack(spacing: 8) {
-                        Image(systemName: "clock.arrow.circlepath")
-                        if let preview {
-                            Picker("Compare", selection: $comparison) {
-                                ForEach(Comparison.allCases, id: \.self) { Text($0.title) }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .fixedSize()
-                            let when = "\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened))"
-                            Text(diff.map { "\(when) to now: \($0.summary)" } ?? "\(comparison == .then ? when : "Now"), read-only")
-                                .monospacedDigit()
-                        } else if let notice = open.notice {
-                            Text(notice)
-                        }
-                    }
-                    .font(.callout)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .glassEffect()
-                    .padding(preview == nil ? .top : .bottom, preview == nil ? 64 : 20)
+            .overlay(alignment: .top) {
+                if let notice = open.notice {
+                    Label(notice, systemImage: "clock.arrow.circlepath")
+                        .font(.callout)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .glassEffect()
+                        .padding(.top, 64)
                 }
             }
+            // At the bottom, clear of the version history's popover.
+            .overlay(alignment: .bottom) {
+                if let preview {
+                    let when = "\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened))"
+                    ComparisonBar(comparison: $comparison,
+                                  caption: diff.map { "\(when) to now: \($0.summary)" } ?? "\(comparison == .then ? when : "Now"), read-only") {
+                        self.preview = nil
+                    }
+                    .padding(.bottom, 20)
+                }
+            }
+            // Comparing, it's only there to look at.
+            .onChange(of: preview != nil, initial: true) { canvas.isReadOnly = preview != nil }
             .onAppear { open.undoManager = undoManager }
             .onChange(of: undoManager) { open.undoManager = undoManager }
             .focusedSceneValue(\.canvasController, canvas)
@@ -246,6 +249,33 @@ extension Notification.Name {
     static let renameTitle = Notification.Name("JoineryRenameTitle")
 }
 #endif
+
+/// Comparing two versions: which to show, what the difference is, and a way back to editing.
+private struct ComparisonBar: View {
+    @Binding var comparison: Comparison
+    let caption: String
+    let done: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "clock.arrow.circlepath")
+            Picker("Compare", selection: $comparison) {
+                ForEach(Comparison.allCases, id: \.self) { Text($0.title) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            Text(caption).monospacedDigit()
+            Button("Done", action: done)
+                .keyboardShortcut(.cancelAction)
+                .help("Back to editing the data model as it is now (Escape)")
+        }
+        .font(.callout)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .glassEffect()
+    }
+}
 
 /// Showing an earlier version: which side of the comparison.
 private enum Comparison: CaseIterable {
