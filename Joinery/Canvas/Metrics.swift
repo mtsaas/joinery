@@ -51,6 +51,9 @@ enum Metrics {
     /// The + for adding a port by a group's edge, on screen.
     static let portHintRadius: CGFloat = 10
 
+    /// How much further a cable has to be pulled from a zip tie or bend point, than where it was grabbed, to pop out.
+    static let tiePopPull: CGFloat = 80
+
     /// How far apart wires plugging into a port's inside end are: as a zip tie holds them.
     static let portSlotSpacing: CGFloat = tieSpacing
 

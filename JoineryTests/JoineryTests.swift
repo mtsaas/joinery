@@ -871,4 +871,28 @@ struct JoineryTests {
         let frames = refined.tables.map(Metrics.frame)
         for (i, a) in frames.enumerated() { for b in frames[(i + 1)...] { #expect(!a.intersects(b)) } }
     }
+
+    @Test func cablesComeOutOfTiesAndGoIntoThem() throws {
+        var model = storefront()
+        let wires = model.relationships.map(\.id)
+        let tie = ZipTie(position: CGPoint(x: 250, y: 0), direction: CGPoint(x: 1, y: 0), relationships: wires)
+        model.zipTies.append(tie)
+        for wire in wires { model.setZipTies(onCable: wire, [tie.id]) }
+
+        // Tugged out: the tie keeps the other; out of that too, it goes.
+        model.untie(wires[0], from: tie.id)
+        #expect(model.zipTies.first { $0.id == tie.id }?.relationships == [wires[1]] && model.zipTies(onCable: wires[0]) == [])
+        model.untie(wires[1], from: tie.id)
+        #expect(model.zipTies.isEmpty && model.zipTies(onCable: wires[1]) == [])
+
+        // Dropped on a tie: in, on the side it came from, as the tie's first along it.
+        let other = ZipTie(position: CGPoint(x: 250, y: 0), direction: CGPoint(x: 1, y: 0), relationships: [wires[1]])
+        model.zipTies.append(other)
+        model.setZipTies(onCable: wires[1], [other.id])
+        model.tie(wires[0], into: other.id, at: 0, from: CGPoint(x: 250, y: -20), along: CGPoint(x: 1, y: 0))
+        #expect(model.zipTies.first { $0.id == other.id }?.relationships == [wires[0], wires[1]], "above it, so first across")
+        #expect(model.zipTies(onCable: wires[0]) == [other.id])
+        model.repair()
+        #expect(model.zipTies.first { $0.id == other.id }?.relationships.count == 2)
+    }
 }

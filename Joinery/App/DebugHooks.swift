@@ -230,6 +230,27 @@ enum DebugHooks {
                       let column = document.wrappedValue.tables.first(where: { $0.name == parts.first })?.columns.first(where: { $0.name == parts.last })
                 else { break }
                 document.wrappedValue.plug(port, into: column.id)
+            case "pull-start" where numbers.count == 2:
+                // A cable grabbed: "pull-start 0 0.5" grabs wire 0 halfway along.
+                NotificationCenter.default.post(name: .pull, object: canvas, userInfo: ["step": "start", "wire": Int(numbers[0]), "t": Double(numbers[1])])
+            case "pull-move" where numbers.count == 2:
+                NotificationCenter.default.post(name: .pull, object: canvas, userInfo: ["step": "move", "offset": CGPoint(x: numbers[0], y: numbers[1])])
+            case "pull-to-tie":
+                NotificationCenter.default.post(name: .pull, object: canvas, userInfo: ["step": "tie"])
+            case "pull-end":
+                NotificationCenter.default.post(name: .pull, object: canvas, userInfo: ["step": "end"])
+            case "tie-wires" where numbers.count >= 2:
+                // Wires tied together where they're nearest each other's middle: "tie-wires 0 1".
+                var model = document.wrappedValue
+                let routing = Routing(model: model)
+                let ids = numbers.map { model.relationships[Int($0)].id }
+                let middles = ids.compactMap { routing.routes[$0].map { $0.points[$0.points.count / 2] } }
+                let center = middles.reduce(.zero, +) / CGFloat(middles.count)
+                let tie = ZipTie(position: center, direction: CGPoint(x: 1, y: 0), relationships: ids)
+                model.zipTies.append(tie)
+                for id in ids { model.setZipTies(onCable: id, (model.zipTies(onCable: id) ?? []) + [tie.id]) }
+                document.wrappedValue = model
+                print("tie-wires: tied \(ids.count) at \(Int(center.x)), \(Int(center.y))")
             case "press" where numbers.count == 2:
                 // A click at a canvas point, through the canvas's own press handling.
                 NotificationCenter.default.post(name: .pressAt, object: canvas, userInfo: ["point": CGPoint(x: numbers[0], y: numbers[1])])
@@ -465,6 +486,7 @@ extension Notification.Name {
     static let openSettings = Notification.Name("JoineryOpenSettings")
     static let hover = Notification.Name("JoineryHover")
     static let pressAt = Notification.Name("JoineryPressAt")
+    static let pull = Notification.Name("JoineryPull")
     static let holdDrag = Notification.Name("JoineryHoldDrag")
 }
 #endif

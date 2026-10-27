@@ -249,20 +249,33 @@ extension DataModel {
     /// point is across it, and takes the bend point away. `direction` is the way the tie runs, as routed.
     mutating func join(bend: ZipTie.ID, into tie: ZipTie.ID, along direction: CGPoint) {
         guard bend != tie, let point = zipTies.first(where: { $0.id == bend }), point.relationships.count == 1,
-              let target = zipTies.firstIndex(where: { $0.id == tie }), let cable = point.relationships.first,
-              var ties = zipTies(onCable: cable), let place = ties.firstIndex(of: bend) else { return }
-        if !zipTies[target].relationships.contains(cable) {
-            // Where it is across the tie, in slots a tie's spacing apart either side of the middle.
-            let count = zipTies[target].relationships.count
-            let across = (point.position - zipTies[target].position).dot(direction.perpendicular) / Metrics.tieSpacing
-            let slot = min(max(Int((across + CGFloat(count) / 2).rounded()), 0), count)
-            zipTies[target].relationships.insert(cable, at: slot)
-            ties[place] = tie
-        } else {
-            ties.remove(at: place)
-        }
+              let cable = point.relationships.first, let place = zipTies(onCable: cable)?.firstIndex(of: bend) else { return }
+        untie(cable, from: bend)
+        self.tie(cable, into: tie, at: place, from: point.position, along: direction)
+    }
+
+    /// Puts `cable` into the zip tie `tie`, as its `index`th tie along it, in the slot across the tie nearest `point`.
+    /// `direction` is the way the tie runs, as routed. Nothing, if it's already in it.
+    mutating func tie(_ cable: UUID, into tie: ZipTie.ID, at index: Int, from point: CGPoint, along direction: CGPoint) {
+        guard let target = zipTies.firstIndex(where: { $0.id == tie }), !zipTies[target].relationships.contains(cable),
+              var ties = zipTies(onCable: cable) else { return }
+        // Where it is across the tie, in slots a tie's spacing apart either side of the middle.
+        let count = zipTies[target].relationships.count
+        let across = (point - zipTies[target].position).dot(direction.perpendicular) / Metrics.tieSpacing
+        zipTies[target].relationships.insert(cable, at: min(max(Int((across + CGFloat(count) / 2).rounded()), 0), count))
+        ties.insert(tie, at: min(max(index, 0), ties.count))
         setZipTies(onCable: cable, ties)
-        zipTies.removeAll { $0.id == bend }
+    }
+
+    /// Takes `cable` out of the zip tie or bend point `tie`; a tie left holding nothing goes.
+    mutating func untie(_ cable: UUID, from tie: ZipTie.ID) {
+        if var ties = zipTies(onCable: cable) {
+            ties.removeAll { $0 == tie }
+            setZipTies(onCable: cable, ties)
+        }
+        guard let index = zipTies.firstIndex(where: { $0.id == tie }) else { return }
+        zipTies[index].relationships.removeAll { $0 == cable }
+        if zipTies[index].relationships.isEmpty { zipTies.remove(at: index) }
     }
 
     /// Moves a column to before the one at `insertion` in its table, or last if that's past them all.

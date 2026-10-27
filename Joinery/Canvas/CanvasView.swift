@@ -229,6 +229,7 @@ struct CanvasView: View {
                   let translation = note.userInfo?["translation"] as? CGSize else { return }
             dragItem(.table(id), by: translation)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .pull)) { debugPull($0) }
         .onReceive(NotificationCenter.default.publisher(for: .pressAt)) { note in
             // A click at a canvas point, through the same press and its end as a real one.
             guard note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint else { return }
@@ -790,7 +791,10 @@ struct CanvasView: View {
                     let portSocket = socket == nil ? model.portSocket(at: point, within: Metrics.socketReach(zoom: canvas.zoom), in: ports) : nil
                     if (portSocket != nil) != isHoveringPortSocket { isHoveringPortSocket = portSocket != nil }
                     isOverPort = socket == nil && portSocket == nil && model.port(at: point, in: ports) != nil
-                    if socket == nil && !isOverPort && press == nil { hint = portHint(near: point) }
+                    if socket == nil && !isOverPort && press == nil
+                        && simulation.hit(near: point, within: Metrics.wireHitRadius / canvas.zoom) == nil {
+                        hint = portHint(near: point)
+                    }
                 }
                 if socket != hoveredSocket { hoveredSocket = socket }
                 if isOverPort != isHoveringPort { isHoveringPort = isOverPort }
@@ -818,9 +822,20 @@ struct CanvasView: View {
 
     /// The model the wires are routed for: with a port being dragged where it's got to.
     private var routedModel: DataModel {
-        guard let drag = canvas.portDrag else { return model }
+        guard canvas.portDrag != nil || canvas.cableDrag != nil else { return model }
         var routed = model
-        routed.movePort(drag.port, to: (drag.side, drag.along))
+        if let drag = canvas.portDrag { routed.movePort(drag.port, to: (drag.side, drag.along)) }
+        // A cable being pulled: out of the ties it's been tugged out of, and through the pointer, as if a bend point
+        // were there, so it springs along after it.
+        if let drag = canvas.cableDrag {
+            for tie in drag.popped { routed.untie(drag.cable, from: tie) }
+            var grab = ZipTie(position: drag.point, direction: drag.direction, relationships: [drag.cable])
+            grab.id = Self.grabID
+            routed.zipTies.append(grab)
+            var ties = routed.zipTies(onCable: drag.cable) ?? []
+            ties.insert(grab.id, at: min(max(drag.segment, 0), ties.count))
+            routed.setZipTies(onCable: drag.cable, ties)
+        }
         return routed
     }
 
@@ -828,6 +843,8 @@ struct CanvasView: View {
     enum Press {
         /// Drawing a foreign key out of a column's socket.
         case socket(Column, at: CGPoint)
+        /// On a cable: pulling it about, out of ties and into one, or a click on it.
+        case cable(WireSimulation.Hit)
         /// On a column's row: dragging it to another place in its table, or a click on its cell.
         case row(Table, column: Column.ID)
         /// On a group's port: sliding it along the group's edge.
@@ -849,6 +866,10 @@ struct CanvasView: View {
             return .portSocket(socket.port, isOutside: socket.isOutside, at: socket.center)
         }
         if let port = model.port(at: point, in: ports) { return .port(port) }
+        if !model.tables.contains(where: { Metrics.frame(of: $0).contains(point) }),
+           let hit = simulation.hit(near: point, within: Metrics.wireHitRadius / canvas.zoom) {
+            return .cable(hit)
+        }
         // By a group's edge, where the + follows the pointer: worked out here from where the press is, as the hover
         // does, not taken from the hover, which may have ended as the button went down, or never come.
         if let hint = portHint(near: point) { return .newPort(hint.group, side: hint.spot.side, along: hint.spot.along) }
@@ -933,6 +954,7 @@ struct CanvasView: View {
                     canvas.portDrag = nil
                     canvas.connection = nil
                     canvas.columnDrag = nil
+                    canvas.cableDrag = nil
                 }
                 // With the zip-tie tool, every drag ties, wherever it starts.
                 let press = self.press ?? (canvas.isTying ? .background : self.press(at: canvas.canvasPoint(value.startLocation)))
@@ -960,6 +982,10 @@ struct CanvasView: View {
                     canvas.portDrag = (id, spot.side, spot.along)
                 case .table(let table):
                     dragItem(.table(table.id), by: value.translation)
+                case .cable(let hit):
+                    // A short way first, so a click on it stays a click.
+                    guard canvas.cableDrag != nil || CGPoint(value.translation).length >= 3 else { break }
+                    pullCable(hit, to: canvas.canvasPoint(value.location))
                 case .row(let table, let column):
                     // A short way first, so a click on a cell stays a click.
                     guard canvas.columnDrag != nil || CGPoint(value.translation).length >= 3 else { break }
@@ -999,6 +1025,14 @@ struct CanvasView: View {
                 case .table(let table):
                     dropItem(.table(table.id), at: location, translation: translation,
                              click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) }
+                case .cable:
+                    if let drag = canvas.cableDrag {
+                        canvas.cableDrag = nil
+                        canvas.hoveredTie = nil
+                        letGo(drag)
+                    } else {
+                        click(at: canvas.canvasPoint(location))
+                    }
                 case .row(let table, let column):
                     if let drag = canvas.columnDrag {
                         canvas.columnDrag = nil
@@ -1141,6 +1175,82 @@ struct CanvasView: View {
         return CanvasController.snap(moving, by: offset, to: others, tolerance: 6 / canvas.zoom,
                                      across: !isLocked || offset.x != 0, down: !isLocked || offset.y != 0)
     }
+
+    /// A cable pulled to `point` (canvas points) by where it was grabbed: out of each tie next to that, in turn, once
+    /// it's pulled `tiePopPull` further from it than where it was grabbed; over the zip tie under the pointer, to go in.
+    private func pullCable(_ hit: WireSimulation.Hit, to point: CGPoint) {
+        var drag = canvas.cableDrag ?? CanvasController.CableDrag(cable: hit.relationship, start: hit.point, point: hit.point,
+                                                                  direction: hit.tangent, segment: hit.segment)
+        if canvas.cableDrag == nil { canvas.selection = [.relationship(hit.relationship)] }
+        drag.point = point
+        var ties = (model.zipTies(onCable: drag.cable) ?? []).filter { !drag.popped.contains($0) }
+        var isPopping = true
+        while isPopping {
+            isPopping = false
+            for (index, isBefore) in [(drag.segment - 1, true), (drag.segment, false)] where ties.indices.contains(index) {
+                guard let tie = model.zipTies.first(where: { $0.id == ties[index] }),
+                      point.distance(to: tie.position) - drag.start.distance(to: tie.position) > Metrics.tiePopPull else { continue }
+                drag.popped.append(tie.id)
+                ties.remove(at: index)
+                if isBefore { drag.segment -= 1 }
+                isPopping = true
+                break
+            }
+        }
+        // Over a zip tie, or another cable's bend point, it isn't in: that's where it'd go.
+        drag.target = routingCache.current?.ties.first { id, tie in
+            id != Self.grabID && !tie.relationships.contains(drag.cable)
+                && tie.center.distance(to: point) <= Metrics.tieHalfLength(holding: tie.relationships.count) + Metrics.socketHitRadius
+        }.map { ($0.key, $0.value.direction) }
+        canvas.hoveredTie = drag.target?.id
+        canvas.cableDrag = drag
+    }
+
+    /// Letting go of a pulled cable: out of the ties it was tugged out of, and into the one it's over; with neither, it
+    /// springs back where it was. One change.
+    private func letGo(_ drag: CanvasController.CableDrag) {
+        var changed = model
+        for tie in drag.popped { changed.untie(drag.cable, from: tie) }
+        if let target = drag.target {
+            changed.tie(drag.cable, into: target.id, at: drag.segment, from: drag.point, along: target.direction)
+            canvas.selection = [.zipTie(target.id)]
+        }
+        if changed != model { model = changed }
+    }
+
+    #if DEBUG
+    /// A cable pulled through the same steps as a drag: grabbed at a fraction along wire n, moved by offsets from there
+    /// or onto a tie, let go.
+    private func debugPull(_ note: Notification) {
+        guard note.object as AnyObject? === canvas, let step = note.userInfo?["step"] as? String else { return }
+        switch step {
+        case "start":
+            guard let n = note.userInfo?["wire"] as? Int, let t = note.userInfo?["t"] as? Double, model.relationships.indices.contains(n),
+                  let points = simulation.wires[model.relationships[n].id]?.points, points.count > 2 else { return }
+            let i = min(max(Int(Double(points.count - 1) * t), 0), points.count - 2)
+            let hit = WireSimulation.Hit(relationship: model.relationships[n].id, point: points[i],
+                                         tangent: (points[i + 1] - points[i]).normalized ?? CGPoint(x: 1, y: 0), segment: i / Routing.samplesPerSegment)
+            pullCable(hit, to: hit.point)
+        case "move", "tie":
+            guard let drag = canvas.cableDrag else { return }
+            let hit = WireSimulation.Hit(relationship: drag.cable, point: drag.start, tangent: drag.direction, segment: drag.segment)
+            let target = step == "tie" ? routingCache.current?.ties.first { $0.key != Self.grabID && !$0.value.relationships.contains(drag.cable) }?.value.center : nil
+            pullCable(hit, to: target ?? drag.start + (note.userInfo?["offset"] as? CGPoint ?? .zero))
+        default:
+            guard let drag = canvas.cableDrag else { return }
+            canvas.cableDrag = nil
+            canvas.hoveredTie = nil
+            letGo(drag)
+            print("pull: let go, ties on it now \(model.zipTies(onCable: drag.cable)?.count ?? 0)")
+            return
+        }
+        if let drag = canvas.cableDrag { print("pull: popped \(drag.popped.count), over a tie \(drag.target != nil)") }
+
+    }
+    #endif
+
+    /// The bend point that stands in for the pointer on a cable being pulled, while it's routed.
+    static let grabID = UUID()
 
     /// Where a column dragged to `point` (canvas points) would go in its table: before the row it's in the top half of.
     private func dragColumn(_ column: Column.ID, in table: Table, to point: CGPoint) {

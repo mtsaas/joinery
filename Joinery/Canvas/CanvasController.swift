@@ -132,6 +132,21 @@ final class CanvasController {
         var target: DataModel.DropTarget?
     }
 
+    /// A cable being pulled about by the pointer: where it was grabbed and is now, which stretch of it (between which
+    /// of its ties) that is, the ties it's been tugged out of, and the tie it's over, to go into.
+    struct CableDrag {
+        var cable: UUID
+        var start: CGPoint
+        var point: CGPoint
+        /// The way the cable ran where it was grabbed.
+        var direction: CGPoint
+        /// Between its `segment - 1`th tie (or its start) and its `segment`th (or its end), not counting those popped.
+        var segment: Int
+        var popped: [ZipTie.ID] = []
+        var target: (id: ZipTie.ID, direction: CGPoint)?
+    }
+    var cableDrag: CableDrag?
+
     /// A column being dragged to another place in its table, and where it'd go: before the column at `insertion`, or
     /// last if that's past them all.
     var columnDrag: (table: Table.ID, column: Column.ID, insertion: Int)?
