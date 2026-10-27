@@ -7,9 +7,19 @@ extension DataModel {
     static let pasteboardType = NSPasteboard.PasteboardType("com.clarkmccauley.joinery.clip")
 
     /// A data model of `tables` (and the tables of `groups`), with their foreign keys, whichever tables those reference,
-    /// the zip ties all of whose wires come too, and their groups.
-    func clip(tables ids: Set<Table.ID>, groups groupIDs: Set<TableGroup.ID> = []) -> DataModel {
-        let copied = tables.filter { ids.contains($0.id) || $0.group.map(groupIDs.contains) == true }
+    /// the zip ties all of whose wires come too, and their groups, with only the tables copied.
+    /// `joined`, the tables they're joined to by a foreign key, either way, come too.
+    func clip(tables ids: Set<Table.ID>, groups groupIDs: Set<TableGroup.ID> = [], joined: Bool = false) -> DataModel {
+        var ids = ids.union(tables.filter { $0.group.map(groupIDs.contains) == true }.map(\.id))
+        if joined {
+            // One step: the tables they're joined to, not those tables' own.
+            let owner = columnLocations, selected = ids
+            for relationship in relationships {
+                guard let from = owner[relationship.from]?.table.id, let to = owner[relationship.to]?.table.id else { continue }
+                if selected.contains(from) || selected.contains(to) { ids.formUnion([from, to]) }
+            }
+        }
+        let copied = tables.filter { ids.contains($0.id) }
         let columns = Set(copied.flatMap(\.columns).map(\.id))
         let wires = relationships.filter { columns.contains($0.from) }
         let wireIDs = Set(wires.map(\.id))

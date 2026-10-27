@@ -226,6 +226,8 @@ final class Library {
     // MARK: Helpers
 
     private func openSelection() {
+        // Already open, renamed.
+        if let selection, selection == open?.url { return }
         open?.saveNow()
         open = nil
         // Back in the browser: what was open has changed.
@@ -244,8 +246,11 @@ final class Library {
         attempt(description) {
             open?.saveNow()
             let selected = selection
-            if let selected, selected.path.hasPrefix(url.path) { selection = nil }
+            // The open model, renamed, stays open as it is; anything else selected is let go of while it moves.
+            let isOpen = open?.url == url
+            if !isOpen, let selected, selected.path.hasPrefix(url.path) { selection = nil }
             try files.moveItem(at: url, to: destination)
+            if isOpen { open?.moved(to: destination) }
             reload()
             if let selected, selected.path.hasPrefix(url.path) {
                 selection = URL(filePath: destination.path + selected.path.dropFirst(url.path.count))
@@ -280,12 +285,13 @@ final class Library {
 /// A model file being edited: changes save themselves shortly after, and can be undone.
 @MainActor @Observable
 final class OpenModel {
-    let url: URL
+    /// Where it is; it can be renamed while open.
+    private(set) var url: URL
     private(set) var model: DataModel
     /// The window's, set by the editor, for registering changes.
     @ObservationIgnored weak var undoManager: UndoManager?
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
-    let history: History
+    private(set) var history: History
     /// When an AI assistant last changed it, to save a version before the first of each spell of changes.
     @ObservationIgnored private var lastAssistantChange: Date?
 
@@ -299,6 +305,12 @@ final class OpenModel {
     }
 
     var name: String { Library.name(of: url) }
+
+    /// It's been renamed or moved, to `url`, and stays open.
+    func moved(to url: URL) {
+        self.url = url
+        history = History(of: url)
+    }
 
     /// Saves the model as it is now as a version, to go back to. Failing to is no reason to stop the change coming.
     func saveVersion(_ reason: String) {

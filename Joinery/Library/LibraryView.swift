@@ -9,13 +9,13 @@ struct LibraryView: View {
         Group {
             if let open = library.open {
                 ModelEditor(open: open) { library.selection = nil }
-                    .id(open.url)
+                    .id(ObjectIdentifier(open))
             } else {
                 LibraryBrowser(library: library)
             }
         }
-        // Undo belongs to the model it was done in.
-        .onChange(of: library.selection) { undoManager?.removeAllActions() }
+        // Undo belongs to the model it was done in, renamed or not.
+        .onChange(of: library.open.map(ObjectIdentifier.init)) { undoManager?.removeAllActions() }
         .alert("Something Went Wrong", isPresented: Binding { library.failure != nil } set: { if !$0 { library.failure = nil } }) {
             Button("OK") { library.failure = nil }
         } message: {
@@ -111,7 +111,8 @@ struct ModelEditor: View {
                 }
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-            .navigationTitle(open.name)
+            // Click the title to rename it.
+            .navigationTitle(Binding { open.name } set: { Library.shared.rename(open.url, to: $0) })
             .overlay(alignment: .top) {
                 if preview != nil || open.notice != nil {
                     HStack(spacing: 8) {

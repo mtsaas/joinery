@@ -557,6 +557,27 @@ struct JoineryTests {
         }
     }
 
+    @Test func copyingCanTakeTheTablesTheSelectionIsJoinedTo() throws {
+        var model = storefront()
+        let users = model.tables[0].id, orders = model.tables[1].id, reviews = model.tables[2].id
+        let sales = model.group([orders, reviews], named: "sales")
+        // payments references orders.
+        let payments = model.addTable(at: CGPoint(x: 900, y: 0))
+        let index = try #require(model.tables.firstIndex { $0.id == payments })
+        model.tables[index].columns.append(Column(name: "order_id", type: .uuid))
+        model.connect(model.tables[index].columns[1].id, to: model.tables[1].columns[0].id)
+
+        func names(_ clip: DataModel) -> Set<String> { Set(clip.tables.map(\.name)) }
+        // Without: only what's selected.
+        #expect(names(model.clip(tables: [orders])) == ["orders"])
+        // With: one key away, either way, but not the tables those are joined to.
+        let clip = model.clip(tables: [orders], joined: true)
+        #expect(names(clip) == ["orders", "users", model.tables[index].name])
+        // Its group comes, holding only the tables copied.
+        #expect(clip.groups.map(\.id) == [sales] && clip.members(of: sales).map(\.id) == [orders])
+        #expect(names(model.clip(tables: [users], joined: true)) == ["users", "orders", "reviews"])
+    }
+
     @Test func copiedTablesPasteWithTheirKeysTiesAndSchema() throws {
         var model = storefront()
         let orders = model.tables[1], reviews = model.tables[2]

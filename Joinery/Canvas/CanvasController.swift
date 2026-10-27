@@ -46,13 +46,17 @@ final class CanvasController {
     /// - Returns: Whether there was anything to copy.
     @discardableResult
     func copySelection(from model: DataModel) -> Bool {
-        let clip = model.clip(tables: selectedTables, groups: selectedGroups)
+        let joined = UserDefaults.standard.object(forKey: Self.copiesJoinedTablesKey) as? Bool ?? true
+        let clip = model.clip(tables: selectedTables, groups: selectedGroups, joined: joined)
         guard !clip.tables.isEmpty, let data = try? JSONEncoder().encode(clip) else { return false }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setData(data, forType: DataModel.pasteboardType)
         pastes = 0
         return true
     }
+
+    /// The setting for whether copying takes the tables the selection is joined to as well; on unless turned off.
+    static let copiesJoinedTablesKey = "copiesJoinedTables"
 
     func cutSelection(from model: inout DataModel) {
         if copySelection(from: model) { deleteSelection(in: &model) }

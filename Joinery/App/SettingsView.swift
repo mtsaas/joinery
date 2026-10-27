@@ -4,10 +4,37 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
+            EditingSettings()
+                .tabItem { Label("Editing", systemImage: "pencil") }
             AIAssistantSettings()
                 .tabItem { Label("AI Assistants", systemImage: "sparkles") }
         }
         .frame(width: 580)
+    }
+}
+
+/// How editing on the canvas behaves.
+private struct EditingSettings: View {
+    @AppStorage(CanvasController.copiesJoinedTablesKey) private var copiesJoinedTables = true
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Copying tables copies", selection: $copiesJoinedTables) {
+                    Text("The tables they're joined to as well").tag(true)
+                    Text("Only the selected tables").tag(false)
+                }
+                .pickerStyle(.radioGroup)
+            } footer: {
+                Text("""
+                    With the tables they're joined to, ⌘C also copies every table the selection references or is \
+                    referenced by, one foreign key away, and their groups with only those tables in them. Cutting \
+                    still removes only what's selected.
+                    """)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

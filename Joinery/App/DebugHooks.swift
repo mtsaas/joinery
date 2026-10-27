@@ -295,6 +295,10 @@ enum DebugHooks {
             case "capture" where words.count == 2:
                 // The window now, to a file: for frames of an animation, between short waits.
                 capture(to: words[1])
+            case "rename-model" where words.count == 2:
+                // As editing the window's title would: "rename-model Shop".
+                if let open = Library.shared.open { Library.shared.rename(open.url, to: words[1]) }
+                print("open:", Library.shared.open.map { "\($0.name), \($0.model.tables.count) tables" } ?? "nothing")
             case "click-plus" where words.count == 4:
                 // The + on a group's edge clicked: "click-plus hierarchy left 0.45".
                 guard let group = document.wrappedValue.groups.first(where: { $0.name == words[1] }), let side = Side4(rawValue: words[2]),
