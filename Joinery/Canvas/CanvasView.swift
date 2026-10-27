@@ -569,9 +569,11 @@ struct CanvasView: View {
         let selectedTies = canvas.selectedTies, hoveredTie = canvas.hoveredTie
         let selectedWires = Set(canvas.selection.compactMap { if case .relationship(let id) = $0 { id } else { nil } })
         let relationships = model.relationships
-        // Each cable's ties, wire or bus, for where they're drawn along it.
-        var cableTies = Dictionary(relationships.map { ($0.id, $0.zipTies) }, uniquingKeysWith: { first, _ in first })
-        for port in model.groups.flatMap(\.ports) { cableTies[port.id] = port.zipTies }
+        // Each cable's ties, wire or bus, for where they're drawn along it: as routed, so with a cable being pulled
+        // through the pointer, and out of the ties it's been tugged out of, as its drawn wire is.
+        let routed = routedModel
+        var cableTies = Dictionary(routed.relationships.map { ($0.id, $0.zipTies) }, uniquingKeysWith: { first, _ in first })
+        for port in routed.groups.flatMap(\.ports) { cableTies[port.id] = port.zipTies }
 
         let appearing = canvas.appearingPort
         return TimelineView(.animation(paused: !isAnimating && appearing == nil && !portShapes.isEasing)) { timeline in
@@ -1268,7 +1270,20 @@ struct CanvasView: View {
             print("pull: let go, ties on it now \(model.zipTies(onCable: drag.cable)?.count ?? 0)")
             return
         }
-        if let drag = canvas.cableDrag { print("pull: popped \(drag.popped.count), over a tie \(drag.target != nil)") }
+        if let drag = canvas.cableDrag {
+            // Where each tie is drawn, as drawTie works it out: from where its wires are, along each as routed.
+            let routed = routedModel
+            let drawn = model.zipTies.map { tie -> String in
+                let slots = tie.relationships.compactMap { cable -> CGPoint? in
+                    guard let points = simulation.wires[cable]?.points, let index = routed.zipTies(onCable: cable)?.firstIndex(of: tie.id) else { return nil }
+                    let sample = (index + 1) * Routing.samplesPerSegment
+                    return points.indices.contains(sample) ? points[sample] : nil
+                }
+                let center = slots.reduce(.zero, +) / CGFloat(max(slots.count, 1))
+                return "\(Int(center.x)),\(Int(center.y))"
+            }
+            print("pull: popped \(drag.popped.count), over a tie \(drag.target != nil), ties drawn at \(drawn)")
+        }
 
     }
     #endif
