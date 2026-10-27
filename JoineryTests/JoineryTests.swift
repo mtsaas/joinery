@@ -823,4 +823,52 @@ struct JoineryTests {
         let frame = Metrics.frame(of: model.tables[index])
         #expect(abs(start.y - (frame.minY + Metrics.headerHeight + 3.5 * Metrics.rowHeight)) < 0.5)
     }
+
+    @Test func aBendPointDroppedOnAZipTieJoinsItsCableToIt() throws {
+        var model = storefront()
+        // A third wire, to reviews from a new column in orders.
+        let orders = try #require(model.tables.firstIndex { $0.name == "orders" })
+        let column = Column(name: "review_id", type: .uuid)
+        model.tables[orders].columns.append(column)
+        let reviewsKey = try #require(model.tables.first { $0.name == "reviews" }?.columns.first?.id)
+        let connected = model.connect(column.id, to: reviewsKey)
+        let third = try #require(connected)
+        // The two to users tied together, running across; a bend point on the third, just below them.
+        let wires = model.relationships.filter { $0.id != third }.map(\.id)
+        let tie = ZipTie(position: CGPoint(x: 250, y: 0), direction: CGPoint(x: 1, y: 0), relationships: wires)
+        model.zipTies.append(tie)
+        for wire in wires { model.setZipTies(onCable: wire, [tie.id]) }
+        let placed = model.addBendPoint(on: third, at: CGPoint(x: 250, y: 30), direction: CGPoint(x: 1, y: 0), segment: 0)
+        let bend = try #require(placed)
+
+        model.join(bend: bend, into: tie.id, along: CGPoint(x: 1, y: 0))
+        #expect(!model.zipTies.contains { $0.id == bend }, "the bend point goes")
+        #expect(model.zipTies.first { $0.id == tie.id }?.relationships == wires + [third], "in the slot on its side")
+        #expect(model.zipTies(onCable: third) == [tie.id])
+        model.repair()
+        #expect(model.zipTies.first { $0.id == tie.id }?.relationships.count == 3, "and it holds")
+    }
+
+    @Test func layoutsCrossFewerWiresOnceRefinedTheSameWayEveryTime() {
+        let model = DataModel.synthetic(tables: 60, foreignKeys: 90, groups: 3)
+        func crossings(_ model: DataModel) -> Int {
+            let owner = model.columnLocations
+            let middle = { (id: Table.ID) in model.table(id).map { CGPoint(x: Metrics.frame(of: $0).midX, y: Metrics.frame(of: $0).midY) } }
+            return Untangler.crossings(model.relationships.compactMap { wire in
+                guard let a = owner[wire.from].flatMap({ middle($0.table.id) }), let b = owner[wire.to].flatMap({ middle($0.table.id) }) else { return nil }
+                return (a, b)
+            })
+        }
+        DataModel.refinementRounds = 0
+        var plain = model
+        plain.arrange(.orthogonalGroups)
+        DataModel.refinementRounds = 6
+        var refined = model, again = model
+        refined.arrange(.orthogonalGroups)
+        again.arrange(.orthogonalGroups)
+        #expect(crossings(refined) < crossings(plain) * 3 / 4, "\(crossings(plain)) to \(crossings(refined))")
+        #expect(refined == again, "nothing random")
+        let frames = refined.tables.map(Metrics.frame)
+        for (i, a) in frames.enumerated() { for b in frames[(i + 1)...] { #expect(!a.intersects(b)) } }
+    }
 }

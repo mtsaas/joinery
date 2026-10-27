@@ -28,9 +28,13 @@ extension DataModel {
     }
 
     /// Room between tables across, for wires to pass, and down.
-    private static let layoutGap = CGSize(width: 96, height: 48)
+    private static let layoutGap = CGSize(width: 192, height: 96)
     /// Room between blocks of tables, groups' labels and padding included.
-    private static let blockGap: CGFloat = 120
+    private static let blockGap: CGFloat = 240
+    /// How many rounds of swapping tables about improve a block's layout; none leaves it as first laid out.
+    nonisolated(unsafe) static var refinementRounds = 6
+    /// What a wire crossing another counts for against the length of wires, in points.
+    static let crossingCost: Double = 400
 
     /// Moves every table, or only `ids`, to where `layout` puts it, starting from where they are now, and takes away the
     /// zip ties and bend points on their wires: they were placed for the old layout, and would only knot the wires in
@@ -43,8 +47,9 @@ extension DataModel {
         let neighbors = adjacency()
         // Either way, each group's tables (or each set of joined ones) together as a block, so groups stay apart.
         let positions = switch layout {
-        case .orthogonalGroups: packedBlocks(of: arranged) { Self.block($0, neighbors: neighbors) }
-        case .hierarchical: packedBlocks(of: arranged, hierarchical)
+        case .orthogonalGroups: packedBlocks(of: arranged, withinColumns: false) { Self.block($0, neighbors: neighbors) }
+        // Its columns are what references what, so tables only swap within one.
+        case .hierarchical: packedBlocks(of: arranged, withinColumns: true, hierarchical)
         }
         for index in tables.indices {
             if let position = positions[tables[index].id] { tables[index].position = before.origin + position }
@@ -76,7 +81,8 @@ extension DataModel {
     /// The tables in blocks: each group's; then the rest, by what joins them; then those joined to nothing, together.
     /// Each block is laid out by `arrange`, then the blocks are packed in rows, tallest first, about twice as wide as
     /// tall, with room for groups' boundaries and names.
-    private func packedBlocks(of tables: [Table], _ arrange: ([Table]) -> (positions: [Table.ID: CGPoint], size: CGSize)) -> [Table.ID: CGPoint] {
+    private func packedBlocks(of tables: [Table], withinColumns: Bool,
+                              _ arrange: ([Table]) -> (positions: [Table.ID: CGPoint], size: CGSize)) -> [Table.ID: CGPoint] {
         let neighbors = adjacency()
         // Blocks: each group's tables; then the rest, by what joins them; then those joined to nothing, together.
         var blocks: [(tables: [Table], isGroup: Bool)] = groups.map { group in (tables.filter { $0.group == group.id }, true) }
@@ -99,7 +105,9 @@ extension DataModel {
         }
         if !alone.isEmpty { blocks.append((alone, false)) }
 
-        let laidOut = blocks.map { block in (layout: arrange(block.tables), isGroup: block.isGroup) }
+        let laidOut = blocks.map { block in
+            (layout: refined(arrange(block.tables), of: block.tables, withinColumns: withinColumns), isGroup: block.isGroup)
+        }
         let margins = laidOut.map { block -> (left: CGFloat, top: CGFloat, size: CGSize) in
             let padding = block.isGroup ? Metrics.groupPadding : 0, label = block.isGroup ? Metrics.groupLabelHeight : 0
             return (padding, padding + label, CGSize(width: block.layout.size.width + padding * 2,
@@ -124,6 +132,67 @@ extension DataModel {
         return positions
     }
 
+    // MARK: Refining
+
+    /// A block's layout improved by swapping its tables between their places while that makes their wires shorter, each
+    /// crossing counted as `crossingCost` of length: the nearest places first, a few rounds, the same every time. Then
+    /// each column stacked again, as tables of different heights may have swapped. `withinColumns`, only tables in the
+    /// same column swap.
+    private func refined(_ layout: (positions: [Table.ID: CGPoint], size: CGSize), of block: [Table],
+                         withinColumns: Bool) -> (positions: [Table.ID: CGPoint], size: CGSize) {
+        let count = block.count
+        guard count > 2, Self.refinementRounds > 0 else { return layout }
+        let index = Dictionary(uniqueKeysWithValues: block.enumerated().map { ($1.id, $0) })
+        let sizes = block.map(Metrics.size)
+        var places = block.map { layout.positions[$0.id] ?? .zero }
+        // Each wire between two of its tables, as a line between their middles.
+        let owner = columnLocations
+        let wires = relationships.compactMap { wire -> (Int, Int)? in
+            guard let a = owner[wire.from].flatMap({ index[$0.table.id] }), let b = owner[wire.to].flatMap({ index[$0.table.id] }), a != b
+            else { return nil }
+            return (a, b)
+        }
+        var wiresOf = [[Int]](repeating: [], count: count)
+        for (number, wire) in wires.enumerated() { wiresOf[wire.0].append(number); wiresOf[wire.1].append(number) }
+        func middle(_ table: Int) -> CGPoint { places[table] + CGPoint(x: sizes[table].width / 2, y: sizes[table].height / 2) }
+        func cost(_ some: [Int]) -> Double {
+            some.reduce(0.0) { total, number in
+                let (a, b) = wires[number], start = middle(a), end = middle(b)
+                var crossings = 0
+                for (other, (c, d)) in wires.enumerated() where other != number && a != c && a != d && b != c && b != d {
+                    if crossing(start, end, middle(c), middle(d)) != nil { crossings += 1 }
+                }
+                return total + Double(start.distance(to: end)) + Double(crossings) * Self.crossingCost
+            }
+        }
+        for _ in 0..<Self.refinementRounds {
+            var isImproved = false
+            for a in 0..<count where !wiresOf[a].isEmpty {
+                let nearest = (0..<count).filter { $0 != a && (!withinColumns || places[$0].x == places[a].x) }.sorted { (places[$0].distance(to: places[a]), $0) < (places[$1].distance(to: places[a]), $1) }
+                for b in nearest.prefix(12) {
+                    let affected = Array(Set(wiresOf[a] + wiresOf[b]))
+                    let before = cost(affected)
+                    places.swapAt(a, b)
+                    if cost(affected) < before - 1 { isImproved = true } else { places.swapAt(a, b) }
+                }
+            }
+            if !isImproved { break }
+        }
+        // Each column (tables at the same x) stacked again from its top, in order down it, a gap apart.
+        var positions: [Table.ID: CGPoint] = [:], size = CGSize.zero
+        for column in Dictionary(grouping: 0..<count, by: { places[$0].x }).values {
+            let down = column.sorted { places[$0].y < places[$1].y }
+            var bottom = down.map { places[$0].y }.min() ?? 0
+            for table in down {
+                let y = max(places[table].y, bottom)
+                positions[block[table].id] = CGPoint(x: places[table].x, y: y)
+                bottom = y + sizes[table].height + Self.layoutGap.height
+                size = CGSize(width: max(size.width, places[table].x + sizes[table].width), height: max(size.height, y + sizes[table].height))
+            }
+        }
+        return (positions, size)
+    }
+
     // MARK: Orthogonal groups
 
     /// A block of tables in columns, about as wide as tall: from the most joined, outward along foreign keys, each into
@@ -132,13 +201,15 @@ extension DataModel {
         let byID = Dictionary(uniqueKeysWithValues: tables.map { ($0.id, $0) })
         let degree = { (id: Table.ID) in neighbors[id, default: []].count }
         var order: [Table] = [], seen = Set<Table.ID>()
-        for start in tables.sorted(by: { degree($0.id) > degree($1.id) }) where !seen.contains(start.id) {
+        // Ties broken by name, so it comes out the same every time.
+        let first = { (a: Table.ID, b: Table.ID) in (degree(a), byID[b]?.name ?? "") > (degree(b), byID[a]?.name ?? "") }
+        for start in tables.sorted(by: { first($0.id, $1.id) }) where !seen.contains(start.id) {
             var queue = [start.id]
             seen.insert(start.id)
             while !queue.isEmpty {
                 let id = queue.removeFirst()
                 order.append(byID[id]!)
-                for next in neighbors[id, default: []].filter({ byID[$0] != nil && !seen.contains($0) }).sorted(by: { degree($0) > degree($1) }) {
+                for next in neighbors[id, default: []].filter({ byID[$0] != nil && !seen.contains($0) }).sorted(by: first) {
                     seen.insert(next)
                     queue.append(next)
                 }

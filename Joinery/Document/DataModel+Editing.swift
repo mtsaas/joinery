@@ -245,6 +245,26 @@ extension DataModel {
         return bend.id
     }
 
+    /// Puts the cable through `bend`, a bend point, into the zip tie `tie` instead, in the slot nearest where the bend
+    /// point is across it, and takes the bend point away. `direction` is the way the tie runs, as routed.
+    mutating func join(bend: ZipTie.ID, into tie: ZipTie.ID, along direction: CGPoint) {
+        guard bend != tie, let point = zipTies.first(where: { $0.id == bend }), point.relationships.count == 1,
+              let target = zipTies.firstIndex(where: { $0.id == tie }), let cable = point.relationships.first,
+              var ties = zipTies(onCable: cable), let place = ties.firstIndex(of: bend) else { return }
+        if !zipTies[target].relationships.contains(cable) {
+            // Where it is across the tie, in slots a tie's spacing apart either side of the middle.
+            let count = zipTies[target].relationships.count
+            let across = (point.position - zipTies[target].position).dot(direction.perpendicular) / Metrics.tieSpacing
+            let slot = min(max(Int((across + CGFloat(count) / 2).rounded()), 0), count)
+            zipTies[target].relationships.insert(cable, at: slot)
+            ties[place] = tie
+        } else {
+            ties.remove(at: place)
+        }
+        setZipTies(onCable: cable, ties)
+        zipTies.removeAll { $0.id == bend }
+    }
+
     /// Moves a column to before the one at `insertion` in its table, or last if that's past them all.
     mutating func moveColumn(_ id: Column.ID, in table: Table.ID, to insertion: Int) {
         guard let index = tables.firstIndex(where: { $0.id == table }),

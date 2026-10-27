@@ -1110,6 +1110,21 @@ struct CanvasView: View {
             }
         }
         (canvas.dragOffset, canvas.guides) = move(by: translation)
+        // A bend point dragged alone over a zip tie: the tie shows it'll take its cable.
+        if case .zipTie(let id) = item, canvas.selection == [item] {
+            canvas.hoveredTie = tieToJoin(dragging: id, by: canvas.dragOffset ?? .zero)?.id
+        }
+    }
+
+    /// The zip tie a bend point dragged alone by `offset` is over, to join its cable to, with the way it runs.
+    private func tieToJoin(dragging id: ZipTie.ID, by offset: CGPoint) -> (id: ZipTie.ID, direction: CGPoint)? {
+        guard canvas.selection == [.zipTie(id)], let bend = model.zipTies.first(where: { $0.id == id }), bend.relationships.count == 1,
+              let ties = routingCache.current?.ties else { return nil }
+        let point = bend.position + offset
+        return ties.first { other, tie in
+            other != id && tie.relationships.count > 1
+                && tie.center.distance(to: point) <= Metrics.tieHalfLength(holding: tie.relationships.count) + Metrics.socketHitRadius
+        }.map { ($0.key, $0.value.direction) }
     }
 
     /// How far a drag of `translation` (view points) moves the selection: held to one axis with Shift, and snapped into
@@ -1146,6 +1161,11 @@ struct CanvasView: View {
             var moved = model
             moved.move(tables: canvas.selectedTables, ties: canvas.selectedTies, by: delta)
             moved.regroup(canvas.selectedTables)
+            // A bend point dropped on a zip tie: its cable joins the tie.
+            if case .zipTie(let id) = item, let tie = tieToJoin(dragging: id, by: delta) {
+                moved.join(bend: id, into: tie.id, along: tie.direction)
+                canvas.selection = [.zipTie(tie.id)]
+            }
             model = moved
             lastClick = nil
             return
