@@ -32,6 +32,8 @@ struct CanvasView: View {
     @State private var hoveredSocket: Routing.Socket?
     @State private var isHoveringPort = false
     @State private var isHoveringPortSocket = false
+    /// Whether the + for a new port showed where the pointer last was.
+    @State private var isShowingPortHint = false
     @AppStorage("wiresAvoidTables") private var wiresAvoidTables = false
     @AppStorage("showsMinimap") private var showsMinimap = true
     @Environment(\.openSettings) private var openSettings
@@ -268,6 +270,7 @@ struct CanvasView: View {
             // As if the pointer were at a canvas point: what the + would show.
             guard note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint else { return }
             canvas.portHint = portHint(near: point)
+            isShowingPortHint = canvas.portHint != nil
             print("hover \(Int(point.x)), \(Int(point.y)):", canvas.portHint.map { "+ at \(Int($0.point.x)), \(Int($0.point.y)) on \($0.spot.side)" } ?? "no +")
         }
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { note in
@@ -423,7 +426,12 @@ struct CanvasView: View {
                                            avoidingTables: wiresAvoidTables)
         let reach = Metrics.wireHitRadius / canvas.zoom
         let target: CanvasController.Wheel.Target
-        if let (id, _) = routing.ties.first(where: { _, tie in
+        let ports = currentPorts
+        if let port = model.portSocket(at: point, within: Metrics.socketReach(zoom: canvas.zoom), in: ports)?.port
+            ?? model.port(at: point, in: ports) {
+            target = .port(port)
+            canvas.selection = [.relationship(port)]
+        } else if let (id, _) = routing.ties.first(where: { _, tie in
             tie.center.distance(to: point) <= tie.halfLength + reach
         }) {
             target = .tie(id)
@@ -557,6 +565,10 @@ struct CanvasView: View {
                 if tie.heldDirection != nil {
                     slots[.north] = PaletteCommand(id: "turn", title: "Turn with Wires", symbol: "arrow.triangle.2.circlepath") { release(id) }
                 }
+            }
+        case .port(let id):
+            slots[.south] = PaletteCommand(id: "delete-port", title: "Delete Port", symbol: "trash", shortcut: "⌫", isDestructive: true) {
+                model.removePort(id)
             }
         case .wire(let hit):
             slots[.north] = PaletteCommand(id: "bend", title: "Add Bend Point", symbol: "point.topleft.down.to.point.bottomright.curvepath") {
@@ -845,6 +857,8 @@ struct CanvasView: View {
                 if socket != hoveredSocket { hoveredSocket = socket }
                 if isOverPort != isHoveringPort { isHoveringPort = isOverPort }
                 if hint?.point != canvas.portHint?.point { canvas.portHint = hint }
+                // Kept through the hover ending as a press begins: whether the + was there to click.
+                if case .active = phase, isShowingPortHint != (hint != nil) { isShowingPortHint = hint != nil }
                 var header: Table.ID?
                 if case .active(let location) = phase, socket == nil {
                     let point = canvas.canvasPoint(location)
@@ -920,9 +934,12 @@ struct CanvasView: View {
            let hit = simulation.hit(near: point, within: Metrics.wireHitRadius / canvas.zoom) {
             return .cable(hit)
         }
-        // By a group's edge, where the + follows the pointer: worked out here from where the press is, as the hover
-        // does, not taken from the hover, which may have ended as the button went down, or never come.
-        if let hint = portHint(near: point) { return .newPort(hint.group, side: hint.spot.side, along: hint.spot.along) }
+        // On the + by a group's edge, which follows the pointer: only when it was showing, and on it, not just near
+        // the edge. Worked out here from where the press is, as the hover does, as the hover may end as the button
+        // goes down.
+        if isShowingPortHint, let hint = portHint(near: point), hint.point.distance(to: point) <= Metrics.portHintRadius / canvas.zoom {
+            return .newPort(hint.group, side: hint.spot.side, along: hint.spot.along)
+        }
         if let table = model.tables.last(where: { Metrics.frame(of: $0).contains(point) }) {
             // A table moves by its header, or anywhere on it when it's one of several things selected; its rows move
             // its columns.
@@ -1058,11 +1075,15 @@ struct CanvasView: View {
     /// What letting go does, after a press that started on `press`, at `location`, `translation` from where it began.
     private func endPress(_ press: Press, at location: CGPoint, translation: CGSize) {
                 switch press {
+                case .portSocket(let id, _, _) where canvas.connection == nil:
+                    // A click, not a drag: the port selected, as a click on its body would.
+                    clickPort(id)
                 case .socket, .portSocket:
                     finishConnection()
                 case .newPort(let group, let side, let along):
                     canvas.portHint = nil
                     if let port = model.addPort(to: group, at: (side, along)) {
+                        isCanvasFocused = true
                         canvas.selection = [.relationship(port)]
                         canvas.appearingPort = (port, ProcessInfo.processInfo.systemUptime)
                     }

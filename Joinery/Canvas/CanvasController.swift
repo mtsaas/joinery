@@ -204,7 +204,7 @@ final class CanvasController {
     /// The right-click command wheel, while it's open.
     struct Wheel {
         enum Target {
-            case canvas, table(Table.ID), column(Column.ID, in: Table.ID), tie(ZipTie.ID), wire(WireSimulation.Hit), group(TableGroup.ID)
+            case canvas, table(Table.ID), column(Column.ID, in: Table.ID), tie(ZipTie.ID), wire(WireSimulation.Hit), group(TableGroup.ID), port(GroupPort.ID)
         }
         /// In view points.
         var center: CGPoint
