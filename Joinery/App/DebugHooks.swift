@@ -180,6 +180,16 @@ enum DebugHooks {
                     print(String(format: "tie at %.0f, %.0f held %@ selected %@", tie.position.x, tie.position.y,
                                  tie.heldDirection.map { "\($0)" } ?? "no", canvas.selection.contains(.zipTie(tie.id)) ? "yes" : "no"))
                 }
+            case "scroll-at" where numbers.count == 4:
+                // A trackpad scroll by (dx, dy) points with the pointer at a window point (top-left origin).
+                guard let window = NSApp.windows.first(where: \.isVisible), let height = window.contentView?.bounds.height,
+                      let screenHeight = NSScreen.screens.first?.frame.height,
+                      let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                          wheel1: Int32(numbers[3]), wheel2: Int32(numbers[2]), wheel3: 0) else { break }
+                let inWindow = CGPoint(x: numbers[0], y: height - numbers[1])
+                let onScreen = window.convertPoint(toScreen: inWindow)
+                event.location = CGPoint(x: onScreen.x, y: screenHeight - onScreen.y)
+                if let scroll = NSEvent(cgEvent: event) { NSApp.postEvent(scroll, atStart: false) }
             case "wheel":
                 if let wheel = canvas.wheel {
                     print("wheel at \(Int(wheel.center.x)), \(Int(wheel.center.y)) on \(wheel.target)")
@@ -341,6 +351,7 @@ enum DebugHooks {
             case "view":
                 print(String(format: "view offset %.0f, %.0f zoom %.2f, tying %@", canvas.offset.x, canvas.offset.y, canvas.zoom,
                              canvas.isTying ? "on" : "off"),
+                      "designer:", canvas.designerFrame.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" } ?? "closed",
                       "focus:", canvas.focus.map { focus in document.wrappedValue.tables.filter { focus.contains($0.id) }.map(\.name) } ?? ["off"])
             case "hold-drag" where table != nil && numbers.count == 2:
                 // A table dragged this far (view points) and held there, through the real drag, snapping and all; and let go, with `drop`.

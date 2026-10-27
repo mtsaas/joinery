@@ -127,6 +127,8 @@ struct CanvasView: View {
                 TableDesigner(model: $model, id: id, command: $canvas.designerCommand, isInGrid: $canvas.isDesignerInGrid, maxWidth: canvas.viewSize.width - 24) {
                     withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil }
                 }
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { canvas.designerFrame = $0 }
+                    .onDisappear { canvas.designerFrame = nil }
                     .padding(.top, 60)
                     .padding([.trailing, .bottom], 12)
                     .transition(.move(edge: .trailing).combined(with: .opacity))

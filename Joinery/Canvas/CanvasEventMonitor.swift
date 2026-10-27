@@ -179,6 +179,11 @@ struct CanvasEventMonitor: NSViewRepresentable {
             case .magnify, .scrollWheel:
                 let location = convert(event.locationInWindow, from: nil)
                 guard bounds.contains(location) else { return false }
+                // Over the table designer, its own: its sample rows scroll sideways, its content up and down.
+                if let frame = canvas.designerFrame, let height = window.contentView?.bounds.height,
+                   frame.contains(CGPoint(x: event.locationInWindow.x, y: height - event.locationInWindow.y)) {
+                    return false
+                }
                 if event.type == .magnify {
                     canvas.zoom(by: 1 + event.magnification, around: location)
                 } else if event.modifierFlags.contains(.command) {

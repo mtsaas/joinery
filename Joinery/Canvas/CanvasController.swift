@@ -182,6 +182,8 @@ final class CanvasController {
     var designerCommand: DesignerCommand?
     /// Whether the designer's focus is in one of its grids, where Tab goes cell to cell, row after row.
     var isDesignerInGrid = false
+    /// Where the designer is, in the window (top-left origin), while it's open: scrolling over it scrolls it, not the canvas.
+    var designerFrame: CGRect?
     /// The table whose header the pointer's over, where it's grabbed to move it.
     var hoveredHeader: Table.ID?
 
