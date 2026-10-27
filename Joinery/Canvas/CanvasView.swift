@@ -573,8 +573,11 @@ struct CanvasView: View {
     }
 
     /// Whether keys are for the canvas itself rather than a cell being edited, a group being named or the palette's search.
+    /// Whether keys are for the canvas: it has focus, and nothing's being typed in, here or in a field over it (the
+    /// table designer's, a name's), whose keys pass by the canvas on their way up.
     private var isCanvasKeyTarget: Bool {
         isCanvasFocused && !canvas.isEditingCell && !canvas.showsPalette && canvas.renamingGroup == nil
+            && !(NSApp.keyWindow?.firstResponder is NSText)
     }
 
     // MARK: Wires
