@@ -956,4 +956,23 @@ struct JoineryTests {
         let decoded = try JSONDecoder().decode(DataModel.self, from: Data(old.utf8))
         #expect(decoded.tables.first?.samples.isEmpty == true && decoded.tables.first?.notes == "")
     }
+
+    @Test func assistantsSetSampleDataAndNotes() throws {
+        var model = DataModel()
+        _ = try ModelTools.call("create_tables", ["tables": [
+            ["name": "orders", "notes": "One per checkout.",
+             "columns": [["name": "id", "type": "uuid", "primary_key": true], ["name": "total", "type": "numeric"], ["name": "paid", "type": "boolean"]],
+             "sample_rows": [["id": "a1", "total": 129.95, "paid": true]]],
+        ]], on: &model)
+        _ = try ModelTools.call("set_sample_data", ["table": "orders", "rows": [["id": "b2", "Total": 18.5]], "append": true], on: &model)
+        let orders = try #require(model.tables.first)
+        let total = try #require(orders.columns.first { $0.name == "total" }?.id)
+        #expect(orders.samples.count == 2 && orders.sample(0, total) == "129.95" && orders.sample(1, total) == "18.5")
+        #expect(orders.sample(0, try #require(orders.columns.last?.id)) == "true" && orders.notes == "One per checkout.")
+        #expect(throws: ModelTools.Failure.self) { try ModelTools.call("set_sample_data", ["table": "orders", "rows": [["nope": 1]]], on: &model) }
+
+        _ = try ModelTools.call("alter_table", ["table": "orders", "notes": "Totals include tax."], on: &model)
+        let described = try ModelTools.call("get_model", [:], on: &model)
+        #expect(described.contains("Totals include tax.") && described.contains("\"sample_rows\"") && described.contains("b2"))
+    }
 }

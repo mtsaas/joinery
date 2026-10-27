@@ -32,7 +32,7 @@ enum ModelTools {
     static let definitions: [[String: Any]] = [
         [
             "name": "get_model",
-            "description": "The open data model: its schemas, and every table with its schema, its columns (type, primary key, nullable, unique) and the foreign keys between them. Columns not marked nullable are required. Also where everything is on the canvas, in points (y grows downward): each table's and schema's frame [x, y, width, height], and the bounds of it all. Read this before changing anything.",
+            "description": "The open data model: its schemas, and every table with its schema, its columns (type, primary key, nullable, unique), the foreign keys between them, and its notes and sample rows, if it has any. Columns not marked nullable are required. Also where everything is on the canvas, in points (y grows downward): each table's and schema's frame [x, y, width, height], and the bounds of it all. Read this before changing anything.",
             "inputSchema": ["type": "object", "properties": [String: Any]()],
             "annotations": ["readOnlyHint": true],
         ],
@@ -51,6 +51,9 @@ enum ModelTools {
                                 "columns": ["type": "array", "items": columnSchema],
                                 "color": ["type": "string", "enum": TableColor.allCases.map(\.rawValue)],
                                 "schema": ["type": "string", "description": "The schema it's in; made if there isn't one. Schemas are drawn as groups around their tables, and new tables are placed beside the rest of theirs."],
+                                "notes": ["type": "string", "description": "What it's for, where its data comes from, anything to remember."],
+                                "sample_rows": ["type": "array", "description": "Made-up rows showing the kind of data it holds: objects of column name to value.",
+                                                "items": ["type": "object"]],
                             ],
                             "required": ["name", "columns"],
                         ],
@@ -69,6 +72,7 @@ enum ModelTools {
                     "rename_to": ["type": "string"],
                     "color": ["type": "string", "enum": TableColor.allCases.map(\.rawValue)],
                     "schema": ["type": "string", "description": "Moves it into this schema (made if need be), or out of any for an empty string."],
+                    "notes": ["type": "string", "description": "Replaces its notes: what it's for, where its data comes from, anything to remember."],
                     "add_columns": ["type": "array", "items": columnSchema],
                     "drop_columns": ["type": "array", "items": ["type": "string"]],
                     "change_columns": [
@@ -146,6 +150,19 @@ enum ModelTools {
             ],
         ],
         [
+            "name": "set_sample_data",
+            "description": "Sets a table's sample data: made-up rows showing the kind of data it holds, shown as a spreadsheet in its designer. Each row is an object of column name to value; columns left out are blank. Replaces the rows there, unless `append`.",
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "table": tableReference,
+                    "rows": ["type": "array", "items": ["type": "object", "additionalProperties": ["type": ["string", "number", "boolean", "null"]]]],
+                    "append": ["type": "boolean"],
+                ],
+                "required": ["table", "rows"],
+            ],
+        ],
+        [
             "name": "add_foreign_key",
             "description": "Makes a column a foreign key to another: from \"orders.user_id\" to \"users.id\", or to \"users\" for its primary key.",
             "inputSchema": [
@@ -181,6 +198,12 @@ enum ModelTools {
         case "drop_tables": result = try dropTables(arguments, in: &draft)
         case "set_schema": result = try setSchema(arguments, in: &draft)
         case "move_tables": result = try moveTables(arguments, in: &draft)
+        case "set_sample_data":
+            let id = try table(named: string("table", in: arguments), in: draft).id
+            let rows = arguments["rows"] as? [[String: Any]] ?? []
+            try setSamples(rows, of: id, appending: arguments["append"] as? Bool ?? false, in: &draft)
+            let count = draft.table(id)?.samples.count ?? 0
+            result = "\(draft.table(id)?.name ?? "") has \(count) sample row\(count == 1 ? "" : "s")."
         case "arrange":
             let name = try string("layout", in: arguments)
             guard let layout = DataModel.Layout.allCases.first(where: { $0.rawValue == name.replacingOccurrences(of: "_g", with: "G") })
@@ -220,7 +243,7 @@ enum ModelTools {
              "frame": model.frame(of: group.id).map(frame) ?? NSNull()]
         }
         let tables: [[String: Any]] = model.tables.map { table in
-            [
+            var description: [String: Any] = [
                 "name": table.name,
                 "schema": table.group.flatMap { groupNames[$0] } ?? NSNull(),
                 "color": table.color.rawValue,
@@ -234,6 +257,17 @@ enum ModelTools {
                     return description
                 },
             ]
+            if !table.notes.isEmpty { description["notes"] = table.notes }
+            // Its sample rows, by column name.
+            if !table.samples.isEmpty {
+                description["sample_rows"] = table.samples.indices.map { row in
+                    Dictionary(table.columns.compactMap { column in
+                        let value = table.sample(row, column.id)
+                        return value.isEmpty ? nil : (column.name, value)
+                    }, uniquingKeysWith: { first, _ in first })
+                }
+            }
+            return description
         }
         let data = try JSONSerialization.data(withJSONObject: ["schemas": schemas, "tables": tables, "bounds": model.bounds.map(frame) ?? NSNull()],
                                               options: [.prettyPrinted, .sortedKeys])
@@ -257,6 +291,8 @@ enum ModelTools {
             let columns = try (spec["columns"] as? [Any] ?? []).map { try column($0) }
             if !columns.isEmpty { model.tables[index].columns = columns.map(\.column) }
             try requireUniqueColumns(model.tables[index])
+            if let notes = spec["notes"] as? String { model.tables[index].notes = notes }
+            if let rows = spec["sample_rows"] as? [[String: Any]] { try setSamples(rows, of: id, appending: false, in: &model) }
             pending += columns.compactMap { column in column.references.map { (column.column.id, $0) } }
             if let schema = spec["schema"] as? String, !schema.isEmpty { assign([id], toSchema: schema, in: &model) }
             created.append(id)
@@ -279,6 +315,28 @@ enum ModelTools {
         }
         let keys = pending.count
         return "Created \(names.joined(separator: ", "))" + (keys > 0 ? " with \(keys) foreign key\(keys == 1 ? "" : "s")." : ".")
+    }
+
+    /// Rows of column name to value, as a table's sample rows, in place of those there or after them.
+    private static func setSamples(_ rows: [[String: Any]], of id: Table.ID, appending: Bool, in model: inout DataModel) throws {
+        guard let index = model.tables.firstIndex(where: { $0.id == id }) else { return }
+        let table = model.tables[index]
+        let columns = Dictionary(table.columns.map { ($0.name.lowercased(), $0.id) }, uniquingKeysWith: { first, _ in first })
+        let samples = try rows.map { row in
+            try row.reduce(into: [String: String]()) { sample, entry in
+                guard let column = columns[entry.key.lowercased()] else {
+                    throw Failure("\(table.name) has no column called \(entry.key). Columns: \(table.columns.map(\.name).joined(separator: ", ")).")
+                }
+                let value: String? = switch entry.value {
+                case let text as String: text
+                case let number as NSNumber where CFGetTypeID(number) == CFBooleanGetTypeID(): number.boolValue ? "true" : "false"
+                case let number as NSNumber: number.stringValue
+                default: nil
+                }
+                if let value, !value.isEmpty { sample[column.uuidString] = value }
+            }
+        }
+        model.tables[index].samples = (appending ? table.samples : []) + samples
     }
 
     private static func moveTables(_ arguments: [String: Any], in model: inout DataModel) throws -> String {
@@ -316,6 +374,10 @@ enum ModelTools {
             }
             model.tables[index].name = name
             changes.append("renamed it \(name)")
+        }
+        if let notes = arguments["notes"] as? String {
+            model.tables[index].notes = notes
+            changes.append("set its notes")
         }
         if let color = arguments["color"] as? String {
             model.tables[index].color = try tableColor(color)
