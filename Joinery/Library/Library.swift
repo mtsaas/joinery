@@ -127,14 +127,24 @@ final class Library {
 
     // MARK: Changes
 
-    /// Starts an empty model, in `collection` or at the top, and selects it.
-    func newModel(in collection: URL? = nil) {
+    /// Starts an empty model, in `collection` or at the top, and selects it. Named `name`, numbered if that's taken.
+    func newModel(in collection: URL? = nil, named name: String = "Untitled Data Model") {
         attempt("make a data model") {
-            let url = unique("Untitled Data Model", extension: "joinery", in: collection ?? root)
+            let url = unique(name, extension: "joinery", in: collection ?? root)
             try DataModel().write(to: url)
             reload()
             selection = url
         }
+    }
+
+    /// The collection reviews are made in, made if need be.
+    func reviewsCollection() throws -> URL {
+        let url = root.appending(path: "Reviews", directoryHint: .isDirectory)
+        if !files.fileExists(atPath: url.path) {
+            try files.createDirectory(at: url, withIntermediateDirectories: false)
+            reload()
+        }
+        return url
     }
 
     /// Makes an empty collection and returns it, to be named.
@@ -301,7 +311,28 @@ final class OpenModel {
         model = try DataModel(contentsOf: url)
         // A file from before packages becomes one, to keep versions in.
         if !url.isPackage { try model.write(to: url) }
+        baseline = try? DataModel(contentsOf: baselineURL)
         saveVersion("Opened")
+    }
+
+    // MARK: Reviews
+
+    /// Reviewing a change, such as a pull request's: the model as it was before it, to compare with as it is. Kept in
+    /// the package, so the review survives quitting.
+    private(set) var baseline: DataModel?
+    private var baselineURL: URL { url.appending(path: "baseline.json") }
+
+    /// Takes the model as it is now as the baseline: what's changed from here is shown as changes.
+    func markBaseline() throws {
+        saveNow()
+        try model.fileData.write(to: baselineURL, options: .atomic)
+        baseline = model
+    }
+
+    /// Ends the review: the model stays as it is, and the baseline is forgotten.
+    func endReview() {
+        try? FileManager.default.removeItem(at: baselineURL)
+        baseline = nil
     }
 
     var name: String { Library.name(of: url) }

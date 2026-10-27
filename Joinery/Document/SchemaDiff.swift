@@ -101,3 +101,43 @@ struct SchemaDiff: Equatable {
         return parts.isEmpty ? "No changes" : parts.joined(separator: ", ")
     }
 }
+
+extension SchemaDiff {
+    /// The changes listed, for an AI assistant to check against what it meant to change and to sum up: tables added,
+    /// removed and changed, column by column, then foreign keys.
+    var report: String {
+        guard !isEmpty else { return "No changes since the baseline." }
+        func describe(_ column: Column) -> String {
+            [column.name, column.type.rawValue, column.isNullable ? "nullable" : nil, column.isPrimaryKey ? "primary key" : nil,
+             column.isUnique ? "unique" : nil].compactMap { $0 }.joined(separator: " ")
+        }
+        var lines = ["Since the baseline: \(summary)."]
+        func section(_ title: String, _ items: [String]) {
+            guard !items.isEmpty else { return }
+            lines.append("\n\(title):")
+            lines += items
+        }
+        section("Tables added", model.tables.filter { tables[$0.id] == .added }.map { table in
+            "- \(table.name): " + table.columns.map(describe).joined(separator: ", ")
+        })
+        section("Tables removed", model.tables.filter { tables[$0.id] == .removed }.map { "- \($0.name)" })
+        section("Tables changed", model.tables.filter { tables[$0.id] == .modified }.flatMap { table in
+            ["- " + (oldNames[table.id].map { "\($0), renamed to \(table.name)" } ?? table.name)] + table.columns.compactMap { column in
+                switch columns[column.id] {
+                case .added: "  + \(describe(column))"
+                case .removed where !formerly.contains(column.id): "  - \(describe(column))"
+                case .modified:
+                    table.columns.first { $0.id == Self.former(of: column.id) }.map { "  ~ \(describe($0)) → \(describe(column))" }
+                default: nil
+                }
+            }
+        })
+        for (title, change) in [("Foreign keys added", Change.added), ("Foreign keys removed", .removed)] {
+            section(title, model.relationships.filter { relationships[$0.id] == change }.compactMap { relationship in
+                guard let from = model.qualifiedName(of: relationship.from), let to = model.qualifiedName(of: relationship.to) else { return nil }
+                return "- \(from) → \(to)"
+            })
+        }
+        return lines.joined(separator: "\n")
+    }
+}

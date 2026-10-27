@@ -1055,4 +1055,45 @@ struct JoineryTests {
         // The same comparison draws the same model.
         #expect(SchemaDiff(from: before, to: after) == diff)
     }
+
+    @Test func assistantsAreToldHowToReviewSchemaChanges() throws {
+        func result(_ method: String, _ params: [String: Any] = [:]) throws -> [String: Any] {
+            let reply = try #require(MCPServer.reply(to: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params]))
+            return try #require(reply["result"] as? [String: Any])
+        }
+        let initialized = try result("initialize")
+        #expect((initialized["capabilities"] as? [String: Any])?["prompts"] != nil)
+        #expect((initialized["instructions"] as? String)?.contains("mark_baseline") == true)
+        let tools = try #require(try result("tools/list")["tools"] as? [[String: Any]])
+        for name in ["start_review", "mark_baseline", "get_changes"] {
+            let description = try #require(tools.first { $0["name"] as? String == name }?["description"] as? String)
+            #expect(description.contains("Step"))
+        }
+        let prompts = try #require(try result("prompts/list")["prompts"] as? [[String: Any]])
+        #expect(prompts.map { $0["name"] as? String } == ["review_schema_changes"])
+        let prompt = try result("prompts/get", ["name": "review_schema_changes", "arguments": ["change": "PR 482"]])
+        let messages = try #require(prompt["messages"] as? [[String: Any]])
+        let text = try #require((messages.first?["content"] as? [String: Any])?["text"] as? String)
+        // Every step, in order.
+        let steps = ["PR 482", "start_review", "create_tables", "arrange", "mark_baseline", "alter_table", "get_changes"]
+        let positions = steps.map { text.range(of: $0)?.lowerBound }
+        #expect(!positions.contains(nil) && positions.compactMap { $0 } == positions.compactMap { $0 }.sorted())
+    }
+
+    @Test func aReviewReportsItsChangesInWords() throws {
+        var before = DataModel()
+        _ = try ModelTools.call("create_tables", ["tables": [
+            ["name": "orders", "columns": [["name": "id", "type": "uuid", "primary_key": true], ["name": "total", "type": "integer"]]],
+        ]], on: &before)
+        var after = before
+        _ = try ModelTools.call("alter_table", ["table": "orders", "change_columns": [["name": "total", "type": "numeric", "rename_to": "amount"]],
+                                                "add_columns": [["name": "note", "type": "text?"]]], on: &after)
+        _ = try ModelTools.call("create_tables", ["tables": [["name": "refunds", "columns": [["name": "order_id", "type": "uuid", "references": "orders"]]]]], on: &after)
+        let report = SchemaDiff(from: before, to: after).report
+        #expect(report.contains("- refunds: order_id uuid"))
+        #expect(report.contains("  ~ total integer → amount numeric"))
+        #expect(report.contains("  + note text nullable"))
+        #expect(report.contains("- refunds.order_id → orders.id"))
+        #expect(SchemaDiff(from: before, to: before).report == "No changes since the baseline.")
+    }
 }

@@ -63,10 +63,12 @@ struct ModelEditor: View {
     @Environment(\.undoManager) private var undoManager
 
     var body: some View {
-        // Showing an earlier version, it can't be changed: it's only there to look at.
-        let diff = preview.flatMap { comparison == .changes ? SchemaDiff(from: $0.model, to: open.model) : nil }
-        let shown = preview.map { comparison == .then ? $0.model : diff?.model ?? open.model }
-        let isComparing = preview != nil
+        // Compared with an earlier version, or in a review with how it was before the change, it can't be changed:
+        // it's only there to look at.
+        let base = preview?.model ?? open.baseline
+        let diff = base.flatMap { comparison == .changes ? SchemaDiff(from: $0, to: open.model) : nil }
+        let shown = base.map { comparison == .then ? $0 : diff?.model ?? open.model }
+        let isComparing = base != nil
         let model = Binding { shown ?? canvas.shown(open.model) } set: { if !isComparing { open.change(to: $0) } }
         CanvasView(model: model, canvas: canvas, diff: diff)
             // Under the toolbar, which floats over it, but not the sidebar, so fitting the model fits what's visible.
@@ -142,21 +144,33 @@ struct ModelEditor: View {
             .overlay(alignment: .bottom) {
                 if let preview {
                     let when = "\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened))"
-                    ComparisonBar(comparison: $comparison,
+                    ComparisonBar(comparison: $comparison, isReview: false,
                                   caption: diff.map { "\(when) to now: \($0.summary)" } ?? "\(comparison == .then ? when : "Now"), read-only") {
                         self.preview = nil
+                    }
+                    .padding(.bottom, 20)
+                } else if open.baseline != nil {
+                    ComparisonBar(comparison: $comparison, isReview: true,
+                                  caption: diff.map { "Review: \($0.summary)" } ?? "\(comparison == .then ? "Before" : "After") the change, read-only") {
+                        open.endReview()
                     }
                     .padding(.bottom, 20)
                 }
             }
             // Comparing, it's only there to look at.
-            .onChange(of: preview != nil, initial: true) { canvas.isReadOnly = preview != nil }
+            .onChange(of: isComparing, initial: true) { canvas.isReadOnly = isComparing }
+            // Filled from empty, or changing while compared (by an assistant, in a review), it stays in view, unless
+            // panned or zoomed since.
+            .onChange(of: model.wrappedValue.bounds) { old, new in
+                if canvas.isFitted, old == nil || isComparing { canvas.zoomToFit(new) }
+            }
             .onAppear { open.undoManager = undoManager }
             .onChange(of: undoManager) { open.undoManager = undoManager }
             .focusedSceneValue(\.canvasController, canvas)
             .focusedSceneValue(\.model, model)
             #if DEBUG
-            .task { await DebugHooks.script(model, canvas: canvas) }
+            // Not cancelled if a step opens another model, closing this editor.
+            .task { Task { await DebugHooks.script(model, canvas: canvas) } }
             .onReceive(NotificationCenter.default.publisher(for: .pickVersion)) { _ in showsHistory = true }
             #endif
     }
@@ -253,22 +267,29 @@ extension Notification.Name {
 /// Comparing two versions: which to show, what the difference is, and a way back to editing.
 private struct ComparisonBar: View {
     @Binding var comparison: Comparison
+    /// Reviewing a change, before and after it, rather than looking at an earlier version.
+    let isReview: Bool
     let caption: String
     let done: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "clock.arrow.circlepath")
+            Image(systemName: isReview ? "plus.forwardslash.minus" : "clock.arrow.circlepath")
             Picker("Compare", selection: $comparison) {
-                ForEach(Comparison.allCases, id: \.self) { Text($0.title) }
+                ForEach(Comparison.allCases, id: \.self) { Text($0.title(isReview: isReview)) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
             Text(caption).monospacedDigit()
-            Button("Done", action: done)
-                .keyboardShortcut(.cancelAction)
-                .help("Back to editing the data model as it is now (Escape)")
+            if isReview {
+                Button("End Review", action: done)
+                    .help("Stop comparing: keep the data model as it is after the change, to edit, and forget how it was before")
+            } else {
+                Button("Done", action: done)
+                    .keyboardShortcut(.cancelAction)
+                    .help("Back to editing the data model as it is now (Escape)")
+            }
         }
         .font(.callout)
         .padding(.horizontal, 16)
@@ -277,15 +298,15 @@ private struct ComparisonBar: View {
     }
 }
 
-/// Showing an earlier version: which side of the comparison.
+/// Comparing: which side to show, or both with the changes marked.
 private enum Comparison: CaseIterable {
     case then, changes, now
 
-    var title: String {
+    func title(isReview: Bool) -> String {
         switch self {
-        case .then: "Then"
+        case .then: isReview ? "Before" : "Then"
         case .changes: "Changes"
-        case .now: "Now"
+        case .now: isReview ? "After" : "Now"
         }
     }
 }

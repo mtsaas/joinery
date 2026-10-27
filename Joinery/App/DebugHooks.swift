@@ -17,6 +17,7 @@ import SwiftUI
 @MainActor
 enum DebugHooks {
     private static let environment = ProcessInfo.processInfo.environment
+    private static var hasRunScript = false
 
     static func launched() {
         if let name = environment["JOINERY_APPEARANCE"] {
@@ -70,7 +71,9 @@ enum DebugHooks {
 
     @MainActor
     static func script(_ document: Binding<DataModel>, canvas: CanvasController) async {
-        guard let script = ProcessInfo.processInfo.environment["JOINERY_SCRIPT"] else { return }
+        // Once, though a tool may open another model, and so another editor, partway through.
+        guard let script = ProcessInfo.processInfo.environment["JOINERY_SCRIPT"], !hasRunScript else { return }
+        hasRunScript = true
         try? await Task.sleep(for: .seconds(1))
         if let size = environment["JOINERY_WINDOW_SIZE"]?.split(separator: "x").compactMap({ Double($0) }), size.count == 2,
            let window = NSApp.windows.first(where: \.isVisible) {
@@ -213,7 +216,7 @@ enum DebugHooks {
                 // An assistant's tool call, as the MCP server would make it: "mcp create_tables {json}".
                 let json = words.dropFirst(2).joined(separator: " ")
                 let arguments = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
-                do { print("mcp:", try ModelTools.call(words[1], arguments, on: &document.wrappedValue)) } catch { print("mcp failed:", error.localizedDescription) }
+                do { print("mcp:", try MCPServer.call(words[1], arguments)) } catch { print("mcp failed:", error.localizedDescription) }
             case "add-port" where words.count >= 4:
                 // The + on a group's edge clicked, and the new port maybe plugged in: "add-port hierarchy left 0.2 user_account.user_id".
                 let model = document.wrappedValue

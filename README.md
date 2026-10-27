@@ -78,6 +78,7 @@ Other assistants can use the same URL. Those that only run local commands can br
 | Tool | Does |
 | --- | --- |
 | `list_models`, `open_model`, `new_model` | Choose what to work on |
+| `start_review`, `mark_baseline`, `get_changes` | Review a schema change: see below |
 | `get_model` | Every table, column, type, key and foreign key, and where everything is: each table's and schema's frame, and the bounds of it all |
 | `create_tables` | Adds tables. A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole data model can be made in one call. They're placed in open space, clear of every table and schema: a schema's new tables as a compact block beside the rest of it, otherwise beside the tables they reference, otherwise beside everything |
 | `set_sample_data` | Fills a table's sample data (the spreadsheet in its designer) with rows of column name to value, replacing or appending. `create_tables` takes `sample_rows` and `notes` too, `alter_table` takes `notes`, and `get_model` returns both |
@@ -88,6 +89,18 @@ Other assistants can use the same URL. Those that only run local commands can br
 | `drop_tables`, `add_foreign_key`, `remove_foreign_key` | What they say |
 
 Tables take `schema`, the group they're drawn in. Columns take `primary_key`, `nullable` (or `required`), `unique` and `references`. Types accept SQL spellings, such as `varchar(255)`, `decimal(10,2)`, `bigserial` and `timestamp with time zone`. Each call applies completely or not at all.
+
+### Reviewing schema changes
+
+Ask an assistant to show how a pull request, branch or uncommitted change alters the database, and it can draw the change in Joinery as a diff. The server offers a `review_schema_changes` prompt with the steps (in Claude Code, `/mcp__joinery__review_schema_changes 482`), and the tools say them too:
+
+1. `start_review` makes an empty data model, named for the change, in a Reviews collection, and opens it.
+2. The assistant draws the tables the change touches as they were before it, with those their foreign keys join, using `create_tables`, then `arrange`.
+3. `mark_baseline` takes that as the before. It's kept in the package, as `baseline.json`.
+4. The assistant makes the change with the editing tools. A rename is made as a rename, so it shows as one.
+5. `get_changes` lists what changed since the baseline, for the assistant to check and sum up.
+
+From the baseline on, the canvas shows the comparison bar: Before, Changes and After, as Version history compares, read-only. The view follows the assistant's changes until you pan or zoom. End Review forgets the baseline and leaves the data model as it is after the change, to edit.
 
 ## Frame rate (Debug builds)
 

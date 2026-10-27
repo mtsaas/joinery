@@ -163,7 +163,8 @@ final class MCPServer {
 
     // MARK: JSON-RPC
 
-    private static func reply(to message: Any) -> [String: Any]? {
+    /// The answer to one JSON-RPC message, or nil for a notification.
+    static func reply(to message: Any) -> [String: Any]? {
         guard let message = message as? [String: Any], let method = message["method"] as? String else { return nil }
         guard let id = message["id"] else { return nil }
         let params = message["params"] as? [String: Any] ?? [:]
@@ -171,16 +172,32 @@ final class MCPServer {
         case "initialize":
             return result(id: id, [
                 "protocolVersion": params["protocolVersion"] as? String ?? "2025-06-18",
-                "capabilities": ["tools": ["listChanged": false]],
+                "capabilities": ["tools": ["listChanged": false], "prompts": ["listChanged": false]],
                 "serverInfo": ["name": "joinery", "title": "Joinery", "version": "1.0"],
                 "instructions": """
                     Joinery is a Mac app for designing SQL databases on a canvas. These tools edit the data model open in its \
                     window: changes appear there at once, save themselves and can be undone. Call get_model before \
                     changing anything. create_tables can make many related tables in one call.
+
+                    To show someone how a change, such as a pull request, alters a database schema, review it: \
+                    start_review, draw the schema as it was before with create_tables, mark_baseline, apply the change \
+                    with the editing tools, then get_changes. Joinery shows the result as a diff. The \
+                    review_schema_changes prompt has the steps in full.
                     """,
             ])
         case "ping":
             return result(id: id, [:])
+        case "prompts/list":
+            return result(id: id, ["prompts": [reviewPrompt]])
+        case "prompts/get":
+            guard params["name"] as? String == reviewPrompt["name"] as? String else {
+                return Self.error(id: id, code: -32602, "There's no prompt called \(params["name"] ?? "").")
+            }
+            let change = (params["arguments"] as? [String: Any])?["change"] as? String
+            return result(id: id, [
+                "description": reviewPrompt["description"] ?? "",
+                "messages": [["role": "user", "content": ["type": "text", "text": reviewSteps(change.flatMap { $0.isEmpty ? nil : $0 })]]],
+            ])
         case "tools/list":
             return result(id: id, ["tools": libraryTools + ModelTools.definitions])
         case "tools/call":
@@ -223,9 +240,93 @@ final class MCPServer {
             "description": "Starts an empty data model and opens it.",
             "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]],
         ],
+        [
+            "name": "start_review",
+            "description": """
+                Step 1 of a schema review: showing someone, in Joinery, how a change such as a pull request alters a \
+                database schema. Makes a new, empty data model named for the change in the library's Reviews \
+                collection and opens it, so the other tools work on it. The steps, in order:
+                1. start_review.
+                2. Draw the schema as it was BEFORE the change, with create_tables: one call, real table and column \
+                names, types, keys and foreign keys. Only the tables the change touches and the tables their foreign \
+                keys join, each with all its columns; not the whole database. Then arrange, layout hierarchical.
+                3. mark_baseline.
+                4. Make the change with alter_table (rename with rename_to, so a rename shows as one), create_tables, \
+                drop_tables, add_foreign_key and remove_foreign_key. Don't arrange or move tables now.
+                5. get_changes, to check the diff shows the change and nothing else, then tell the person what changed. \
+                Joinery's window shows it as a diff.
+                The review_schema_changes prompt has these steps in full.
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": ["title": ["type": "string", "description": "What's being reviewed, briefly, such as \"PR 482: refunds\"."]],
+                "required": ["title"],
+            ],
+        ],
+        [
+            "name": "mark_baseline",
+            "description": """
+                Step 3 of a schema review (see start_review): takes the open data model as it is now as the schema \
+                BEFORE the change. From then on Joinery shows the model as a diff against it: tables, columns and \
+                foreign keys added in green, removed in red, changed columns as they were and as they are. Call it once \
+                the before schema is complete and arranged, and before making any of the change. Calling it again \
+                starts the comparison over from the model as it is then, so don't, to correct a mistake: undo it with \
+                the editing tools instead.
+                """,
+            "inputSchema": ["type": "object", "properties": [String: Any]()],
+        ],
+        [
+            "name": "get_changes",
+            "description": """
+                Step 5 of a schema review (see start_review): what's changed in the open data model since \
+                mark_baseline. Tables added, removed and changed; each changed column as it was → as it is; foreign \
+                keys added and removed. Use it to check the diff shows the change under review, nothing missing and \
+                nothing extra, and to sum it up for the person.
+                """,
+            "inputSchema": ["type": "object", "properties": [String: Any]()],
+            "annotations": ["readOnlyHint": true],
+        ],
     ]
 
-    private static func call(_ name: String, _ arguments: [String: Any]) throws -> String {
+    // MARK: Prompts
+
+    private static let reviewPrompt: [String: Any] = [
+        "name": "review_schema_changes",
+        "title": "Review schema changes",
+        "description": "Shows how a pull request, branch or uncommitted change alters the database schema, as a diff in Joinery.",
+        "arguments": [[
+            "name": "change",
+            "description": "What to review: a pull request's number or URL, a branch, or \"uncommitted changes\". The current branch against its base if left out.",
+            "required": false,
+        ]],
+    ]
+
+    /// The review, step by step, for an assistant to follow.
+    static func reviewSteps(_ change: String?) -> String {
+        """
+        Show me in Joinery how \(change ?? "the current branch") changes the database schema, using the joinery tools.
+
+        1. Find the schema changes in it: migrations (SQL, Rails, Django, Alembic, Prisma, Drizzle, Knex, TypeORM and so \
+        on), schema files (schema.sql, structure.sql, db/schema.rb, schema.prisma) and ORM model definitions. If nothing \
+        in it changes the schema, tell me so and stop.
+        2. Work out the schema BEFORE the change for the tables it touches, from the base (for a branch or pull request, \
+        `git show <base>:<path>`), and the tables their foreign keys join. Keep each table's full column list.
+        3. Call start_review with a short title naming the change, such as "PR 482: refunds".
+        4. Call create_tables once with every table as it was before: real names, types, primary keys, nullability, \
+        unique and references, and `schema` if the database has schemas. Then call arrange with layout "hierarchical".
+        5. Call mark_baseline.
+        6. Make the change, in the order the migrations do: alter_table to add, drop, change and rename columns and to \
+        rename tables (rename_to keeps a rename a rename, instead of a drop and an add); create_tables for new tables; \
+        drop_tables for removed ones; add_foreign_key and remove_foreign_key for keys alone. Don't move or arrange tables.
+        7. Call get_changes. If it doesn't match the change, fix it with more editing tool calls, not mark_baseline.
+        8. Tell me in a few lines what changed, and anything risky about it: data lost with dropped or narrowed columns, \
+        NOT NULL columns added to existing tables without a default, foreign keys without an index, renames that \
+        running code still uses. Joinery's window shows the diff.
+        """
+    }
+
+    /// Runs a tool, as an assistant's call would.
+    static func call(_ name: String, _ arguments: [String: Any]) throws -> String {
         let library = Library.shared
         let all = library.models + library.collections.flatMap(\.models)
         switch name {
@@ -248,6 +349,24 @@ final class MCPServer {
                 library.rename(url, to: wanted)
             }
             return "Opened a new, empty data model: \(library.open?.name ?? "Untitled Data Model")."
+        case "start_review":
+            // Names can't hold these.
+            let title = (arguments["title"] as? String ?? "").replacingOccurrences(of: ":", with: " –")
+                .replacingOccurrences(of: "/", with: "-").trimmingCharacters(in: .whitespacesAndNewlines)
+            library.newModel(in: try library.reviewsCollection(), named: title.isEmpty ? "Review" : title)
+            guard let open = library.open else { throw ModelTools.Failure("Couldn't start a review: \(library.failure ?? "no data model opened").") }
+            return "Opened \(open.name), a new, empty data model in Reviews. Next, draw the schema as it was before the change with create_tables, arrange it, then call mark_baseline."
+        case "mark_baseline", "get_changes":
+            guard let open = library.open else { throw ModelTools.Failure("No data model is open in Joinery. Use start_review first.") }
+            if name == "mark_baseline" {
+                guard !open.model.tables.isEmpty else {
+                    throw ModelTools.Failure("The data model is empty. Draw the schema as it was before the change with create_tables first.")
+                }
+                try open.markBaseline()
+                return "Took the \(open.model.tables.count) tables in \(open.name) as the baseline: Joinery now shows changes from here as a diff. Next, make the change with alter_table, create_tables, drop_tables, add_foreign_key and remove_foreign_key."
+            }
+            guard let baseline = open.baseline else { throw ModelTools.Failure("There's no baseline to compare with: call mark_baseline first.") }
+            return SchemaDiff(from: baseline, to: open.model).report
         default:
             guard ModelTools.names.contains(name) else { throw ModelTools.Failure("There's no tool called \(name).") }
             guard let open = library.open else {
