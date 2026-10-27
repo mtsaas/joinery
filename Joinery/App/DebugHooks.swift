@@ -295,6 +295,8 @@ enum DebugHooks {
             case "capture" where words.count == 2:
                 // The window now, to a file: for frames of an animation, between short waits.
                 capture(to: words[1])
+            case "title-click":
+                NotificationCenter.default.post(name: .renameTitle, object: nil)
             case "rename-model" where words.count == 2:
                 // As editing the window's title would: "rename-model Shop".
                 if let open = Library.shared.open { Library.shared.rename(open.url, to: words[1]) }

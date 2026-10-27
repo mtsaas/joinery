@@ -83,6 +83,10 @@ struct ModelEditor: View {
                                 .frame(width: 340, height: 520)
                         }
                 }
+                ToolbarItem(placement: .navigation) {
+                    ModelTitle(name: open.name) { Library.shared.rename(open.url, to: $0) }
+                }
+                .sharedBackgroundVisibility(.hidden)
                 ToolbarItemGroup(placement: .principal) {
                     Button("Table", systemImage: "tablecells") { canvas.addTable(to: &model.wrappedValue) }
                         .help("Add a table (T)")
@@ -111,8 +115,9 @@ struct ModelEditor: View {
                 }
             }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-            // Click the title to rename it.
-            .navigationTitle(Binding { open.name } set: { Library.shared.rename(open.url, to: $0) })
+            // For the Window menu and Mission Control; shown by `ModelTitle` instead, to be renamed in place.
+            .navigationTitle(open.name)
+            .toolbar(removing: .title)
             .overlay(alignment: .top) {
                 if preview != nil || open.notice != nil {
                     HStack(spacing: 8) {
@@ -164,3 +169,53 @@ private struct ZoomMenu: View {
         Double(zoom).formatted(.percent.precision(.fractionLength(0)))
     }
 }
+
+/// The open model's name, where the window's title would be; click it to rename it. Return or clicking away keeps the
+/// new name, Escape doesn't.
+private struct ModelTitle: View {
+    let name: String
+    let rename: (String) -> Void
+    @State private var draft: String?
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        Group {
+            if let draft {
+                TextField("Name", text: Binding { draft } set: { self.draft = $0 })
+                    .textFieldStyle(.plain)
+                    .fixedSize()
+                    .focused($isFocused)
+                    .onSubmit(commit)
+                    .onExitCommand { self.draft = nil }
+                    .onChange(of: isFocused) { if !isFocused { commit() } }
+                    .onAppear { isFocused = true }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(.quaternary, in: .rect(cornerRadius: 6))
+            } else {
+                Button(name) { draft = name }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .help("Rename")
+            }
+        }
+        .font(.system(size: 15, weight: .semibold))
+        #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: .renameTitle)) { _ in draft = name }
+        #endif
+    }
+
+    private func commit() {
+        guard let draft else { return }
+        self.draft = nil
+        if draft != name { rename(draft) }
+    }
+}
+
+#if DEBUG
+extension Notification.Name {
+    /// Starts renaming the open model, as a click on its title would.
+    static let renameTitle = Notification.Name("JoineryRenameTitle")
+}
+#endif
