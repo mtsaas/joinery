@@ -25,6 +25,7 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
 | Align / distribute | With tables or zip ties selected, right-click for the wheel, or ⌘K then Align Left Edges, Align Centers, … Distribute Horizontally (tables). Aligned ties stand on the line and are held square to it; right-click one for Turn with Wires to free it |
 | Add a table | **T**, the toolbar table button, or Insert ▸ Table (⌥⌘T); type its name straight away |
 | Edit cells | Tables are grids, like a spreadsheet: click a cell to put the cursor there and just type to replace it; double-click or F2 edits it in place. Return on a selected table renames it |
+| Table designer | Double-click a table's header (or right-click it ▸ Open in Designer) for a large panel over the canvas's right side: the table's name and color; its columns, with name, type, key, required and unique, what each references, and buttons to add and delete them; a spreadsheet of sample rows, a column per column, to show the kind of data it holds; and notes. Edits apply when you press Return or click away, each one undoable. Esc or × closes it. Return on a selected header still renames the table in place |
 | Reorder columns | Drag a column's row up or down its table: a line shows where it'll go. Its wires follow it |
 | Move between cells | Arrow keys; Tab / Shift-Tab along the row; Return goes down, and past the last row adds a column; Delete clears a cell |
 | Set a type | Type it or its start: `int`, `ts`, `bool`, `jsonb`, and the rest shows faded; end with `?` for nullable |

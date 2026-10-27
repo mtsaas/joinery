@@ -30,6 +30,8 @@ struct TableLayer: View {
     let layouts: TextLayouts
     /// In focus mode, the tables in focus; the rest fade, under them.
     var focused: Set<Table.ID>? = nil
+    /// The table whose name is being edited, over its header: its name isn't drawn.
+    var renaming: Table.ID? = nil
 
     /// How faint what's out of focus is.
     static let fadedOpacity = 0.22
@@ -151,7 +153,8 @@ struct TableLayer: View {
                 rings.addPath(Path(roundedRect: frame.insetBy(dx: -inner - width / 2, dy: -inner - width / 2),
                                    cornerRadius: radius + inner + width / 2, style: .circular))
             }
-            if let cursor, cursor.table == table.id, let rect = cellRect(cursor, of: table, in: frame) {
+            // Not while its name's edited: the field there is all that shows.
+            if let cursor, cursor.table == table.id, table.id != renaming, let rect = cellRect(cursor, of: table, in: frame) {
                 // Just inside the cell, as in a spreadsheet, a point clear of its edges on screen.
                 let width = max(2, 1.5 / zoom), inset = 1 / zoom + width / 2
                 cursors.addPath(Path(roundedRect: rect.insetBy(dx: inset, dy: inset), cornerRadius: max(2 - inset, 0)))
@@ -176,7 +179,7 @@ struct TableLayer: View {
         let primary = Color.primary.resolve(in: environment).cgColor
         let secondary = Color(nsColor: .secondaryLabelColor).resolve(in: environment).cgColor
         let quaternary = Color(nsColor: .quaternaryLabelColor).resolve(in: environment).cgColor
-        var badges = Path()
+        var badges = Path(), grips = Path()
         var runs: [(line: CTLine, at: CGPoint, color: CGColor)] = []
 
         func text(_ string: String, _ style: TableText, width: CGFloat, in rect: CGRect, alignment: HorizontalAlignment = .leading,
@@ -189,7 +192,16 @@ struct TableLayer: View {
         let inset = Metrics.cellInset
         for (table, frame) in visible {
             let header = Metrics.cell(row: nil, part: .name, in: frame)
-            text(table.name, .header, width: header.width - inset * 2, in: header.insetBy(dx: inset, dy: 0), color: primary)
+            // The name, short of the grip at the header's right end, where the table's grabbed to move it.
+            if table.id != renaming {
+                text(table.name, .header, width: header.width - inset * 2 - Metrics.gripWidth, in: header.insetBy(dx: inset, dy: 0), color: primary)
+            }
+            let dot: CGFloat = 2.2, gap: CGFloat = 3.4
+            let grip = CGPoint(x: header.maxX - inset - gap - dot / 2, y: header.midY - gap)
+            for column in 0..<2 { for row in 0..<3 {
+                let center = grip + CGPoint(x: CGFloat(column) * gap, y: CGFloat(row) * gap)
+                grips.addEllipse(in: CGRect(x: center.x - dot / 2, y: center.y - dot / 2, width: dot, height: dot))
+            } }
             let runsOfKeys = table.compoundPrimaryKeyRuns
             for run in runsOfKeys {
                 let top = Metrics.cell(row: run.lowerBound, part: .key, in: frame)
@@ -223,6 +235,7 @@ struct TableLayer: View {
             }
         }
         context.fill(badges, with: .color(Color.secondary.opacity(0.16)))
+        context.fill(grips, with: .color(Color(cgColor: quaternary)))
         context.withCGContext { cg in
             // Core Text draws upward; the canvas runs down.
             cg.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
@@ -302,7 +315,7 @@ enum TableText: Hashable {
 
     var font: NSFont {
         switch self {
-        case .header: .systemFont(ofSize: 11.5, weight: .semibold)
+        case .header: .systemFont(ofSize: 13, weight: .semibold)
         case .name: .systemFont(ofSize: 11)
         case .keyName: .systemFont(ofSize: 11, weight: .medium)
         case .type: .monospacedSystemFont(ofSize: 10, weight: .regular)

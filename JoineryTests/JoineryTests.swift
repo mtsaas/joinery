@@ -931,4 +931,29 @@ struct JoineryTests {
         #expect(abs((c - Metrics.wireWidth / 2) - (b + Metrics.busWidth / 2) - gap) < 0.001)
         #expect(abs(a + c) < 0.001 && mixed.halfLength > wire.halfLength, "centered, and longer for the bus")
     }
+
+    @Test func tablesKeepSampleRowsAndNotes() throws {
+        var model = storefront()
+        let users = model.tables[0].id
+        let index = try #require(model.tables.firstIndex { $0.id == users })
+        let id = model.tables[index].columns[0].id
+        model.tables[index].setSample(1, id, to: "u_2")
+        #expect(model.tables[index].samples.count == 2 && model.tables[index].sample(1, id) == "u_2" && model.tables[index].sample(0, id) == "")
+        model.tables[index].notes = "Everyone who can sign in."
+
+        // Kept through a column's rename or move, saved, and pasted (under its column's new ID).
+        model.tables[index].columns[0].name = "user_id"
+        let saved = try JSONDecoder().decode(DataModel.self, from: model.fileData)
+        #expect(saved.table(users)?.sample(1, id) == "u_2" && saved.table(users)?.notes == "Everyone who can sign in.")
+        var other = DataModel()
+        let pasted = other.paste(model.clip(tables: [users]), offset: .zero).tables
+        let first = try #require(pasted.first)
+        let copy = try #require(other.table(first))
+        #expect(copy.sample(1, copy.columns[0].id) == "u_2" && copy.notes == "Everyone who can sign in.")
+
+        // A file from before tables had them reads with none.
+        let old = #"{"tables":[{"id":"\#(UUID().uuidString)","name":"t","position":[0,0],"color":"blue","columns":[]}]}"#
+        let decoded = try JSONDecoder().decode(DataModel.self, from: Data(old.utf8))
+        #expect(decoded.tables.first?.samples.isEmpty == true && decoded.tables.first?.notes == "")
+    }
 }

@@ -107,6 +107,8 @@ struct CanvasEventMonitor: NSViewRepresentable {
             switch event.type {
             case .keyDown where canvas.wheel != nil && event.keyCode == Key.escape:
                 canvas.wheel = nil
+            case .keyDown where canvas.designing != nil && !isTyping && event.keyCode == Key.escape:
+                withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil }
             case .keyDown where isTyping && canvas.showsPalette:
                 switch event.keyCode {
                 case Key.down: canvas.paletteHighlight += 1

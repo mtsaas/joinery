@@ -154,6 +154,8 @@ final class CanvasController {
     /// A column being dragged to another place in its table, and where it'd go: before the column at `insertion`, or
     /// last if that's past them all.
     var columnDrag: (table: Table.ID, column: Column.ID, insertion: Int)?
+    /// The table open in the table designer, beside the canvas.
+    var designing: Table.ID?
     /// The table whose header the pointer's over, where it's grabbed to move it.
     var hoveredHeader: Table.ID?
 

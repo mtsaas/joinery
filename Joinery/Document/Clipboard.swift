@@ -49,6 +49,12 @@ extension DataModel {
                 columnIDs[table.columns[index].id] = id
                 table.columns[index].id = id
             }
+            // Its sample data, under its columns' new IDs.
+            table.samples = table.samples.map { row in
+                Dictionary(uniqueKeysWithValues: row.compactMap { key, value in
+                    UUID(uuidString: key).flatMap { columnIDs[$0] }.map { ($0.uuidString, value) }
+                })
+            }
             tables.append(table)
             tableIDs.append(table.id)
         }

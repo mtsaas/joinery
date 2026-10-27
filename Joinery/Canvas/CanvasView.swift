@@ -107,6 +107,14 @@ struct CanvasView: View {
                 .padding(.top, 64)
             }
         }
+        .overlay(alignment: .trailing) {
+            if let id = canvas.designing {
+                TableDesigner(model: $model, id: id) { withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil } }
+                    .padding(.top, 60)
+                    .padding([.trailing, .bottom], 12)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
+            }
+        }
         .overlay(alignment: .bottom) {
             if canvas.cell != nil {
                 GridHints { canvas.cellCommand = $0 }
@@ -293,6 +301,12 @@ struct CanvasView: View {
             commands.append(PaletteCommand(id: "untangle", title: "Untangle Selection", subtitle: "fewer crossing wires",
                                            symbol: "point.3.filled.connected.trianglepath.dotted") { canvas.untangleSelection(of: $model) })
         }
+        if tables.count == 1, let table = tables.first {
+            commands.append(PaletteCommand(id: "design", title: "Open in Designer", subtitle: model.table(table)?.name,
+                                           symbol: "tablecells.badge.ellipsis") {
+                withAnimation(.smooth(duration: 0.25)) { canvas.designing = table }
+            })
+        }
         if !tables.isEmpty {
             commands.append(PaletteCommand(id: "group", title: "Group Tables", subtitle: tables.count == 1 ? "1 table" : "\(tables.count) tables",
                                            symbol: "rectangle.dashed", shortcut: "⌘G") { canvas.groupSelection(in: &model) })
@@ -474,6 +488,9 @@ struct CanvasView: View {
                 model.removeTable(id)
             }
             color = (table.color, { binding(for: id).wrappedValue.color = $0 })
+            extras = [PaletteCommand(id: "design", title: "Open in Designer", symbol: "tablecells.badge.ellipsis") {
+                withAnimation(.smooth(duration: 0.25)) { canvas.designing = id }
+            }]
             if table.group != nil {
                 slots[.west] = PaletteCommand(id: "ungroup-table", title: "Remove from Group", symbol: "rectangle.dashed.badge.record") {
                     canvas.removeSelectionFromGroups(in: &model)
@@ -789,7 +806,8 @@ struct CanvasView: View {
         return TableLayer(tables: model.tables, offsets: canvas.tableOffsets, zoom: canvas.zoom, viewOffset: canvas.offset,
                           viewSize: canvas.viewSize, selected: selected, cursor: canvas.cell, targetColumn: targetColumn,
                           foreignKeys: foreignKeys, socketColors: socketColors, hoveredSocket: hoveredSocket, layouts: textLayouts,
-                          focused: focusedTables)
+                          focused: focusedTables,
+                          renaming: canvas.isEditingCell && canvas.cell?.row == .header ? canvas.cell?.table : nil)
             .contentShape(.rect)
             .gesture(surfaceGesture)
             .onContinuousHover { phase in
@@ -1102,16 +1120,27 @@ struct CanvasView: View {
             // Inside the cursor's border (see `TableLayer`).
             let inset = 1 + max(2 * zoom, 1.5)
             let rect = Metrics.cell(row: row, part: cell.part, in: Metrics.frame(of: table).offsetBy(dx: offset.x, dy: offset.y))
-            CellEditor(text: $canvas.draft, selectsAll: canvas.selectsAllDraft, completesTypes: cell.part == .type) {
+            let editor = CellEditor(text: $canvas.draft, selectsAll: canvas.selectsAllDraft, completesTypes: cell.part == .type) {
                 canvas.cellCommand = .commit(then: nil)
             }
             .font(textStyle(of: cell, row: row, in: table).swiftUIFont(zoom: zoom))
             .foregroundStyle(cell.part == .type ? .secondary : .primary)
             .lineLimit(1)
-            .padding(.horizontal, Metrics.cellInset * zoom - inset)
-            .frame(width: rect.width * zoom - inset * 2, height: rect.height * zoom - inset * 2, alignment: .leading)
-            .background(row == nil ? table.color.headerFill : Theme.card)
-            .position(canvas.viewPoint(CGPoint(x: rect.midX, y: rect.midY)))
+            if row == nil {
+                // The name: just where it's written, as wide as it is, with nothing round it.
+                editor
+                    .fixedSize()
+                    .frame(minWidth: 12 * zoom, alignment: .leading)
+                    .padding(.leading, Metrics.cellInset * zoom - inset)
+                    .frame(width: rect.width * zoom - inset * 2, height: rect.height * zoom - inset * 2, alignment: .leading)
+                    .position(canvas.viewPoint(CGPoint(x: rect.midX, y: rect.midY)))
+            } else {
+                editor
+                    .padding(.horizontal, Metrics.cellInset * zoom - inset)
+                    .frame(width: rect.width * zoom - inset * 2, height: rect.height * zoom - inset * 2, alignment: .leading)
+                    .background(Theme.card)
+                    .position(canvas.viewPoint(CGPoint(x: rect.midX, y: rect.midY)))
+            }
         }
     }
 
@@ -1393,6 +1422,12 @@ struct CanvasView: View {
     /// Double-clicking a cell edits it with its text selected; on a key cell, it toggles the primary key.
     private func doubleClickCell(at point: CGPoint, in table: Table) {
         let target = cell(at: point, in: table)
+        // On its header, the table designer; Return (or the wheel's Rename) renames it in place.
+        if target.row == .header {
+            canvas.isEditingCell = false
+            canvas.cell = nil
+            return withAnimation(.smooth(duration: 0.25)) { canvas.designing = table.id }
+        }
         guard target.part != .key else { return togglePrimaryKey(target) }
         begin(target, replacingWith: nil, selectingAll: true)
     }
@@ -1684,7 +1719,6 @@ struct CanvasView: View {
                 table.columns.firstIndex { $0.id == drag.column }.map { (frame: Metrics.frame(of: table), row: $0, insertion: drag.insertion) }
             }
         }
-        let grip = canvas.hoveredHeader.flatMap { id in model.table(id) }.map { Metrics.frame(of: $0).offsetBy(dx: canvas.tableOffsets[$0.id]?.x ?? 0, dy: canvas.tableOffsets[$0.id]?.y ?? 0) }
         return Canvas { screen, _ in
             var context = screen
             context.translateBy(x: offset.x, y: offset.y)
@@ -1720,17 +1754,6 @@ struct CanvasView: View {
                 let y = frame.minY + Metrics.headerHeight + CGFloat(columnDrag.insertion) * Metrics.rowHeight
                 let line = Path(roundedRect: CGRect(x: frame.minX + 4, y: y - 1.25, width: frame.width - 8, height: 2.5), cornerRadius: 1.25)
                 context.fill(line, with: .color(.accentColor))
-            }
-            if let grip, connection == nil {
-                // Six dots at the header's end, where the table's grabbed.
-                let dot: CGFloat = 2.2, gap: CGFloat = 3.2
-                let origin = CGPoint(x: grip.maxX - 14, y: grip.minY + Metrics.headerHeight / 2 - gap)
-                var dots = Path()
-                for column in 0..<2 { for row in 0..<3 {
-                    let center = origin + CGPoint(x: CGFloat(column) * gap, y: CGFloat(row) * gap)
-                    dots.addEllipse(in: CGRect(x: center.x - dot / 2, y: center.y - dot / 2, width: dot, height: dot))
-                } }
-                context.fill(dots, with: .color(.secondary))
             }
             if let portHint {
                 // At screen size whatever the zoom.

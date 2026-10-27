@@ -81,6 +81,36 @@ struct Table: Codable, Identifiable, Equatable {
     var columns: [Column] = []
     /// The group it's in, if any; for a schema, the schema.
     var group: TableGroup.ID?
+    /// Made-up rows, to show the kind of data it holds: each a value for some of its columns, by the column's ID.
+    var samples: [[String: String]] = []
+    /// Anything worth writing down about it.
+    var notes = ""
+}
+
+extension Table {
+    /// What a file from before something existed leaves out is empty.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        name = try container.decode(String.self, forKey: .name)
+        position = try container.decode(CGPoint.self, forKey: .position)
+        color = try container.decode(TableColor.self, forKey: .color)
+        columns = try container.decodeIfPresent([Column].self, forKey: .columns) ?? []
+        group = try container.decodeIfPresent(TableGroup.ID.self, forKey: .group)
+        samples = try container.decodeIfPresent([[String: String]].self, forKey: .samples) ?? []
+        notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+    }
+
+    /// A sample row's value for a column.
+    func sample(_ row: Int, _ column: Column.ID) -> String {
+        samples.indices.contains(row) ? samples[row][column.uuidString] ?? "" : ""
+    }
+
+    /// Sets a sample row's value for a column; past the last row, adds rows up to it.
+    mutating func setSample(_ row: Int, _ column: Column.ID, to value: String) {
+        while samples.count <= row { samples.append([:]) }
+        samples[row][column.uuidString] = value.isEmpty ? nil : value
+    }
 }
 
 enum TableColor: String, Codable, CaseIterable, Identifiable {

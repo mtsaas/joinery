@@ -280,6 +280,16 @@ enum DebugHooks {
                    let column = table.columns.first(where: { $0.name == parts.last }) {
                     canvas.columnDrag = (table.id, column.id, Int(numbers[0]))
                 }
+            case "design" where table != nil:
+                canvas.designing = document.wrappedValue.tables[table!].id
+            case "sample" where table != nil && words.count >= 5:
+                // A sample value: "sample orders 0 status shipped".
+                let row = Int(words[2]) ?? 0, value = words.dropFirst(4).joined(separator: " ")
+                if let column = document.wrappedValue.tables[table!].columns.first(where: { $0.name == words[3] }) {
+                    document.wrappedValue.tables[table!].setSample(row, column.id, to: value)
+                }
+            case "notes" where table != nil && words.count >= 3:
+                document.wrappedValue.tables[table!].notes = words.dropFirst(2).joined(separator: " ")
             case "header-hover" where table != nil:
                 canvas.hoveredHeader = document.wrappedValue.tables[table!].id
             case "capture" where words.count == 2:
