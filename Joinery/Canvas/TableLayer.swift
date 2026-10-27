@@ -32,6 +32,8 @@ struct TableLayer: View {
     var focused: Set<Table.ID>? = nil
     /// The table whose name is being edited, over its header: its name isn't drawn.
     var renaming: Table.ID? = nil
+    /// Comparing two versions: what changed, marked on its tables and rows.
+    var diff: SchemaDiff? = nil
 
     /// How faint what's out of focus is.
     static let fadedOpacity = 0.22
@@ -121,6 +123,7 @@ struct TableLayer: View {
         // Shapes gathered by color, to fill once each.
         var lines = Path(), headers: [TableColor: Path] = [:], edges: [TableColor: Path] = [:], borders = Path()
         var highlights = Path(), rings = Path(), cursors = Path()
+        var tints: [SchemaDiff.Change: Path] = [:], changeRings: [SchemaDiff.Change: Path] = [:]
         let edgeWidth = max(Metrics.headerBorderWidth, hairline)
         for (table, frame) in visible {
             let header = CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: Metrics.headerHeight)
@@ -137,6 +140,9 @@ struct TableLayer: View {
             }
             for (index, column) in table.columns.enumerated() {
                 let y = rows + CGFloat(index) * Metrics.rowHeight
+                if let change = diff?.columns[column.id] {
+                    tints[change, default: Path()].addRect(CGRect(x: frame.minX, y: y, width: frame.width, height: Metrics.rowHeight))
+                }
                 if column.id == targetColumn {
                     highlights.addRect(CGRect(x: frame.minX, y: y, width: frame.width, height: Metrics.rowHeight))
                 }
@@ -147,6 +153,13 @@ struct TableLayer: View {
                 lines.addRect(CGRect(x: frame.minX + start, y: y, width: frame.width - start, height: hairline))
             }
 
+            // Tables added or removed are ringed, as a selection is, and their headers tinted; a changed one has its rows.
+            if let change = diff?.tables[table.id], change != .modified {
+                let inner = Metrics.selectionGap, width = Metrics.selectionWidth
+                changeRings[change, default: Path()].addPath(Path(roundedRect: frame.insetBy(dx: -inner - width / 2, dy: -inner - width / 2),
+                                                                  cornerRadius: radius + inner + width / 2, style: .circular))
+                tints[change, default: Path()].addRect(header)
+            }
             if selected.contains(table.id) {
                 // A ring `selectionGap` out from the card, concentric with its corners.
                 let inner = Metrics.selectionGap, width = Metrics.selectionWidth
@@ -162,12 +175,16 @@ struct TableLayer: View {
         }
 
         for (color, path) in headers { context.fill(path, with: .color(color.headerFill)) }
+        for (change, path) in tints { context.fill(path, with: .color(change.color.opacity(0.16))) }
         context.fill(highlights, with: .color(Color.accentColor.opacity(0.14)))
         context.fill(lines, with: .color(Theme.cardBorder))
         context.stroke(borders, with: .color(Theme.cardBorder), lineWidth: hairline)
         for (color, path) in edges { context.stroke(path, with: .color(color.headerBorder), lineWidth: edgeWidth) }
         if zoom >= Self.textZoom { drawText(visible, in: &context) }
         context.stroke(cursors, with: .color(.accentColor), lineWidth: max(2, 1.5 / zoom))
+        for (change, path) in changeRings {
+            context.stroke(path, with: .color(change.color), style: StrokeStyle(lineWidth: Metrics.selectionWidth, dash: change == .removed ? [6, 4] : []))
+        }
         context.stroke(rings, with: .color(.accentColor), lineWidth: Metrics.selectionWidth)
         drawSockets(visible, in: &context)
     }
@@ -179,14 +196,20 @@ struct TableLayer: View {
         let primary = Color.primary.resolve(in: environment).cgColor
         let secondary = Color(nsColor: .secondaryLabelColor).resolve(in: environment).cgColor
         let quaternary = Color(nsColor: .quaternaryLabelColor).resolve(in: environment).cgColor
-        var badges = Path(), grips = Path()
+        var badges = Path(), grips = Path(), strikes = Path()
         var runs: [(line: CTLine, at: CGPoint, color: CGColor)] = []
 
         func text(_ string: String, _ style: TableText, width: CGFloat, in rect: CGRect, alignment: HorizontalAlignment = .leading,
-                  color: CGColor) {
+                  color: CGColor, struck: Bool = false) {
             let line = layouts.line(string, style, width: width)
             let x = alignment == .center ? rect.midX - line.width / 2 : rect.minX
-            runs.append((line.ctLine, CGPoint(x: x, y: rect.midY + line.baselineOffset), color))
+            let baseline = rect.midY + line.baselineOffset
+            runs.append((line.ctLine, CGPoint(x: x, y: baseline), color))
+            // Through the middle of the lowercase letters.
+            if struck {
+                let weight = max(style.font.pointSize / 12, 1 / zoom)
+                strikes.addRect(CGRect(x: x, y: baseline - style.font.xHeight / 2 - weight / 2, width: line.width, height: weight))
+            }
         }
 
         let inset = Metrics.cellInset
@@ -195,7 +218,9 @@ struct TableLayer: View {
             // The grip at the header's left end, where the table's grabbed to move it, and the name after it.
             if table.id != renaming {
                 let name = CGRect(x: header.minX + Metrics.gripWidth, y: header.minY, width: header.width - Metrics.gripWidth - inset, height: header.height)
-                text(table.name, .header, width: name.width, in: name, color: primary)
+                let isRemoved = diff?.tables[table.id] == .removed
+                text(diff?.oldNames[table.id].map { "\($0) → \(table.name)" } ?? table.name, .header, width: name.width, in: name,
+                     color: isRemoved ? secondary : primary, struck: isRemoved)
             }
             let dot: CGFloat = 3, gap: CGFloat = 4.5
             let grip = CGPoint(x: header.minX + inset + dot / 2, y: header.midY - gap)
@@ -230,13 +255,18 @@ struct TableLayer: View {
                     text("UQ", .badge, width: .infinity, in: capsule, alignment: .center, color: secondary)
                     name.size.width -= size.width + 4
                 }
-                text(column.name, column.isPrimaryKey ? .keyName : .name, width: name.width, in: name, color: primary)
+                // Compared, a changed row is marked + − or ~ (unless its whole table is), and one removed is struck through.
+                let change = diff?.columns[column.id]
+                let mark = change.map { diff?.tables[table.id] == .modified ? $0.mark + " " : "" } ?? ""
+                text(mark + column.name, column.isPrimaryKey ? .keyName : .name, width: name.width, in: name,
+                     color: change == .removed ? secondary : primary, struck: change == .removed)
                 let type = Metrics.cell(row: row, part: .type, in: frame).insetBy(dx: inset, dy: 0)
-                text(column.typeLabel, .type, width: type.width, in: type, color: secondary)
+                text(column.typeLabel, .type, width: type.width, in: type, color: secondary, struck: change == .removed)
             }
         }
         context.fill(badges, with: .color(Color.secondary.opacity(0.16)))
         context.fill(grips, with: .color(Color(cgColor: secondary).opacity(0.75)))
+        context.fill(strikes, with: .color(Color(cgColor: secondary)))
         context.withCGContext { cg in
             // Core Text draws upward; the canvas runs down.
             cg.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
@@ -255,7 +285,8 @@ struct TableLayer: View {
         var empty = Path(), rings = Path(), colored: [Color: Path] = [:]
         var hovered: (center: CGPoint, color: Color?)?
         for (table, frame) in visible {
-            for (row, column) in table.columns.enumerated() {
+            // A changed column as it was has no wires of its own: its row is only there to read.
+            for (row, column) in table.columns.enumerated() where diff?.formerly.contains(column.id) != true {
                 for side in Side.allCases {
                     let socket = Routing.Socket(column: column.id, side: side)
                     let center = Metrics.socket(row: row, side: side, in: frame)

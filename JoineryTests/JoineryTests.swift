@@ -1023,4 +1023,36 @@ struct JoineryTests {
         let described = try ModelTools.call("get_model", [:], on: &model)
         #expect(described.contains("Totals include tax.") && described.contains("\"sample_rows\"") && described.contains("b2"))
     }
+
+    @Test func comparingVersionsMarksWhatChanged() throws {
+        var before = DataModel()
+        _ = try ModelTools.call("create_tables", ["tables": [
+            ["name": "users", "columns": [["name": "id", "type": "uuid", "primary_key": true]]],
+            ["name": "coupons", "columns": [["name": "id", "type": "uuid", "primary_key": true]]],
+            ["name": "orders", "columns": [["name": "id", "type": "uuid", "primary_key": true], ["name": "user_id", "type": "uuid", "references": "users"],
+                                           ["name": "coupon_id", "type": "uuid", "references": "coupons"], ["name": "total", "type": "integer"],
+                                           ["name": "note", "type": "text"]]],
+        ]], on: &before)
+        var after = before
+        _ = try ModelTools.call("drop_tables", ["tables": ["coupons"]], on: &after)
+        _ = try ModelTools.call("alter_table", ["table": "orders", "drop_columns": ["note"], "add_columns": [["name": "currency", "type": "varchar"]],
+                                                "change_columns": [["name": "total", "type": "numeric", "rename_to": "amount"]]], on: &after)
+        _ = try ModelTools.call("create_tables", ["tables": [["name": "refunds", "columns": [["name": "order_id", "type": "uuid", "references": "orders"]]]]], on: &after)
+        // Moving a table isn't a change.
+        after.tables[0].position.x += 500
+
+        let diff = SchemaDiff(from: before, to: after)
+        let id = { (name: String) in try #require(diff.model.tables.first { $0.name == name }?.id) }
+        #expect(diff.tables == [try id("coupons"): .removed, try id("orders"): .modified, try id("refunds"): .added])
+        // Orders as a line diff: the removed column back after the one it followed, the changed one as it was, then as it is.
+        let orders = try #require(diff.model.table(try id("orders")))
+        #expect(orders.columns.map(\.name) == ["id", "user_id", "coupon_id", "total", "amount", "note", "currency"])
+        #expect(orders.columns.map { diff.columns[$0.id] } == [nil, nil, nil, .removed, .modified, .removed, .added])
+        #expect(diff.formerly == [orders.columns[3].id])
+        #expect(diff.relationships.values.sorted { "\($0)" < "\($1)" } == [.added, .removed])
+        #expect(diff.summary == "1 table added, 1 removed, 3 columns changed, 1 key added, 1 removed")
+        #expect(SchemaDiff(from: before, to: before).summary == "No changes")
+        // The same comparison draws the same model.
+        #expect(SchemaDiff(from: before, to: after) == diff)
+    }
 }

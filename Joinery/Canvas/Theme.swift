@@ -48,3 +48,22 @@ extension Color {
         self.init(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light })
     }
 }
+
+extension SchemaDiff.Change {
+    var color: Color {
+        switch self {
+        case .added: .green
+        case .removed: .red
+        case .modified: .orange
+        }
+    }
+
+    /// Marked so, as well as in color, for those who can't tell the colors apart.
+    var mark: String {
+        switch self {
+        case .added: "+"
+        case .removed: "−"
+        case .modified: "~"
+        }
+    }
+}

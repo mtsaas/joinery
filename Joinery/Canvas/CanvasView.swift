@@ -13,6 +13,8 @@ import SwiftUI
 struct CanvasView: View {
     @Binding var model: DataModel
     @Bindable var canvas: CanvasController
+    /// Comparing two versions, shown as `diff.model`: what changed stands out, and the rest fades.
+    var diff: SchemaDiff? = nil
 
     @State private var simulation = WireSimulation()
     @State private var isAnimating = false
@@ -620,7 +622,7 @@ struct CanvasView: View {
         // In focus mode, ties none of whose wires are in focus fade with them.
         let isFocused = focusedTables != nil
         let tieCrossings = canvas.stroke.map { Set(simulation.crossings(from: $0.start, to: $0.end).map(\.relationship)) } ?? []
-        let selectedTies = canvas.selectedTies, hoveredTie = canvas.hoveredTie
+        let selectedTies = canvas.selectedTies, hoveredTie = canvas.hoveredTie, changes = diff?.relationships ?? [:]
         let selectedWires = Set(canvas.selection.compactMap { if case .relationship(let id) = $0 { id } else { nil } })
         let routed = routedModel, relationships = routed.relationships
         // Each cable's ties, wire or bus, for where they're drawn along it: as routed, so with a cable being pulled
@@ -649,14 +651,15 @@ struct CanvasView: View {
                     guard let wire = simulation.wires[relationship.id] else { continue }
                     let path = wirePaths.path(for: relationship.id, through: wire.points)
                     let isDimmed = highlighted.map { !$0.contains(relationship.id) } ?? false
-                    let color = tieCrossings.contains(relationship.id) ? Color.primary : colors[relationship.id] ?? .gray
+                    let change = changes[relationship.id]
+                    let color = tieCrossings.contains(relationship.id) ? Color.primary : change?.color ?? colors[relationship.id] ?? .gray
                     context.stroke(path, with: .color(Theme.canvas), style: StrokeStyle(lineWidth: Metrics.tieSpacing, lineCap: .round))
                     if selectedWires.contains(relationship.id) {
                         context.stroke(path, with: .color(color.mix(with: .black, by: Theme.selectedWireDarkening)),
                                        style: StrokeStyle(lineWidth: Metrics.selectedWireWidth, lineCap: .round))
                     }
                     context.stroke(path, with: .color(color.opacity(isDimmed ? 0.28 : 1)),
-                                   style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round))
+                                   style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round, dash: change == .removed ? [6, 5] : []))
                 }
                 // Each port's bus, then the port over where its wires meet it.
                 // In a fixed order, as dictionaries' can change from one routing to the next.
@@ -807,6 +810,7 @@ struct CanvasView: View {
 
     /// The wires to show over the rest, which fade: those of whatever's selected. Nil highlights none.
     private var highlightedRelationships: Set<Relationship.ID>? {
+        if let diff { return Set(diff.relationships.keys) }
         // In focus mode, the wires among the tables in focus.
         if let focused = focusedTables { return model.relationships(among: focused) }
         guard !canvas.selection.isEmpty else { return nil }
@@ -831,6 +835,7 @@ struct CanvasView: View {
     /// In focus mode: the tables in focus and every table a foreign key joins them to; everything else fades. Nil while
     /// focus is off, or on with nothing chosen yet.
     private var focusedTables: Set<Table.ID>? {
+        if let diff { return Set(diff.tables.keys) }
         guard let focus = canvas.focus, !focus.isEmpty else { return nil }
         return model.neighborhood(of: focus)
     }
@@ -843,7 +848,7 @@ struct CanvasView: View {
                           viewSize: canvas.viewSize, selected: selected, cursor: canvas.cell, targetColumn: targetColumn,
                           foreignKeys: foreignKeys, socketColors: socketColors, hoveredSocket: hoveredSocket, layouts: textLayouts,
                           focused: focusedTables,
-                          renaming: canvas.isEditingCell && canvas.cell?.row == .header ? canvas.cell?.table : nil)
+                          renaming: canvas.isEditingCell && canvas.cell?.row == .header ? canvas.cell?.table : nil, diff: diff)
             .contentShape(.rect)
             .gesture(surfaceGesture)
             .onContinuousHover { phase in

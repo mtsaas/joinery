@@ -58,12 +58,16 @@ struct ModelEditor: View {
     @State private var showsHistory = false
     /// An earlier version shown instead of the model, read-only, from the version history.
     @State private var preview: VersionHistory.Preview?
+    /// With an earlier version shown: it, it and now together with the changes marked, or now.
+    @State private var comparison = Comparison.changes
     @Environment(\.undoManager) private var undoManager
 
     var body: some View {
         // Showing an earlier version, it can't be changed: it's only there to look at.
-        let model = Binding { preview?.model ?? canvas.shown(open.model) } set: { if preview == nil { open.change(to: $0) } }
-        CanvasView(model: model, canvas: canvas)
+        let diff = preview.flatMap { comparison == .changes ? SchemaDiff(from: $0.model, to: open.model) : nil }
+        let shown = preview.map { comparison == .then ? $0.model : diff?.model ?? open.model }
+        let model = Binding { shown ?? canvas.shown(open.model) } set: { if preview == nil { open.change(to: $0) } }
+        CanvasView(model: model, canvas: canvas, diff: diff)
             // Under the toolbar, which floats over it, but not the sidebar, so fitting the model fits what's visible.
             .ignoresSafeArea(edges: .top)
             .toolbar {
@@ -118,12 +122,21 @@ struct ModelEditor: View {
             // For the Window menu and Mission Control; shown by `ModelTitle` instead, to be renamed in place.
             .navigationTitle(open.name)
             .toolbar(removing: .title)
-            .overlay(alignment: .top) {
+            // Comparing, at the bottom, clear of the version history's popover.
+            .overlay(alignment: preview == nil ? .top : .bottom) {
                 if preview != nil || open.notice != nil {
                     HStack(spacing: 8) {
                         Image(systemName: "clock.arrow.circlepath")
                         if let preview {
-                            Text("\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened)), read-only")
+                            Picker("Compare", selection: $comparison) {
+                                ForEach(Comparison.allCases, id: \.self) { Text($0.title) }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
+                            let when = "\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened))"
+                            Text(diff.map { "\(when) to now: \($0.summary)" } ?? "\(comparison == .then ? when : "Now"), read-only")
+                                .monospacedDigit()
                         } else if let notice = open.notice {
                             Text(notice)
                         }
@@ -132,7 +145,7 @@ struct ModelEditor: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
                     .glassEffect()
-                    .padding(.top, 64)
+                    .padding(preview == nil ? .top : .bottom, preview == nil ? 64 : 20)
                 }
             }
             .onAppear { open.undoManager = undoManager }
@@ -233,3 +246,16 @@ extension Notification.Name {
     static let renameTitle = Notification.Name("JoineryRenameTitle")
 }
 #endif
+
+/// Showing an earlier version: which side of the comparison.
+private enum Comparison: CaseIterable {
+    case then, changes, now
+
+    var title: String {
+        switch self {
+        case .then: "Then"
+        case .changes: "Changes"
+        case .now: "Now"
+        }
+    }
+}
