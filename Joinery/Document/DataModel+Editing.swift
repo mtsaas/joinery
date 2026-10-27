@@ -94,7 +94,8 @@ extension DataModel {
     /// wire was dragged; otherwise the dragged column is the foreign key. On a table, a new column is added there,
     /// named for `column` and of its type, referencing it.
     @discardableResult
-    mutating func connect(dragging column: Column.ID, onto target: DropTarget) -> Relationship.ID? {
+    mutating func connect(dragging column: Column.ID, onto target: DropTarget, newColumn: Column.ID = UUID(),
+                          relationship: Relationship.ID = UUID()) -> Relationship.ID? {
         switch target {
         case .column(let other):
             let locations = columnLocations
@@ -105,9 +106,9 @@ extension DataModel {
         case .table(let id):
             guard let name = newColumnName(referencing: column, in: id), let (source, row) = columnLocations[column],
                   let index = tables.firstIndex(where: { $0.id == id }) else { return nil }
-            let new = Column(name: name, type: source.columns[row].type)
+            let new = Column(id: newColumn, name: name, type: source.columns[row].type)
             tables[index].columns.append(new)
-            return connect(new.id, to: column)
+            return connect(new.id, to: column, id: relationship)
         case .port(let id):
             guard let group = group(ofPort: id), let port = groups.lazy.flatMap(\.ports).first(where: { $0.id == id }) else { return nil }
             guard columnLocations[column]?.table.group == group else {
@@ -218,9 +219,9 @@ extension DataModel {
 
     /// Adds a foreign key from `from` to `to`, unless it would be to itself or already exists.
     @discardableResult
-    mutating func connect(_ from: Column.ID, to: Column.ID) -> Relationship.ID? {
+    mutating func connect(_ from: Column.ID, to: Column.ID, id: Relationship.ID = UUID()) -> Relationship.ID? {
         guard from != to, !relationships.contains(where: { $0.from == from && $0.to == to }) else { return nil }
-        let relationship = Relationship(from: from, to: to)
+        let relationship = Relationship(id: id, from: from, to: to)
         relationships.append(relationship)
         return relationship.id
     }

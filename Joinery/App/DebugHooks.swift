@@ -424,6 +424,9 @@ enum DebugHooks {
                                               start: Metrics.socket(row: row, side: .trailing, in: Metrics.frame(of: table)),
                                               end: end, target: model.dropTarget(at: end))
                 }
+            case "drop-finish":
+                // Lets go of the wire shown by drop-preview, as a real drop would.
+                NotificationCenter.default.post(name: .pull, object: canvas, userInfo: ["step": "drop-wire"])
             case "palette":
                 print("palette open:", canvas.showsPalette, "highlight:", canvas.paletteHighlight)
             case "selection":

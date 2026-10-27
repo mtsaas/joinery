@@ -39,10 +39,12 @@ struct CanvasView: View {
     @Environment(\.openSettings) private var openSettings
 
     var body: some View {
-        let routing = routingCache.routing(for: routedModel, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
+        // As shown: with a wire being dropped on a table's header already made, say.
+        let routed = routedModel
+        let routing = routingCache.routing(for: routed, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
                                            avoidingTables: wiresAvoidTables)
-        let colors = routingCache.wireColors(for: model)
-        let foreignKeys = Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
+        let colors = routingCache.wireColors(for: routed)
+        let foreignKeys = Dictionary(routed.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
                                      uniquingKeysWith: { first, _ in first })
         let socketColors = socketColors(routing, colors: colors)
         // While tables are dragged, groups as dropping them there would leave them: one they'd join reaches round them.
@@ -615,10 +617,9 @@ struct CanvasView: View {
         let tieCrossings = canvas.stroke.map { Set(simulation.crossings(from: $0.start, to: $0.end).map(\.relationship)) } ?? []
         let selectedTies = canvas.selectedTies, hoveredTie = canvas.hoveredTie
         let selectedWires = Set(canvas.selection.compactMap { if case .relationship(let id) = $0 { id } else { nil } })
-        let relationships = model.relationships
+        let routed = routedModel, relationships = routed.relationships
         // Each cable's ties, wire or bus, for where they're drawn along it: as routed, so with a cable being pulled
         // through the pointer, and out of the ties it's been tugged out of, as its drawn wire is.
-        let routed = routedModel
         var cableTies = Dictionary(routed.relationships.map { ($0.id, $0.zipTies) }, uniquingKeysWith: { first, _ in first })
         for port in routed.groups.flatMap(\.ports) { cableTies[port.id] = port.zipTies }
 
@@ -833,7 +834,7 @@ struct CanvasView: View {
     private func tableLayer(socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> some View {
         var selected = canvas.selectedTables
         if case .table(let id)? = canvas.connection?.target { selected.insert(id) }
-        return TableLayer(tables: model.tables, offsets: canvas.tableOffsets, zoom: canvas.zoom, viewOffset: canvas.offset,
+        return TableLayer(tables: routedModel.tables, offsets: canvas.tableOffsets, zoom: canvas.zoom, viewOffset: canvas.offset,
                           viewSize: canvas.viewSize, selected: selected, cursor: canvas.cell, targetColumn: targetColumn,
                           foreignKeys: foreignKeys, socketColors: socketColors, hoveredSocket: hoveredSocket, layouts: textLayouts,
                           focused: focusedTables,
@@ -882,8 +883,13 @@ struct CanvasView: View {
 
     /// The model the wires are routed for: with a port being dragged where it's got to.
     private var routedModel: DataModel {
-        guard canvas.portDrag != nil || canvas.cableDrag != nil || canvas.tieMerge != nil else { return model }
+        guard canvas.portDrag != nil || canvas.cableDrag != nil || canvas.tieMerge != nil || newColumnPreview != nil else { return model }
         var routed = model
+        // A wire over a table's header: the column it'd make there, and the wire to it.
+        if let (column, table) = newColumnPreview {
+            routed.connect(dragging: column, onto: .table(table), newColumn: canvas.newColumnIDs.column,
+                           relationship: canvas.newColumnIDs.relationship)
+        }
         if let drag = canvas.portDrag { routed.movePort(drag.port, to: (drag.side, drag.along)) }
         // A zip tie over another: shown combined.
         if let merge = canvas.tieMerge {
@@ -1190,7 +1196,14 @@ struct CanvasView: View {
 
     /// The row a wire being dragged would connect to.
     private var targetColumn: Column.ID? {
-        if case .column(let id)? = canvas.connection?.target { id } else { nil }
+        if case .column(let id)? = canvas.connection?.target { id } else if newColumnPreview != nil { canvas.newColumnIDs.column } else { nil }
+    }
+
+    /// A wire from a column dragged over a table's header, which would get a new column referencing it: the column and
+    /// the table.
+    private var newColumnPreview: (column: Column.ID, table: Table.ID)? {
+        guard let connection = canvas.connection, let from = connection.from, case .table(let table)? = connection.target else { return nil }
+        return (from, table)
     }
 
     /// Looks the table up on every access, so a binding a text field holds after its table is deleted can't index past
@@ -1318,6 +1331,8 @@ struct CanvasView: View {
     private func debugPull(_ note: Notification) {
         guard note.object as AnyObject? === canvas, let step = note.userInfo?["step"] as? String else { return }
         switch step {
+        case "drop-wire":
+            return finishConnection()
         case "start":
             guard let n = note.userInfo?["wire"] as? Int, let t = note.userInfo?["t"] as? Double, model.relationships.indices.contains(n),
                   let points = simulation.wires[model.relationships[n].id]?.points, points.count > 2 else { return }
@@ -1438,7 +1453,11 @@ struct CanvasView: View {
             // A column in the group references the one the port stands for (or is referenced by it, if only it's a key).
             made = connection.from.flatMap { model.connect(dragging: column, onto: .column($0)) }
         case (_, _):
-            made = connection.from.flatMap { model.connect(dragging: $0, onto: target) }
+            // As previewed, with the same column and wire, so the wire stays put.
+            made = connection.from.flatMap {
+                model.connect(dragging: $0, onto: target, newColumn: canvas.newColumnIDs.column, relationship: canvas.newColumnIDs.relationship)
+            }
+            canvas.newColumnIDs = (UUID(), UUID())
         }
         if let made { canvas.selection = [.relationship(made)] }
     }
@@ -1461,13 +1480,8 @@ struct CanvasView: View {
     /// Double-clicking a cell edits it with its text selected; on a key cell, it toggles the primary key.
     private func doubleClickCell(at point: CGPoint, in table: Table) {
         let target = cell(at: point, in: table)
-        // On its header, the table designer; Return (or the wheel's Rename) renames it in place.
-        if target.row == .header {
-            canvas.isEditingCell = false
-            canvas.cell = nil
-            return withAnimation(.smooth(duration: 0.25)) { canvas.designing = table.id }
-        }
-        guard target.part != .key else { return togglePrimaryKey(target) }
+        // On its header, its name edited in place; Tab goes on to its columns. The designer is a right-click away.
+        guard target.part != .key || target.row == .header else { return togglePrimaryKey(target) }
         begin(target, replacingWith: nil, selectingAll: true)
     }
 
@@ -1481,6 +1495,10 @@ struct CanvasView: View {
         case .commit(let move):
             commitDraft()
             if let move { moveCursor(move) }
+            // Tab goes on typing in the next cell, as in a form: the name, then each column's name and type.
+            if move == .next || move == .previous, let next = canvas.cell, !canvas.isEditingCell {
+                begin(next, replacingWith: nil, selectingAll: true)
+            }
         case .cancel:
             canvas.isEditingCell = false
             isCanvasFocused = true
@@ -1734,24 +1752,22 @@ struct CanvasView: View {
 
     /// The wire being dragged out, the tie line and the selection rectangle, above the tables.
     private func gestureOverlay(_ routing: Routing) -> some View {
-        let zoom = canvas.zoom, offset = canvas.offset, connection = canvas.connection, stroke = canvas.stroke
+        // Over a table's header, the wire is drawn as made, to the column previewed there, so not here.
+        let connection = newColumnPreview == nil ? canvas.connection : nil
+        let zoom = canvas.zoom, offset = canvas.offset, stroke = canvas.stroke
         let marquee = canvas.marquee, guides = canvas.guides
         #if DEBUG
         let feedback = canvas.feedback.map { (routed: routing.routes[$0.relationship]?.points ?? [], expected: $0.expected) }
         #endif
-        // Previews the color it'll take once dropped, and on a table, the column it'll add.
+        // Previews the color it'll take once dropped.
         let color = connection.map { connection in
             switch connection.target {
             case .column(let id)?: model.columnLocations[id]?.table.color.color ?? Theme.socket
             case .port(let id)?: model.groups.lazy.flatMap(\.ports).first { $0.id == id }?.column
                 .flatMap { model.columnLocations[$0]?.table.color.color } ?? Theme.socket
-            case .table?: connection.from.flatMap { model.columnLocations[$0]?.table.color.color } ?? Theme.socket
-            case nil: Theme.socket
+            case .table?, nil: Theme.socket
             }
         }
-        let newColumn: String? = if case .table(let id)? = connection?.target {
-            connection?.from.flatMap { model.newColumnName(referencing: $0, in: id) }.map { "+ " + $0 }
-        } else { nil }
         let portHint = canvas.portHint
         let columnDrag = canvas.columnDrag.flatMap { drag in
             model.table(drag.table).flatMap { table in
@@ -1774,15 +1790,6 @@ struct CanvasView: View {
                     line.addLine(to: CGPoint(x: guide.end + overhang, y: guide.position))
                 }
                 context.stroke(line, with: .color(Theme.guide), lineWidth: 1 / zoom)
-            }
-            if let connection, let newColumn {
-                // A tag by the pointer, at screen size whatever the zoom.
-                let label = screen.resolve(Text(newColumn).font(.callout.weight(.medium)).foregroundStyle(.white))
-                let size = label.measure(in: CGSize(width: 400, height: 40))
-                let origin = connection.end * zoom + offset + CGPoint(x: 14, y: -size.height - 14)
-                let tag = CGRect(origin: origin, size: size).insetBy(dx: -8, dy: -4)
-                screen.fill(Path(roundedRect: tag, cornerRadius: tag.height / 2), with: .color(.accentColor))
-                screen.draw(label, in: CGRect(origin: origin, size: size))
             }
             if let columnDrag {
                 // The column lifted, and a line where it'll go.

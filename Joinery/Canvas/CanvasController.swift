@@ -293,6 +293,8 @@ final class CanvasController {
     }
     var hoveredTie: ZipTie.ID?
     var connection: Connection?
+    /// What a wire dropped on a table's header makes there, the same while it's previewed and when it's made; fresh after.
+    var newColumnIDs = (column: Column.ID(), relationship: Relationship.ID())
     /// A group's port being dragged along its edge, and where it's got to; saved when let go.
     var portDrag: (port: GroupPort.ID, side: Side4, along: CGFloat)?
     var stroke: Stroke?
