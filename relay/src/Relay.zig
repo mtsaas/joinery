@@ -16,6 +16,7 @@ const Allocator = std.mem.Allocator;
 const DoublyLinkedList = std.DoublyLinkedList;
 const wire = @import("wire.zig");
 const Log = @import("Log.zig");
+const log = std.log.scoped(.relay);
 
 const Relay = @This();
 
@@ -98,12 +99,14 @@ pub fn roomCount(relay: *const Relay) usize {
 // Events
 
 pub fn opened(relay: *Relay, link: *Link, now: i64) void {
+    log.debug("{f} opened", .{who(link)});
     relay.now = now;
     link.heard = now;
     relay.lobby.append(&link.node);
 }
 
 pub fn closed(relay: *Relay, link: *Link, now: i64) void {
+    log.debug("{f} closed", .{who(link)});
     relay.now = now;
     relay.forget(link);
 }
@@ -113,11 +116,11 @@ pub fn received(relay: *Relay, link: *Link, frame: []u8, now: i64) void {
     relay.now = now;
     link.heard = now;
     const is_snapshot = frame.len > 1 and frame[1] == @backingInt(wire.Kind.snapshot);
-    if (frame.len > if (is_snapshot) relay.limits.max_snapshot else relay.limits.max_frame) return relay.drop(link);
-    const header = wire.Header.ofFrame(frame) catch return relay.drop(link);
+    if (frame.len > if (is_snapshot) relay.limits.max_snapshot else relay.limits.max_frame) return relay.drop(link, "a frame over the limit");
+    const header = wire.Header.ofFrame(frame) catch return relay.drop(link, "a frame it couldn't read");
     const room = link.room orelse return relay.hello(link, header, frame[wire.header_size..]);
     if (room.host == link) return relay.fromHost(room, header, frame);
-    const guest = room.guest(link) orelse return relay.drop(link);
+    const guest = room.guest(link) orelse return relay.drop(link, "not in its room");
     relay.fromGuest(room, guest, header, frame);
 }
 
@@ -128,7 +131,7 @@ pub fn tick(relay: *Relay, now: i64) void {
     while (next) |node| {
         next = node.next;
         const link: *Link = @fieldParentPtr("node", node);
-        if (relay.isSilent(link)) relay.drop(link);
+        if (relay.isSilent(link)) relay.drop(link, "silent before hello");
     }
     next = relay.room_list.first;
     while (next) |node| {
@@ -152,21 +155,21 @@ fn dropSilent(relay: *Relay, room: *Room) void {
         const link = room.guests.items[i].link;
         if (host_due and room.host.?.id < link.id) {
             host_due = false;
-            relay.drop(room.host.?);
+            relay.drop(room.host.?, "silent");
         } else if (relay.isSilent(link)) {
-            relay.drop(link);
+            relay.drop(link, "silent");
         } else {
             i += 1;
         }
     }
-    if (host_due) relay.drop(room.host.?);
+    if (host_due) relay.drop(room.host.?, "silent");
 }
 
 // Joining
 
 fn hello(relay: *Relay, link: *Link, header: wire.Header, body: []const u8) void {
-    if (header.kind != .hello) return relay.drop(link);
-    const h = wire.Hello.parse(body) catch return relay.drop(link);
+    if (header.kind != .hello) return relay.drop(link, "something other than hello first");
+    const h = wire.Hello.parse(body) catch return relay.drop(link, "a hello it couldn't read");
     switch (h.role) {
         .host => {
             if (h.name.len > wire.max_name or h.title.len > wire.max_title) {
@@ -178,7 +181,7 @@ fn hello(relay: *Relay, link: *Link, header: wire.Header, body: []const u8) void
         .@"resume" => {
             const room = relay.rooms.get(h.room) orelse return relay.refuse(link, "That session has ended.");
             if (!matches(h.secret, room.host_secret)) return relay.refuse(link, "That session has ended.");
-            if (room.host) |old| relay.drop(old);
+            if (room.host) |old| relay.drop(old, "its host came back on another connection");
             relay.attachHost(link, room);
         },
         .guest, .view => {
@@ -205,6 +208,7 @@ fn attachHost(relay: *Relay, link: *Link, room: *Room) void {
     room.host_gone = null;
     room.awaiting_snapshot = true;
     room.snapshot_requested = false;
+    log.info("{f}: {s} hosting room {s}", .{ who(link), room.host_name.slice(), room.shortID() });
     relay.welcome(link, room, wire.host_peer, .with_secrets);
 }
 
@@ -239,9 +243,12 @@ fn join(relay: *Relay, link: *Link, h: wire.Hello, room: *Room) void {
     };
     // Caught up from the log if it reaches back to what the guest has, from the snapshot if not.
     const log_start = if (room.log.first()) |frame| wire.seqOf(frame) else room.latest + 1;
+    const role = if (g.can_edit) "edit" else "view";
     if (h.applied != null and h.applied.? + 1 >= log_start and h.applied.? <= room.latest) {
+        log.info("{f}: {s} joined room {s} as peer {d} ({s}), caught up from the log", .{ who(link), h.name, room.shortID(), peer, role });
         relay.sendLog(link, room, h.applied.?);
     } else if (room.snapshot) |snapshot| {
+        log.info("{f}: {s} joined room {s} as peer {d} ({s}), caught up from the snapshot", .{ who(link), h.name, room.shortID(), peer, role });
         relay.out.send(link, snapshot);
         relay.sendLog(link, room, wire.seqOf(snapshot));
         g.applied = wire.seqOf(snapshot);
@@ -306,7 +313,7 @@ fn fromHost(relay: *Relay, room: *Room, header: wire.Header, frame: []u8) void {
             // After hello, its copy as it is, which may be past what reached here before it left. Asked for, the copy
             // as of its latest change, all of which has come first.
             const fits = if (room.awaiting_snapshot) header.seq >= room.latest else header.seq == room.latest;
-            if (!fits) return relay.drop(host);
+            if (!fits) return relay.drop(host, "a snapshot out of order");
             const snapshot = room.snapshot_buffer[0..frame.len];
             @memcpy(snapshot, frame);
             room.snapshot = snapshot;
@@ -332,18 +339,19 @@ fn fromHost(relay: *Relay, room: *Room, header: wire.Header, frame: []u8) void {
             room.trim();
         },
         .ops, .reject => {
-            if (room.awaiting_snapshot or header.seq != room.latest + 1) return relay.drop(host);
+            if (room.awaiting_snapshot or header.seq != room.latest + 1) return relay.drop(host, "a decision out of order");
             // Room for it: frames the snapshot covers go, and with them any guest still behind them, which comes back
             // and catches up from the snapshot. Frames past the snapshot can't go, so the host comes back with a new
             // one.
             while (room.log.bytes + frame.len > relay.limits.log_bytes) {
-                const first = room.log.first() orelse return relay.drop(host);
-                const snapshot = room.snapshot orelse return relay.drop(host);
+                const first = room.log.first() orelse return relay.drop(host, "a decision bigger than the log");
+                const snapshot = room.snapshot orelse return relay.drop(host, "the log full, with no snapshot");
                 const first_seq = wire.seqOf(first);
-                if (first_seq > wire.seqOf(snapshot)) return relay.drop(host);
+                // It comes back with a snapshot, which lets the log go.
+                if (first_seq > wire.seqOf(snapshot)) return relay.drop(host, "the log full past its snapshot");
                 var i: usize = 0;
                 while (i < room.guests.items.len) {
-                    if (room.guests.items[i].applied < first_seq) relay.drop(room.guests.items[i].link) else i += 1;
+                    if (room.guests.items[i].applied < first_seq) relay.drop(room.guests.items[i].link, "too far behind") else i += 1;
                 }
                 // With no one behind it, the snapshot covers it, so trimming takes it.
                 room.trim();
@@ -380,7 +388,7 @@ fn fromHost(relay: *Relay, room: *Room, header: wire.Header, frame: []u8) void {
 fn fromGuest(relay: *Relay, room: *Room, g: *Guest, header: wire.Header, frame: []u8) void {
     switch (header.kind) {
         .change => {
-            if (!g.can_edit) return relay.drop(g.link);
+            if (!g.can_edit) return relay.drop(g.link, "a change from a view link");
             // While the host's away, changes go nowhere; guests send them again when it's back.
             const host = room.host orelse return;
             wire.stamp(frame, g.peer);
@@ -413,15 +421,16 @@ fn sendToEveryone(relay: *Relay, room: *const Room, excluded: ?*const Link, fram
     for (room.guests.items) |g| if (g.link != excluded) relay.out.send(g.link, frame);
 }
 
-/// Closes a connection, as the relay's decision.
-fn drop(relay: *Relay, link: *Link) void {
+/// Closes a connection, as the relay's decision, saying why.
+fn drop(relay: *Relay, link: *Link, why: []const u8) void {
+    log.info("{f} dropped: {s}", .{ who(link), why });
     relay.out.close(link);
     relay.forget(link);
 }
 
 fn refuse(relay: *Relay, link: *Link, reason: []const u8) void {
     relay.out.send(link, relay.bye(reason));
-    relay.drop(link);
+    relay.drop(link, reason);
 }
 
 fn bye(relay: *Relay, reason: []const u8) []const u8 {
@@ -435,6 +444,7 @@ fn forget(relay: *Relay, link: *Link) void {
     const room = link.room orelse return relay.lobby.remove(&link.node);
     var w = relay.frameWriter();
     if (room.host == link) {
+        log.info("{f}: the host left room {s}; it ends unless the host is back in {d} s", .{ who(link), room.shortID(), @divFloor(relay.host_grace, 1000) });
         room.host = null;
         room.host_gone = relay.now;
         const left = w.finish(.left, 0, wire.host_peer);
@@ -442,6 +452,7 @@ fn forget(relay: *Relay, link: *Link) void {
         return;
     }
     const g = room.remove(link) orelse return;
+    log.info("{f}: {s} left room {s}", .{ who(link), g.name.slice(), room.shortID() });
     room.trim();
     relay.sendToEveryone(room, null, w.finish(.left, 0, g.peer));
 }
@@ -451,6 +462,7 @@ fn end(relay: *Relay, room: *Room, reason: []const u8) void {
 }
 
 fn endWith(relay: *Relay, room: *Room, bye_frame: []const u8) void {
+    log.info("room {s} ended: {s}", .{ room.shortID(), bye_frame[wire.header_size..] });
     if (room.host) |host| {
         relay.out.send(host, bye_frame);
         relay.out.close(host);
@@ -460,6 +472,16 @@ fn endWith(relay: *Relay, room: *Room, bye_frame: []const u8) void {
         relay.out.close(g.link);
     }
     relay.free(room);
+}
+
+/// A connection, as the log names it.
+fn who(link: *const Link) struct {
+    id: u64,
+    pub fn format(c: @This(), w: *std.Io.Writer) std.Io.Writer.Error!void {
+        try w.print("connection {d}", .{c.id});
+    }
+} {
+    return .{ .id = link.id };
 }
 
 fn frameWriter(relay: *Relay) wire.FrameWriter {
@@ -532,6 +554,11 @@ pub const Room = struct {
     next_peer: u32 = wire.host_peer + 1,
     /// The one block the log and snapshot live in.
     memory: []u8,
+
+    /// Enough of the ID to tell rooms apart in the log, not to join one, which takes a secret anyway.
+    fn shortID(room: *const Room) []const u8 {
+        return room.id[0..8];
+    }
 
     fn guest(room: *Room, link: *const Link) ?*Guest {
         for (room.guests.items) |*g| if (g.link == link) return g;
@@ -607,6 +634,7 @@ fn makeRoom(relay: *Relay, h: wire.Hello) Allocator.Error!*Room {
         .memory = memory,
     };
     relay.rooms.putAssumeCapacityNoClobber(&room.id, room);
+    log.info("room {s} made, rooms open: {d}", .{ room.shortID(), relay.rooms.count() });
     relay.room_list.append(&room.node);
     return room;
 }

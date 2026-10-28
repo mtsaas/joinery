@@ -6,6 +6,21 @@
 const std = @import("std");
 const Server = @import("Server.zig");
 
+pub const std_options: std.Options = .{ .logFn = log };
+
+/// The std log, each line with the time it was written, in UTC.
+fn log(comptime level: std.log.Level, comptime scope: @EnumLiteral(), comptime format: []const u8, args: anytype) void {
+    const io = std.Options.debug_io;
+    const prev = io.swapCancelProtection(.blocked);
+    defer _ = io.swapCancelProtection(prev);
+    const second: u64 = @intCast(@mod(@divFloor(std.Io.Clock.real.now(io).toMilliseconds(), 1000), 86400));
+    var buffer: [64]u8 = undefined;
+    const stderr = std.debug.lockStderr(&buffer).terminal();
+    defer std.debug.unlockStderr();
+    stderr.writer.print("{d:0>2}:{d:0>2}:{d:0>2}Z ", .{ second / 3600, second / 60 % 60, second % 60 }) catch return;
+    std.log.defaultLogFileTerminal(level, scope, format, args, stderr) catch {};
+}
+
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
     var address_text: []const u8 = "127.0.0.1";

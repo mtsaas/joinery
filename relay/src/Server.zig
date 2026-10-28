@@ -13,6 +13,7 @@ const Relay = @import("Relay.zig");
 const wire = @import("wire.zig");
 
 const Server = @This();
+const log = std.log.scoped(.server);
 
 io: Io,
 gpa: Allocator,
@@ -53,7 +54,7 @@ pub fn serve(server: *Server, listener: *Io.net.Server) !void {
         const stream = try listener.accept(io);
         tasks.concurrent(io, connection, .{ server, stream }) catch {
             stream.close(io);
-            std.log.warn("turned a connection away: no thread for it", .{});
+            log.warn("turned a connection away: no thread for it", .{});
         };
     }
 }
@@ -177,6 +178,8 @@ fn upgrade(http: *std.http.Server) !WebSocket {
         .other, .none => {},
     }
     if (request.head.method == .GET and std.mem.startsWith(u8, request.head.target, "/r/")) {
+        // The path only: the key and secret are after the link's #, so never here.
+        log.info("served the web client for {s}", .{request.head.target});
         try request.respond(web_client, .{ .extra_headers = &.{
             .{ .name = "content-type", .value = "text/html; charset=utf-8" },
             .{ .name = "cache-control", .value = "no-cache" },
@@ -217,6 +220,7 @@ fn send(ptr: *anyopaque, link: *Relay.Link, frame: []const u8) void {
     var header: [10]u8 = undefined;
     const head = webSocketHeader(&header, frame.len);
     if (conn.outbox_len + head.len + frame.len > conn.outbox.len) {
+        log.info("connection {d} dropped: its outbox is full, so it's too far behind", .{link.id});
         conn.state = .lagging;
         conn.ready.signal(server.io);
         return;
