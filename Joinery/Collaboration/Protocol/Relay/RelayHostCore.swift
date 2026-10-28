@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// The host's side of a relayed session, without the network or the app, as `HostCore` is for a local one. See
@@ -25,6 +26,8 @@ final class RelayHostCore {
 
     let name: String
     let title: String
+    /// The room key, which seals every body and goes only into the links the host hands out.
+    let key = SymmetricKey(size: .bits256)
     private(set) var state = State.connecting
     /// The document, with its digest, as of decision `seq`.
     private(set) var document: CheckedReplica
@@ -140,7 +143,7 @@ final class RelayHostCore {
         guard guest != Relay.hostPeer, cseq == (taken[guest] ?? 0) + 1 else { return [] }
         taken[guest] = cseq
         do {
-            let ops = try Wire.decode(frame.body)
+            let ops = try Wire.decode(try frame.opened(with: key))
             var trial = document.replica
             let tidying = try trial.receive(ops)
             // Each published with the digest after it: the change, then the tidying the host does after it.
@@ -153,7 +156,7 @@ final class RelayHostCore {
             let reason = (error as? Wire.Malformed).map { "The change couldn't be read: \($0.what)." } ?? error.localizedDescription
             onPublish?(seq, [], guest, cseq)
             let decision = Relay.Decision(author: guest, cseq: cseq, digest: document.digest.bytes, content: Array(reason.utf8))
-            return sendIfConnected(Wire.Frame(.reject, seq: seq, body: decision.body))
+            return sendIfConnected(Wire.Frame(.reject, seq: seq, sealing: decision.body, with: key))
         }
     }
 
@@ -164,7 +167,7 @@ final class RelayHostCore {
         seq += 1
         onPublish?(seq, ops, author, cseq)
         let decision = Relay.Decision(author: author, cseq: cseq, digest: document.digest.bytes, content: Wire.encode(ops))
-        return sendIfConnected(Wire.Frame(.ops, seq: seq, body: decision.body))
+        return sendIfConnected(Wire.Frame(.ops, seq: seq, sealing: decision.body, with: key))
     }
 
     private func sendIfConnected(_ frame: Wire.Frame) -> [Effect] {
@@ -174,7 +177,7 @@ final class RelayHostCore {
     private var snapshot: [UInt8] {
         let entities = document.replica.entities.keys.sorted().map { document.replica.entities[$0]! }
         let body = Relay.Snapshot(digest: document.digest.bytes, taken: taken, entities: entities).body
-        return Wire.Frame(.snapshot, seq: seq, body: body).bytes
+        return Wire.Frame(.snapshot, seq: seq, sealing: body, with: key).bytes
     }
 
     private func resync() -> [Effect] {

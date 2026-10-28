@@ -206,6 +206,28 @@ const Wire = (() => {
       if (!kind) throw malformed("an unknown kind of message");
       return { kind, flags: d.getUint16(2, true), length: d.getUint32(4, true), seq: Number(d.getBigUint64(8, true)), peer: d.getUint32(16, true) };
     },
+    // Bodies sealed with the room key, as Seal.swift does: AES-256-GCM, the body written as nonce, ciphertext and tag,
+    // with the header (its peer zeroed, as the relay writes that) authenticated alongside.
+    importKey(raw) { return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]); },
+    async seal(key, { kind, seq = 0 }, plain) {
+      const header = this.encodeHeader({ kind, length: plain.length + 28, seq });
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: header }, key, plain));
+      const frame = new Uint8Array(HEADER_SIZE + 12 + sealed.length);
+      frame.set(header); frame.set(iv, HEADER_SIZE); frame.set(sealed, HEADER_SIZE + 12);
+      return frame;
+    },
+    // A whole frame's {header, body}, its body opened; throws if it doesn't open with this key.
+    async open(key, frame) {
+      const header = this.decodeHeader(frame);
+      if (frame.length !== HEADER_SIZE + header.length || header.length < 28) throw malformed("a length that isn't the body's");
+      const aad = frame.slice(0, HEADER_SIZE); aad.fill(0, 16, 20);
+      try {
+        const body = await crypto.subtle.decrypt({ name: "AES-GCM", iv: frame.subarray(HEADER_SIZE, HEADER_SIZE + 12), additionalData: aad },
+                                                 key, frame.subarray(HEADER_SIZE + 12));
+        return { header, body: new Uint8Array(body) };
+      } catch { throw malformed("a message that doesn't open with the room's key"); }
+    },
   };
 })();
 </script>

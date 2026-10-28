@@ -1,3 +1,4 @@
+import CryptoKit
 import CoreGraphics
 import Foundation
 import Testing
@@ -74,7 +75,7 @@ extension RelaySimulation {
     /// A guest that can't read the room's version is told which side needs updating.
     @Test func aGuestOfAnotherVersionIsToldWhoNeedsUpdating() {
         for (version, reason) in [(Relay.roomVersion + 1, "This session needs a newer Joinery."), (0, "The host needs a newer Joinery.")] {
-            let guest = RelayGuestCore(room: "r", secret: "s", name: "Guest")
+            let guest = RelayGuestCore(room: "r", secret: "s", key: SymmetricKey(size: .bits256), name: "Guest")
             _ = guest.connected(at: .now)
             let welcome = Relay.Welcome(peer: 2, room: "r", limits: Relay.Limits(), latest: 0, version: version, title: [], peers: [:])
             guard case .ended(let said)? = guest.received(welcome.frame.bytes, at: .now).first else { Issue.record("joined"); continue }
@@ -97,13 +98,13 @@ extension RelaySimulation {
         _ = host.connected(at: .now)
         let welcome = Relay.Welcome(peer: 1, room: "r", limits: Relay.Limits(), latest: 0, version: 1, title: [], peers: [:])
         _ = host.received(welcome.frame.bytes, at: .now)
-        let change = Wire.Frame(.change, seq: 1, peer: 2, body: Wire.encode([.delete(id: column)])).bytes
+        let change = Wire.stamp(Wire.Frame(.change, seq: 1, sealing: Wire.encode([.delete(id: column)]), with: host.key).bytes, peer: 2)
         let published = host.received(change, at: .now).compactMap { effect -> Wire.Frame? in
             if case .send(let bytes) = effect { try? Wire.Frame(bytes) } else { nil }
         }
         #expect(published.map(\.header.kind) == [.ops, .ops])
         for frame in published {
-            let decision = try Relay.Decision(frame.body)
+            let decision = try Relay.Decision(try frame.opened(with: host.key))
             copy.apply(try Wire.decode(decision.content))
             #expect(decision.digest == copy.digest.bytes, "decision \(frame.header.seq)")
         }
@@ -434,7 +435,7 @@ final class RelayNetwork {
                 guests = (0..<guestCount + viewers).map { index in
                     let isViewer = index >= guestCount
                     return RelayGuestCore(room: welcome.room, secret: isViewer ? welcome.viewSecret : welcome.guestSecret,
-                                          name: "Guest \(index)", canEdit: !isViewer)
+                                          key: host.key, name: "Guest \(index)", canEdit: !isViewer)
                 }
                 shown = Array(repeating: Replica(), count: guests.count)
                 made = Array(repeating: 0, count: guests.count)

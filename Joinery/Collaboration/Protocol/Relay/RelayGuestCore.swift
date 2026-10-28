@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// A guest's side of a relayed session, without the network or the app, as `ClientCore` is for a local one. See
@@ -25,6 +26,8 @@ final class RelayGuestCore {
 
     let room: String
     let secret: String
+    /// The room key, from the link: it opens every body, and seals this guest's changes.
+    let key: SymmetricKey
     let name: String
     let canEdit: Bool
     /// Who this guest is to the relay, through every reconnection.
@@ -49,9 +52,10 @@ final class RelayGuestCore {
     static let pingInterval: TimeInterval = 10
     static let silence: TimeInterval = 25
 
-    init(room: String, secret: String, name: String, canEdit: Bool = true) {
+    init(room: String, secret: String, key: SymmetricKey, name: String, canEdit: Bool = true) {
         self.room = room
         self.secret = secret
+        self.key = key
         self.name = name
         self.canEdit = canEdit
     }
@@ -157,7 +161,9 @@ final class RelayGuestCore {
     }
 
     private func snapshot(_ frame: Wire.Frame) -> [Effect] {
-        guard let snapshot = try? Relay.Snapshot(frame.body) else { return resync() }
+        // Not opening is a wrong key, not a bad connection: trying again won't help.
+        guard let plain = try? frame.opened(with: key) else { return end("Couldn't read this session: check the link.") }
+        guard let snapshot = try? Relay.Snapshot(plain) else { return resync() }
         var copy = Replica()
         for entity in snapshot.entities { _ = copy.apply(.put(entity)) }
         confirmed = CheckedReplica(copy)
@@ -171,7 +177,8 @@ final class RelayGuestCore {
     }
 
     private func decision(_ frame: Wire.Frame) -> [Effect] {
-        guard hasCopy, frame.header.seq == seq + 1, let decision = try? Relay.Decision(frame.body) else { return resync() }
+        guard hasCopy, frame.header.seq == seq + 1, let plain = try? frame.opened(with: key),
+              let decision = try? Relay.Decision(plain) else { return resync() }
         var effects: [Effect] = []
         if frame.header.kind == .ops {
             guard let ops = try? Wire.decode(decision.content) else { return resync(discardingCopy: true) }
@@ -188,7 +195,7 @@ final class RelayGuestCore {
     }
 
     private func changeFrame(_ change: (cseq: UInt64, ops: [Replica.Op])) -> [UInt8] {
-        Wire.Frame(.change, seq: change.cseq, body: Wire.encode(change.ops)).bytes
+        Wire.Frame(.change, seq: change.cseq, sealing: Wire.encode(change.ops), with: key).bytes
     }
 
     /// Starts afresh: drops the connection to reconnect at once, and catch up from where it is, or, if its copy can't be

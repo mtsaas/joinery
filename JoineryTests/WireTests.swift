@@ -1,6 +1,8 @@
+import CryptoKit
 import Foundation
 import JavaScriptCore
 import Testing
+import WebKit
 @testable import Joinery
 
 /// The binary form of session messages, in Swift and in the web client, which have to agree byte for byte.
@@ -94,11 +96,15 @@ struct WireTests {
     // MARK: The web client
 
     /// The web client's `wire` script, in JavaScriptCore, which lacks a browser's TextEncoder and TextDecoder.
-    private func webWire() throws -> JSContext {
+    private func wireScript() throws -> String {
         let url = try #require(Bundle.main.url(forResource: "WebClient", withExtension: "html"))
         let page = try String(contentsOf: url, encoding: .utf8)
         let start = try #require(page.range(of: "<script id=\"wire\">")).upperBound
-        let script = String(page[start..<(try #require(page.range(of: "</script>", range: start..<page.endIndex)).lowerBound)])
+        return String(page[start..<(try #require(page.range(of: "</script>", range: start..<page.endIndex)).lowerBound)])
+    }
+
+    private func webWire() throws -> JSContext {
+        let script = try wireScript()
         let context = try #require(JSContext())
         var failure: String?
         context.exceptionHandler = { _, exception in failure = exception?.toString() }
@@ -153,6 +159,69 @@ struct WireTests {
             #expect(throws: (any Error).self) { try Wire.decode(bad) }
             #expect(throws: (any Error).self) { _ = try call(context, "(b => Wire.decodeOps(Uint8Array.from(b)))", [bad.map(Int.init)]) }
         }
+    }
+
+    // MARK: Sealing
+
+    @Test func sealedFramesOpenOnlyAsSealed() throws {
+        let key = SymmetricKey(size: .bits256)
+        let plain = Wire.encode(unusual)
+        let frame = Wire.Frame(.change, seq: 7, sealing: plain, with: key)
+        #expect(frame.bytes.count == Wire.Header.size + plain.count + Wire.Frame.sealing)
+        // The relay writing the sender in changes nothing.
+        #expect(try Wire.Frame(Wire.stamp(frame.bytes, peer: 3)).opened(with: key) == plain)
+        // Anything else changed doesn't open: the seq, the kind, the body, or the key.
+        var tampered = [frame.bytes, frame.bytes, frame.bytes]
+        tampered[0][8] ^= 1
+        tampered[1][1] = Wire.Kind.ops.rawValue
+        tampered[2][tampered[2].count - 1] ^= 1
+        for bytes in tampered {
+            #expect(throws: Wire.Malformed.self) { try Wire.Frame(bytes).opened(with: key) }
+        }
+        #expect(throws: Wire.Malformed.self) { try frame.opened(with: SymmetricKey(size: .bits256)) }
+    }
+
+    /// A guest whose link has the wrong key is told so, rather than trying again forever.
+    @Test func aGuestWithTheWrongKeyIsToldToCheckTheLink() throws {
+        let host = RelayHostCore(Replica(), title: "t", name: "Host")
+        let snapshot = host.connected(at: .now).compactMap { effect -> [UInt8]? in if case .send(let b) = effect { b } else { nil } }[1]
+        let guest = RelayGuestCore(room: "r", secret: "s", key: SymmetricKey(size: .bits256), name: "Guest")
+        _ = guest.connected(at: .now)
+        let welcome = Relay.Welcome(peer: 2, room: "r", limits: Relay.Limits(), latest: 0, version: Relay.roomVersion, title: [], peers: [:])
+        _ = guest.received(welcome.frame.bytes, at: .now)
+        guard case .ended(let reason)? = guest.received(snapshot, at: .now).first else { Issue.record("not ended"); return }
+        #expect(reason == "Couldn't read this session: check the link.")
+    }
+
+    /// The web client opens what Swift seals, and Swift what it seals, in a real WebKit page: JavaScriptCore alone has
+    /// no WebCrypto, and WebKit only offers it to a secure page, hence the https base.
+    @MainActor @Test func theWebClientAndSwiftOpenEachOthersFrames() async throws {
+        let page = WKWebView()
+        page.loadHTMLString("<script>\(try wireScript())\nwindow.Wire = Wire;</script>", baseURL: URL(string: "https://joinery.test/"))
+        for _ in 0..<250 where (try? await page.evaluateJavaScript("typeof Wire")) as? String != "object" {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let key = SymmetricKey(size: .bits256)
+        let raw = key.withUnsafeBytes { Array($0) }
+        let plain = Wire.encode(unusual)
+        let fromSwift = Wire.stamp(Wire.Frame(.ops, seq: 9, sealing: plain, with: key).bytes, peer: 1)
+        var tampered = fromSwift
+        tampered[8] ^= 1
+        let result = try await page.callAsyncJavaScript("""
+            const key = await Wire.importKey(Uint8Array.from(raw));
+            const opened = await Wire.open(key, Uint8Array.from(fromSwift));
+            const refused = await Wire.open(key, Uint8Array.from(tampered)).then(() => false, () => true);
+            const sealed = await Wire.seal(key, { kind: "change", seq: 4 }, opened.body);
+            return { kind: opened.header.kind, seq: opened.header.seq, body: Array.from(opened.body), refused, sealed: Array.from(sealed) };
+            """, arguments: ["raw": raw, "fromSwift": fromSwift, "tampered": tampered], contentWorld: .page) as? [String: Any]
+        let answer = try #require(result)
+        #expect(answer["kind"] as? String == "ops" && answer["seq"] as? Int == 9)
+        #expect((answer["body"] as? [NSNumber])?.map(\.uint8Value) == plain)
+        #expect(answer["refused"] as? Bool == true)
+        let fromWeb = try #require((answer["sealed"] as? [NSNumber])?.map(\.uint8Value))
+        let frame = try Wire.Frame(Wire.stamp(fromWeb, peer: 2))
+        #expect(frame.header.kind == .change && frame.header.seq == 4)
+        #expect(try frame.opened(with: key) == plain)
     }
 }
 

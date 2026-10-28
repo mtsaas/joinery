@@ -104,6 +104,13 @@ relay writes `peer`). So the relay can't read bodies, can't move a body to a dif
 noticing, and can't forge a change from the host. It can still withhold or delay frames. Guests detect withholding as a
 gap or a stale `pong`, as they do now.
 
+Sealed bodies are those only clients read: `ops`, `reject`, `change`, `snapshot` and `presence`. `hello`, `ping`,
+`pong`, `joined`, `left` and `bye` stay plain, as the relay reads or writes them. Nonces are random, which is safe far
+past any room's life. `Joinery/Collaboration/Protocol/Seal.swift` and the web client's `Wire.seal` and `Wire.open` both
+implement it, and a test has each open the other's frames in a real WebKit page. A frame that doesn't open is treated
+like one that doesn't parse: the host turns the change down, and a guest reconnects. A snapshot that doesn't open
+means the link's key is wrong, so the guest stops and says to check the link, instead of retrying forever.
+
 Inside the encryption, a change is a list of ops in a compact binary form: entity IDs as 16 raw bytes, field names as
 one-byte codes, values tagged by type, strings length-prefixed. The appendix has the exact encoding;
 `Joinery/Collaboration/Protocol/Wire.swift` and the web client's `wire` script both implement it, and tests check that
@@ -198,8 +205,8 @@ cuts connections partway, the host's included, and most runs use logs of 1.5 to 
 dropped hosts happen constantly: across 60 runs, 183 snapshot requests, 92 guests dropped for lagging, 39 hosts dropped
 for a full log, 300 catch-ups from a snapshot and 42 from the log. 400 runs go with every test run; 3,000 longer ones
 passed while it was written. Unlike the first simulation, nothing is lost, repeated or garbled on a connection that
-stays up: TCP rules that out, and encryption (step 3) turns a garbled frame into a refused one, which ends the
-connection like a cut.
+stays up: TCP rules that out, and encryption turns a garbled frame into a refused one, which ends the connection like
+a cut. The simulation runs with encryption on, so every frame in it is sealed and opened.
 
 The simulation found one bug, in both protocols: a change that leaves something dangling was published with the
 digest from after the host's tidying, not before it. Locally, guests fetched the whole model again each time and
