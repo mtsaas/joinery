@@ -51,6 +51,18 @@ whether it was connected, reconnecting, or catching up from a snapshot. This rep
 pong check for lost answers: a lost answer is now a gap in the numbering, which guests already detect. A rejection
 changes nothing in the model, so its digest is the one before it.
 
+**The host starts every connection with a snapshot.** Its `hello`, asking for a room or for its room back, is followed
+at once by the document as it is now, numbered with its latest decision. So a host that loses its connection never has
+to work out which of its decisions reached the relay: it carries on numbering while away, and the snapshot it sends on
+coming back covers everything. If the snapshot is past what the relay has, the relay can't catch anyone up across the
+gap, so it starts its log again from the snapshot and sends the snapshot to every guest.
+
+**Guests send their pending changes again** after every `welcome`, and whenever the host comes back (`joined` from
+peer 1). While the host's away, the relay drops guests' changes. The host takes a change only when its `cseq` is one
+past the last it took from that guest, and ignores anything else: a change it's taken already, or one after a gap,
+which the guest will send again in order. Snapshots carry the last change taken from each guest, so a guest catching
+up from one drops its pending changes the snapshot already covers.
+
 Presence (pointers and selections) isn't logged. The relay keeps the latest presence per peer in a fixed slot,
 overwrites it on each update, and sends it on when the socket has room. A dropped pointer update costs nothing; the
 next one replaces it.
@@ -124,7 +136,8 @@ catching up are the same operation, so there are no per-guest queues.
 - the latest snapshot, so a new joiner can load it and replay from there;
 - the oldest connected guest's last applied change, from its pings.
 
-**When a new frame doesn't fit,** the relay drops the guest holding the tail back and trims. That guest reconnects and
+**When a new frame doesn't fit,** the relay drops the guest holding the tail back and trims. If what's left is all past
+the snapshot, nothing can go, so the relay drops the host instead, which comes straight back with a new snapshot. That guest reconnects and
 catches up from the snapshot, like a new joiner. A guest on a slow network falls behind, becomes the oldest, and is
 dropped, so one slow guest can't make the relay buffer without limit. The ring has to hold more than one ping interval
 (10 s) of changes, or a healthy guest could be dropped between two of its own pings; ring size is set in bytes, which
@@ -171,6 +184,27 @@ buffer for its `hello`, freed once it joins.
 
 When the inbox can't fit a guest's next frame, the relay stops reading from that guest until the host catches up. TCP
 then slows the guest down, and nothing grows.
+
+## Why every copy is right
+
+The argument in [collaboration.md](collaboration.md#why-every-copy-is-right) carries over, with the host's decisions in
+place of its changes: a guest's copy is always `D(seq)`, each of its changes is decided at most once (the host takes
+`cseq` only one past the last), and at least once (it's sent again on every `welcome` and every return of the host,
+until a decision on it arrives, by the log or covered by a snapshot). The relay only delays, drops and replays the
+host's frames in order, which is what a network does.
+
+`JoineryTests/RelaySimulation.swift` checks it the same way, with a real `RelayCore` between the host and guests. It
+cuts connections partway, the host's included, and most runs use logs of 1.5 to 6 KB, so snapshots, dropped guests and
+dropped hosts happen constantly: across 60 runs, 183 snapshot requests, 92 guests dropped for lagging, 39 hosts dropped
+for a full log, 300 catch-ups from a snapshot and 42 from the log. 400 runs go with every test run; 3,000 longer ones
+passed while it was written. Unlike the first simulation, nothing is lost, repeated or garbled on a connection that
+stays up: TCP rules that out, and encryption (step 3) turns a garbled frame into a refused one, which ends the
+connection like a cut.
+
+The simulation found one bug, in both protocols: a change that leaves something dangling was published with the
+digest from after the host's tidying, not before it. Locally, guests fetched the whole model again each time and
+recovered; through the relay they caught up from the same frame forever. Each decision now carries the digest right
+after it.
 
 ## Versions
 

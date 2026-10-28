@@ -92,7 +92,7 @@ extension SessionSimulation {
     }
 }
 
-fileprivate final class Simulation {
+final class Simulation {
     final class Link {
         let id: Int, client: Int
         var toHost: [String] = [], toClient: [String] = []
@@ -384,7 +384,7 @@ fileprivate final class Simulation {
 
     // MARK: Edits
 
-    static func randomEdit(_ model: inout DataModel, _ random: inout Seeded) {
+    static func randomEdit(_ model: inout DataModel, _ random: inout some RandomNumberGenerator) {
         guard let table = model.tables.randomElement(using: &random) else { _ = model.addTable(at: .zero); return }
         let column = table.columns.randomElement(using: &random)
         let other = model.tables.randomElement(using: &random)!

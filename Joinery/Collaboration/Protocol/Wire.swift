@@ -169,8 +169,8 @@ enum Wire {
         }
     }
 
-    /// Reads what's written above, checking every length against what's left, so bad bytes throw and never trap.
-    private struct Reader {
+    /// Reads what's written here, checking every length against what's left, so bad bytes throw and never trap.
+    struct Reader {
         let bytes: [UInt8]
         var index = 0
         /// How deeply arrays and objects nest, bounded so bad bytes can't overflow the stack.
@@ -213,6 +213,15 @@ enum Wire {
             let count = try varint()
             guard count <= UInt64(bytes.count - index) else { throw Malformed("a count past the end") }
             return Int(count)
+        }
+
+        /// Length-prefixed bytes, as `appendBytes` writes them.
+        mutating func blob() throws(Malformed) -> [UInt8] { Array(try take(try count())) }
+
+        /// Whatever's left.
+        mutating func rest() -> [UInt8] {
+            defer { index = bytes.count }
+            return Array(bytes[index...])
         }
 
         mutating func string() throws(Malformed) -> String {
@@ -264,7 +273,47 @@ enum Wire {
     }
 }
 
-private extension [UInt8] {
+// MARK: Frames
+
+extension Wire {
+    /// A whole message: its header, and exactly as much body as the header says.
+    struct Frame {
+        var header: Header
+        var body: [UInt8]
+
+        init(_ kind: Kind, seq: UInt64 = 0, peer: UInt32 = 0, body: [UInt8] = []) {
+            header = Header(kind: kind, length: UInt32(body.count), seq: seq, peer: peer)
+            self.body = body
+        }
+
+        init(_ bytes: [UInt8]) throws(Malformed) {
+            header = try Header(bytes)
+            guard bytes.count == Header.size + Int(header.length) else { throw Malformed("a length that isn't the body's") }
+            body = Array(bytes[Header.size...])
+        }
+
+        var bytes: [UInt8] { header.bytes + body }
+    }
+
+    /// `frame` with its header's `peer` set: how a relay stamps a guest's frame with its sender, changing nothing else.
+    static func stamp(_ frame: [UInt8], peer: UInt32) -> [UInt8] {
+        var frame = frame
+        for i in 0..<4 { frame[16 + i] = UInt8(truncatingIfNeeded: peer >> (8 * UInt32(i))) }
+        return frame
+    }
+}
+
+extension Digest {
+    /// The two sums, as 8 bytes, as frames carry them.
+    var bytes: [UInt8] {
+        var out: [UInt8] = []
+        out.append(littleEndian: first)
+        out.append(littleEndian: second)
+        return out
+    }
+}
+
+extension [UInt8] {
     mutating func append<T: FixedWidthInteger>(littleEndian value: T) {
         Swift.withUnsafeBytes(of: value.littleEndian) { append(contentsOf: $0) }
     }
@@ -281,5 +330,10 @@ private extension [UInt8] {
     mutating func appendString(_ string: String) {
         appendVarint(string.utf8.count)
         append(contentsOf: string.utf8)
+    }
+
+    mutating func appendBytes(_ bytes: [UInt8]) {
+        appendVarint(bytes.count)
+        append(contentsOf: bytes)
     }
 }

@@ -178,8 +178,13 @@ final class HostCore {
         taken[client] = cseq
         let ops = message.ops ?? []
         do {
-            let tidying = try document.receive(ops)
-            return [.apply(ops + tidying)] + publish(ops, author: peer, cseq: cseq) + publish(tidying, author: me.id)
+            var trial = document.replica
+            let tidying = try trial.receive(ops)
+            // Each published with the digest after it: the change, then the tidying the host does after it.
+            document.apply(ops)
+            let change = publish(ops, author: peer, cseq: cseq)
+            document.apply(tidying)
+            return [.apply(ops + tidying)] + change + publish(tidying, author: me.id)
         } catch {
             var reject = Message("reject")
             reject.cseq = cseq
