@@ -1481,6 +1481,20 @@ struct JoineryTests {
         try await until { host.peers.count == 1 && b.peers.count == 1 }
     }
 
+    /// Others' drags move tables as a drag here does, and one let go of keeps showing until its change lands.
+    @Test func othersDragsShowAsTheyreMade() {
+        let canvas = CanvasController()
+        let table = UUID()
+        var peer = Peer(id: "2", name: "Ann", color: "purple", selection: [table.uuidString], drag: [30, 40])
+        canvas.showDrags(of: [peer])
+        #expect(canvas.tableOffsets[table] == CGPoint(x: 30, y: 40))
+        peer.drag = nil
+        canvas.showDrags(of: [peer])
+        #expect(canvas.tableOffsets[table] == CGPoint(x: 30, y: 40))
+        canvas.dragsLanded()
+        #expect(canvas.tableOffsets[table] == nil)
+    }
+
     @Test func whenTheHostStopsGuestsKeepTheirCopy() async throws {
         let (hosted, host, relay) = try await hosting()
         defer { relay.stop() }

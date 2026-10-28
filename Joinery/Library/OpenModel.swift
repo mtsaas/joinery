@@ -133,6 +133,7 @@ final class OpenModel {
     func applyFromSession(_ ops: [Replica.Op]) {
         _ = replica.apply(ops)
         model = replica.model
+        onSessionChange?()
         scheduleSave()
     }
 
@@ -140,8 +141,12 @@ final class OpenModel {
     func adopt(_ replica: Replica) {
         self.replica = replica
         model = replica.model
+        onSessionChange?()
         scheduleSave()
     }
+
+    /// Called as a change from someone else in a session lands, in the same update.
+    @ObservationIgnored var onSessionChange: (() -> Void)?
 
     /// Registers `undo` to be applied: as the undo while changing or redoing, as the redo while undoing.
     private func registerUndo(_ undo: [Replica.Op]) {

@@ -461,8 +461,43 @@ final class CanvasController {
     var isUntangling: Bool { untangleTask != nil }
 
     var tableOffsets: [Table.ID: CGPoint] {
-        guard let dragOffset else { return previewOffsets }
-        return Dictionary(uniqueKeysWithValues: selectedTables.map { ($0, dragOffset) })
+        // Others' drags, under any here.
+        let others = endedDrags.merging(othersDrags) { _, now in now }
+        guard let dragOffset else { return others.merging(previewOffsets) { _, here in here } }
+        return others.merging(selectedTables.map { ($0, dragOffset) }) { _, here in here }
+    }
+
+    /// Others' drags in a session, by table: shown moving, as a drag here is, before letting go makes them a change.
+    private(set) var othersDrags: [Table.ID: CGPoint] = [:]
+    /// Drags just let go of, still shown until their change lands, so the tables don't jump back meanwhile.
+    private var endedDrags: [Table.ID: CGPoint] = [:]
+    private var endedDragsTimeout: Task<Void, Never>?
+
+    /// Shows what `peers` are dragging.
+    func showDrags(of peers: some Sequence<Peer>) {
+        var drags: [Table.ID: CGPoint] = [:]
+        for peer in peers {
+            guard let drag = peer.drag, drag.count == 2 else { continue }
+            for id in (peer.selection ?? []).compactMap(UUID.init(uuidString:)) { drags[id] = CGPoint(x: drag[0], y: drag[1]) }
+        }
+        let ended = othersDrags.filter { drags[$0.key] == nil }
+        if !ended.isEmpty {
+            endedDrags.merge(ended) { _, new in new }
+            // Let go of without a change (dropped where it began, or turned down): not shown for long.
+            endedDragsTimeout?.cancel()
+            endedDragsTimeout = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1.5))
+                if !Task.isCancelled { self?.endedDrags = [:] }
+            }
+        }
+        if drags != othersDrags { othersDrags = drags }
+    }
+
+    /// A change from someone else has landed: drags it ends are now in the model.
+    func dragsLanded() {
+        guard !endedDrags.isEmpty else { return }
+        endedDrags = [:]
+        endedDragsTimeout?.cancel()
     }
     var tieOffsets: [ZipTie.ID: CGPoint] { dragOffset.map { offset in Dictionary(uniqueKeysWithValues: selectedTies.map { ($0, offset) }) } ?? [:] }
 

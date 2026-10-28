@@ -342,6 +342,9 @@ private struct PresenceSharing: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            // Others' drags, shown as moving as they're made.
+            .onChange(of: open.session?.peers ?? [:], initial: true) { _, peers in canvas.showDrags(of: peers.values) }
+            .onAppear { open.onSessionChange = { [canvas] in canvas.dragsLanded() } }
             .onContinuousHover(coordinateSpace: .global) { phase in
                 if case .active(let location) = phase {
                     hovered = canvas.canvasPoint(location - canvasOrigin)
@@ -368,7 +371,9 @@ private struct PresenceSharing: ViewModifier {
             guard Date.now.timeIntervalSince(lastShared) > 0.05 else { return }
             lastShared = .now
         }
-        session.share(Relay.Presence(cursor: canvas.dragPointer ?? hovered, selection: canvas.selectedTables,
+        // A group's tables move with it, so they're what others are told are dragged.
+        let selection = canvas.dragOffset == nil ? canvas.selectedTables : canvas.selectedTablesAndMembers(in: open.model)
+        session.share(Relay.Presence(cursor: canvas.dragPointer ?? hovered, selection: selection,
                                      drag: canvas.dragOffset, marquee: canvas.marquee))
     }
 }

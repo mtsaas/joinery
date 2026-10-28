@@ -182,15 +182,13 @@ struct PresenceLayer: View {
         let frames = Dictionary(tables.map { ($0.id.uuidString, Metrics.frame(of: $0)) }, uniquingKeysWith: { first, _ in first })
         ZStack(alignment: .topLeading) {
             ForEach(peers) { peer in
-                // Their selection ringed, and while they drag it, where it's going.
-                let drag = peer.drag.map { CGPoint(x: $0[0], y: $0[1]) } ?? .zero
+                // Their selection ringed, where the canvas shows it: moving, while they drag it.
                 ForEach(peer.selection ?? [], id: \.self) { id in
                     if let frame = frames[id] {
                         let gap = Metrics.selectionGap + Metrics.selectionWidth + 2
-                        let rect = frame.insetBy(dx: -gap / canvas.zoom, dy: -gap / canvas.zoom).offsetBy(dx: drag.x, dy: drag.y)
-                        let shape = RoundedRectangle(cornerRadius: Metrics.cornerRadius * canvas.zoom + gap)
-                        shape
-                            .fill(peer.swiftUIColor.opacity(peer.drag == nil ? 0 : 0.12))
+                        let offset = UUID(uuidString: id).flatMap { canvas.tableOffsets[$0] } ?? .zero
+                        let rect = frame.insetBy(dx: -gap / canvas.zoom, dy: -gap / canvas.zoom).offsetBy(dx: offset.x, dy: offset.y)
+                        RoundedRectangle(cornerRadius: Metrics.cornerRadius * canvas.zoom + gap)
                             .stroke(peer.swiftUIColor, lineWidth: Metrics.selectionWidth)
                             .frame(width: rect.width * canvas.zoom, height: rect.height * canvas.zoom)
                             .position(canvas.viewPoint(CGPoint(x: rect.midX, y: rect.midY)))
