@@ -161,7 +161,11 @@ fn read(server: *Server, conn: *Connection, ws: *WebSocket) !void {
     }
 }
 
-/// Answers the HTTP request a connection starts with, which must be for a WebSocket.
+/// The page a link opens in a browser.
+const web_client = @embedFile("WebClient.html");
+
+/// Answers the HTTP request a connection starts with: a WebSocket's, or a browser's opening a link, which gets the web
+/// client. Its key and secret are after the link's `#`, so they never reach here.
 fn upgrade(http: *std.http.Server) !WebSocket {
     var request = try http.receiveHead();
     switch (request.upgradeRequested()) {
@@ -172,7 +176,15 @@ fn upgrade(http: *std.http.Server) !WebSocket {
         },
         .other, .none => {},
     }
-    try request.respond("This is a Joinery relay. Share from Joinery to use it.\n", .{ .status = .upgrade_required });
+    if (request.head.method == .GET and std.mem.startsWith(u8, request.head.target, "/r/")) {
+        try request.respond(web_client, .{ .extra_headers = &.{
+            .{ .name = "content-type", .value = "text/html; charset=utf-8" },
+            .{ .name = "cache-control", .value = "no-cache" },
+            .{ .name = "referrer-policy", .value = "no-referrer" },
+        } });
+    } else {
+        try request.respond("This is a Joinery relay. Share from Joinery to use it.\n", .{ .status = .not_found });
+    }
     return error.NotWebSocket;
 }
 
@@ -236,6 +248,10 @@ fn webSocketHeader(buffer: *[10]u8, length: usize) []const u8 {
     buffer[1] = 127;
     std.mem.writeInt(u64, buffer[2..10], length, .big);
     return buffer[0..10];
+}
+
+test "the web client is served whole" {
+    try std.testing.expect(std.mem.indexOf(u8, web_client, "<script id=\"wire\">") != null);
 }
 
 test "WebSocket headers" {

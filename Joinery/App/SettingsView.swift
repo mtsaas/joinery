@@ -4,10 +4,35 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
+            SharingSettings()
+                .tabItem { Label("Sharing", systemImage: "person.2") }
             AIAssistantSettings()
                 .tabItem { Label("AI Assistants", systemImage: "sparkles") }
         }
         .frame(width: 580)
+    }
+}
+
+/// Which relay sessions go through.
+private struct SharingSettings: View {
+    @AppStorage("relay") private var relay = ""
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Relay", text: $relay, prompt: Text(Relay.ours.absoluteString))
+                    .textFieldStyle(.roundedBorder)
+            } footer: {
+                Text("""
+                    Sharing goes through a relay, which passes changes between this Mac and everyone who's joined. \
+                    It can't read them: everything is encrypted end to end, with a key only the links carry. Leave \
+                    this empty for Joinery's relay, or give the address of one you run, such as http://localhost:8787. \
+                    Links name their relay, so people joining needn't set anything.
+                    """)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 

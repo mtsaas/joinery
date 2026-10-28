@@ -36,7 +36,11 @@ final class RelayHostCore {
     private(set) var taken: [UInt32: UInt64] = [:]
     /// The room, once the relay's made it.
     private(set) var room: Relay.Welcome?
-    private(set) var peers: [UInt32: [UInt8]] = [:]
+    /// Everyone else here.
+    private(set) var peers: [UInt32: Peer] = [:]
+    var me: Peer { Relay.peer(Relay.hostPeer, name: Array(name.utf8)) }
+    /// What the relay holds the room to, once it's said.
+    var limits: Relay.Limits { room?.limits ?? Relay.Limits() }
     /// Told of every decision as it's numbered: its ops (none for one turned down), author and cseq. For tests.
     var onPublish: ((_ seq: UInt64, _ ops: [Replica.Op], _ author: UInt32, _ cseq: UInt64) -> Void)?
 
@@ -64,7 +68,7 @@ final class RelayHostCore {
         isOpen = true
         let hello = room.map { Relay.Hello(role: .resume, room: $0.room, secret: $0.hostSecret, name: Array(name.utf8)) }
             ?? Relay.Hello(role: .host, name: Array(name.utf8), title: Array(title.utf8))
-        return [.send(hello.frame.bytes), .send(snapshot)]
+        return [.send(hello.frame.bytes)] + sendSnapshot()
     }
 
     func disconnected() -> [Effect] {
@@ -86,7 +90,7 @@ final class RelayHostCore {
             guard let welcome = try? Relay.Welcome(frame.body) else { return resync() }
             let isNew = room == nil
             room = welcome
-            peers = welcome.peers
+            peers = welcome.peers.reduce(into: [:]) { $0[$1.key] = Relay.peer($1.key, name: $1.value) }
             state = .connected
             attempts = 0
             return isNew ? [.shared(welcome)] : []
@@ -100,9 +104,13 @@ final class RelayHostCore {
         case .change:
             return change(frame)
         case .snapshotRequest:
-            return [.send(snapshot)]
+            return sendSnapshot()
         case .joined:
-            peers[frame.header.peer] = frame.body
+            peers[frame.header.peer] = Relay.peer(frame.header.peer, name: frame.body)
+            return []
+        case .presence:
+            guard let plain = try? frame.opened(with: key), let presence = try? Relay.Presence(plain) else { return [] }
+            peers[frame.header.peer, default: Relay.peer(frame.header.peer, name: [])].show(presence)
             return []
         case .left:
             peers[frame.header.peer] = nil
@@ -117,6 +125,12 @@ final class RelayHostCore {
         guard state != .ended else { return [] }
         document.apply(ops)
         return publish(ops, author: Relay.hostPeer, cseq: 0)
+    }
+
+    /// Where the host's pointer is and what it has selected, for everyone else.
+    func share(_ presence: Relay.Presence) -> [Effect] {
+        guard state == .connected else { return [] }
+        return sendIfConnected(Wire.Frame(.presence, sealing: presence.body, with: key))
     }
 
     func tick(at now: Date) -> [Effect] {
@@ -172,6 +186,16 @@ final class RelayHostCore {
 
     private func sendIfConnected(_ frame: Wire.Frame) -> [Effect] {
         isOpen ? [.send(frame.bytes)] : []
+    }
+
+    /// The document as it is, unless it's more than the relay takes, which would let go of it, and of every try after.
+    private func sendSnapshot() -> [Effect] {
+        let frame = snapshot
+        guard frame.count <= limits.maxSnapshot else {
+            let reason = "This data model is too big to share: it's \(frame.count / 1024) KB, and the relay takes \(limits.maxSnapshot / 1024) KB."
+            return stop(reason)
+        }
+        return [.send(frame)]
     }
 
     private var snapshot: [UInt8] {

@@ -83,7 +83,8 @@ extension RelaySimulation {
         network.settle()
         let viewer = network.guests[1]
         #expect(viewer.state == .connected && viewer.confirmed.replica == network.host.document.replica)
-        #expect(viewer.changedHere([.set(id: UUID().uuidString, field: "name", value: .string("x"))]).isEmpty)
+        // Taken back here, never sent.
+        #expect(!viewer.changedHere([.set(id: UUID().uuidString, field: "name", value: .string("x"))]).contains { if case .send = $0 { true } else { false } })
         let link = try #require(network.currentGuest[1])
         let change = Wire.Frame(.change, seq: 1, body: Wire.encode([.delete(id: "x")])).bytes
         #expect(network.relay.received(change, on: link, at: network.now).first == .close(link))
@@ -126,27 +127,6 @@ extension RelaySimulation {
             #expect(decision.digest == copy.digest.bytes, "decision \(frame.header.seq)")
         }
         #expect(copy.replica == host.document.replica)
-
-        // And the local one.
-        let local = HostCore(start, title: "t", token: "t", name: "Host")
-        var hashes: [(String?, [Replica.Op])] = []
-        local.onPublish = { hashes.append(($0.hash, $0.ops ?? [])) }
-        local.opened(1, at: .now)
-        var hello = Message("hello")
-        hello.protocol = Message.version
-        hello.token = "t"
-        hello.client = "c"
-        _ = local.received(hello.text, on: 1, at: .now)
-        var ops = Message("ops")
-        ops.cseq = 1
-        ops.ops = [.delete(id: column)]
-        _ = local.received(ops.text, on: 1, at: .now)
-        var localCopy = CheckedReplica(start)
-        #expect(hashes.count == 2)
-        for (hash, ops) in hashes {
-            localCopy.apply(ops)
-            #expect(hash == localCopy.digest.description)
-        }
     }
 
     /// The relay's messages read back as they were written.
@@ -601,6 +581,30 @@ final class RelayNetwork {
             #expect(shown[index] == host.document.replica, "guest \(index) shows something else")
             // Every change it made, decided once: made or turned down, none lost, none twice.
             #expect(settled[index].sorted() == (0..<UInt64(made[index])).map { $0 + 1 }, "guest \(index): made \(made[index]), decided \(settled[index].sorted())")
+        }
+    }
+}
+
+/// Edits a simulated person makes.
+enum Simulation {
+    static func randomEdit(_ model: inout DataModel, _ random: inout some RandomNumberGenerator) {
+        guard let table = model.tables.randomElement(using: &random) else { _ = model.addTable(at: .zero); return }
+        let column = table.columns.randomElement(using: &random)
+        let other = model.tables.randomElement(using: &random)!
+        let index = model.tables.firstIndex { $0.id == table.id }!
+        switch Int.random(in: 0..<12, using: &random) {
+        case 0: model.tables[index].name += "x"
+        case 1: _ = model.addColumn(to: table.id, after: column?.id)
+        case 2: if let column { model.removeColumn(column.id) }
+        case 3: if model.tables.count > 3 { model.removeTable(table.id) }
+        case 4: model.move(tables: [table.id], ties: [], by: CGPoint(x: 13, y: -7))
+        case 5: if let column, let target = other.columns.first { _ = model.connect(column.id, to: target.id) }
+        case 6: if let wire = model.relationships.randomElement(using: &random) { model.removeRelationships { $0.id == wire.id } }
+        case 7: if let column { model.moveColumn(column.id, in: table.id, to: 0) }
+        case 8: _ = model.group([table.id, other.id])
+        case 9: _ = model.addTable(at: CGPoint(x: 700, y: 700))
+        case 10: model.tables[index].color = .allCases.randomElement(using: &random)!
+        default: if let column { model.tables[index].setSample(0, column.id, to: "v") }
         }
     }
 }

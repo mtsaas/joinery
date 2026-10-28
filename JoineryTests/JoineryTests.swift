@@ -1,3 +1,4 @@
+import CryptoKit
 import CoreGraphics
 import Foundation
 import struct SwiftUI.Binding
@@ -1259,88 +1260,22 @@ struct JoineryTests {
         #expect(condition(), sourceLocation: sourceLocation)
     }
 
-    @Test func aJoinedCopyStaysTheSameAsTheHosts() async throws {
-        let hosted = try openStorefront()
-        let host = try SessionHost(model: hosted, port: 0)
-        defer { host.close() }
-        try await until { host.port != nil }
-        let port = try #require(host.port)
-
-        // The page, for browsers.
-        let (page, response) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/")!)
-        #expect((response as? HTTPURLResponse)?.statusCode == 200 && String(decoding: page, as: UTF8.self).contains("<html"))
-
-        // A wrong token is turned away.
-        var strangerJoined = false
-        let stranger = SessionClient(link: "http://127.0.0.1:\(port)/#token=wrong") { _, _ in strangerJoined = true }
-        try await until { stranger?.status != "Connecting…" }
-        #expect(!strangerJoined && host.peers.isEmpty)
-
-        // The window redraws as people come and go: who's here is observed, through any session.
-        final class Flag: @unchecked Sendable { var isSet = false }
-        let noticed = Flag()
-        withObservationTracking { _ = (host as any Session).peers } onChange: { noticed.isSet = true }
-
-        var joined: OpenModel?
-        var title = ""
-        let client = try #require(SessionClient(link: host.link(at: "127.0.0.1:\(port)")) { name, _ in
-            title = name
-            // Joining makes a file of the host's copy and opens it; any file will do, as it takes the host's copy on.
-            joined = try? self.openStorefront()
-        })
-        try await until { joined != nil }
-        let guest = try #require(joined)
-        client.attach(to: guest)
-        #expect(title == "Storefront" && guest.model == hosted.model && host.peers.count == 1)
-        #expect(noticed.isSet)
-
-        // The guest's change reaches the host, and the host's the guest.
-        var model = guest.model
-        model.tables[0].name = "from_guest"
-        _ = model.addColumn(to: model.tables[1].id, after: nil)
-        guest.change(to: model)
-        try await until { hosted.model == guest.model }
-        model = hosted.model
-        model.tables[2].position.x += 200
-        model.removeTable(model.tables[3].id)
-        hosted.change(to: model)
-        try await until { guest.model == hosted.model }
-        #expect(guest.model.tables.contains { $0.name == "from_guest" } && guest.model.tables.count == hosted.model.tables.count)
-
-        // At once: the host deletes a table while the guest renames it. The guest's change is turned down, and both
-        // end up without the table.
-        let doomed = hosted.model.tables[0].id
-        var renamed = guest.model
-        renamed.tables[0].name = "too_late"
-        var deleted = hosted.model
-        deleted.removeTable(doomed)
-        hosted.change(to: deleted)
-        guest.change(to: renamed)
-        try await until { guest.model == hosted.model && guest.model.table(doomed) == nil }
-
-        // Presence reaches the host.
-        client.share(cursor: CGPoint(x: 12, y: 34), selection: [hosted.model.tables[0].id])
-        try await until { host.peers.values.first?.cursor == [12, 34] }
-        client.close()
-        try await until { host.peers.isEmpty }
-    }
-
-    // MARK: Sessions, in depth
-
-    /// Storefront, or `model`, hosted on a free port.
-    private func hosting(_ model: DataModel? = nil) async throws -> (model: OpenModel, host: SessionHost, port: UInt16) {
+    /// Storefront, or `model`, shared through a relay of its own.
+    private func hosting(_ model: DataModel? = nil) async throws -> (model: OpenModel, host: SessionHost, relay: TestRelay) {
+        let relay = try await TestRelay.started()
         let open = try openStorefront()
         if let model { open.change(to: model) }
-        let host = try SessionHost(model: open, port: 0)
+        let host = SessionHost(model: open, relay: relay.address)
         open.session = host
-        try await until { host.port != nil }
-        return (open, host, try #require(host.port))
+        try await until { host.links != nil }
+        return (open, host, relay)
     }
 
-    /// A guest joined to `host`, with an undo manager of its own (which the model holds weakly, as the window's).
-    private func joining(_ host: SessionHost, port: UInt16) async throws -> (client: SessionClient, model: OpenModel, undo: UndoManager) {
+    /// A guest joined to `host` with its edit link (or `link`), with an undo manager of its own (which the model holds
+    /// weakly, as the window's).
+    private func joining(_ host: SessionHost, link: String? = nil) async throws -> (client: SessionClient, model: OpenModel, undo: UndoManager) {
         var opened: OpenModel?
-        let client = try #require(SessionClient(link: host.link(at: "127.0.0.1:\(port)")) { _, _ in opened = try? self.openStorefront() })
+        let client = try #require(SessionClient(link: link ?? host.links?.edit ?? "") { _, _ in opened = try? self.openStorefront() })
         try await until { opened != nil }
         let model = try #require(opened)
         let undo = UndoManager()
@@ -1359,98 +1294,115 @@ struct JoineryTests {
         open.undoManager?.endUndoGrouping()
     }
 
-    /// Speaks the protocol directly, as a client in another language would.
-    private final class RawClient {
-        let task: URLSessionWebSocketTask
-        init(port: UInt16) {
-            task = URLSession.shared.webSocketTask(with: URL(string: "ws://127.0.0.1:\(port)/")!)
-            task.resume()
-        }
-        func send(_ text: String) async throws { try await task.send(.string(text)) }
-        /// The next message of `type`, skipping others.
-        func next(_ type: String) async throws -> Message {
-            while true {
-                guard case .string(let text) = try await task.receive(), let message = Message(text: text) else { continue }
-                if message.type == type { return message }
-            }
-        }
-        let client = UUID().uuidString
-        /// Whether the host closes the connection, with nothing more said.
-        func isClosed() async throws -> Bool {
-            do { _ = try await task.receive(); return false } catch { return true }
-        }
-        func hello(_ token: String, protocol version: Int = 1) async throws {
-            try await send(#"{"type":"hello","protocol":\#(version),"token":"\#(token)","name":"Raw","client":"\#(client)"}"#)
-        }
-    }
+    @Test func aJoinedCopyStaysTheSameAsTheHosts() async throws {
+        let (hosted, host, relay) = try await hosting()
+        defer { host.close(); relay.stop() }
+        let links = try #require(host.links)
 
-    @Test func onlyAProperHelloIsLetIn() async throws {
-        let (hosted, host, port) = try await hosting()
-        defer { host.close() }
-        // Anything before hello, or not JSON at all: let go of, unanswered, so a client that sent it only reconnects.
-        let early = RawClient(port: port)
-        try await early.send(#"{"type":"ops","cseq":1,"ops":[]}"#)
-        #expect(try await early.isClosed())
-        let garbled = RawClient(port: port)
-        try await garbled.send("{not json")
-        #expect(try await garbled.isClosed())
-        // A protocol it doesn't speak.
-        let future = RawClient(port: port)
-        try await future.hello(host.token, protocol: 2)
-        #expect(try await future.next("reject").reason?.contains("protocol") == true)
-        // A wrong token.
-        let wrong = RawClient(port: port)
-        try await wrong.hello("nope")
-        #expect(try await wrong.next("reject").reason?.contains("link") == true)
-        #expect(host.peers.isEmpty)
-        // The right one: everything, as entities, and who's here.
-        let raw = RawClient(port: port)
-        try await raw.hello(host.token)
-        let welcome = try await raw.next("welcome")
-        #expect(welcome.protocol == 1 && welcome.title == "Storefront" && welcome.peers?.map(\.id) == ["host"])
-        var copy = Replica()
-        for entity in welcome.entities ?? [] { copy.apply(.put(entity)) }
-        #expect(copy == hosted.replica && copy.model == hosted.model)
+        // A link with the wrong secret is turned away.
+        var link = try #require(Relay.Link(links.edit))
+        link.secret = "wrong"
+        var strangerJoined = false
+        let stranger = try #require(SessionClient(link: link.text) { _, _ in strangerJoined = true })
+        try await until { stranger.status.contains("link") }
+        #expect(!strangerJoined && host.peers.isEmpty)
+
+        // The window redraws as people come and go: who's here is observed, through any session.
+        final class Flag: @unchecked Sendable { var isSet = false }
+        let noticed = Flag()
+        withObservationTracking { _ = (host as any Session).peers } onChange: { noticed.isSet = true }
+
+        var title = ""
+        var joined: OpenModel?
+        let client = try #require(SessionClient(link: links.edit) { name, _ in
+            title = name
+            // Joining makes a file of the host's copy and opens it; any file will do, as it takes the host's copy on.
+            joined = try? self.openStorefront()
+        })
+        try await until { joined != nil }
+        let guest = try #require(joined)
+        client.attach(to: guest)
+        #expect(title == "Storefront" && guest.model == hosted.model)
         try await until { host.peers.count == 1 }
-        #expect(host.peers.values.first?.name == "Raw")
+        #expect(noticed.isSet)
+
+        // The guest's change reaches the host, and the host's the guest.
+        var model = guest.model
+        model.tables[0].name = "from_guest"
+        _ = model.addColumn(to: model.tables[1].id, after: nil)
+        guest.change(to: model)
+        try await until { hosted.model == guest.model }
+        model = hosted.model
+        model.tables[2].position.x += 200
+        model.removeTable(model.tables[3].id)
+        hosted.change(to: model)
+        try await until { guest.model == hosted.model }
+        #expect(guest.model.tables.contains { $0.name == "from_guest" } && guest.model.tables.count == hosted.model.tables.count)
+
+        // Presence reaches the host.
+        client.share(cursor: CGPoint(x: 12, y: 34), selection: [hosted.model.tables[0].id])
+        try await until { host.peers.values.first?.cursor == [12, 34] }
+        client.close()
+        try await until { host.peers.isEmpty }
     }
 
-    @Test func aChangeWithAnyBadOpIsTurnedDownWhole() async throws {
-        let (hosted, host, port) = try await hosting()
-        defer { host.close() }
-        let raw = RawClient(port: port)
-        try await raw.hello(host.token)
-        _ = try await raw.next("welcome")
-        let before = hosted.model
-        let table = before.tables[0].id.uuidString
-        let rename = #"{"op":"set","id":"\#(table)","field":"name","value":"renamed"}"#
-        let bad = [
-            #"{"op":"set","id":"\#(UUID().uuidString)","field":"name","value":"x"}"#,  // not there
-            #"{"op":"set","id":"\#(table)","field":"kind","value":"column"}"#,  // can't change kind
-            #"{"op":"set","id":"\#(table)","field":"position","value":"here"}"#,  // unreadable
-            #"{"op":"set","id":"\#(table)","field":"order","value":"0"}"#,  // a bad order key
-            #"{"op":"put","entity":{"id":"\#(UUID().uuidString)","kind":"nonsense"}}"#,
-            #"{"op":"put","entity":{"id":"\#(UUID().uuidString)","kind":"column","table":"\#(UUID().uuidString)","name":"c","type":"text"}}"#,
-            #"{"op":"delete","id":"\#(UUID().uuidString)"}"#,
+    @Test func aViewLinkWatchesAndCantEdit() async throws {
+        let (hosted, host, relay) = try await hosting()
+        defer { host.close(); relay.stop() }
+        let (client, viewer, _) = try await joining(host, link: host.links?.view)
+        #expect(!client.canEdit)
+        var refusal: String?
+        client.onRefusal = { refusal = $0 }
+        let name = hosted.model.tables[0].name
+        edit(viewer) { $0.tables[0].name = "not allowed" }
+        // Taken back at once, and never sent.
+        try await until { viewer.model.tables[0].name == name && refusal != nil }
+        edit(hosted) { $0.tables[0].name = "from_host" }
+        try await until { viewer.model == hosted.model }
+    }
+
+    /// The host checks every change whole: one bad op turns it all down, and the document's untouched.
+    @Test func aChangeWithAnyBadOpIsTurnedDownWhole() throws {
+        let start = Replica(try openStorefront().model)
+        let host = RelayHostCore(start, title: "t", name: "Host")
+        _ = host.connected(at: .now)
+        let welcome = Relay.Welcome(peer: 1, room: "r", limits: Relay.Limits(), latest: 0, version: 1, title: [], peers: [:])
+        _ = host.received(welcome.frame.bytes, at: .now)
+        let table = try #require(start.entities.values.first { $0["kind"] == .string("table") }?["id"]?.string)
+        let rename = Replica.Op.set(id: table, field: "name", value: .string("renamed"))
+        let bad: [Replica.Op] = [
+            .set(id: UUID().uuidString, field: "name", value: .string("x")),  // not there
+            .set(id: table, field: "kind", value: .string("column")),  // can't change kind
+            .set(id: table, field: "position", value: .string("here")),  // unreadable
+            .set(id: table, field: "order", value: .string("0")),  // a bad order key
+            .put(["id": .string(UUID().uuidString), "kind": .string("nonsense")]),
+            .put(["id": .string(UUID().uuidString), "kind": .string("column"), "table": .string(UUID().uuidString), "name": .string("c"), "type": .string("text")]),
+            .delete(id: UUID().uuidString),
         ]
+        func change(_ cseq: Int, _ ops: [Replica.Op]) throws -> Wire.Frame {
+            let frame = Wire.stamp(Wire.Frame(.change, seq: UInt64(cseq), sealing: Wire.encode(ops), with: host.key).bytes, peer: 2)
+            let sent = host.received(frame, at: .now).compactMap { effect -> Wire.Frame? in
+                if case .send(let bytes) = effect { try? Wire.Frame(bytes) } else { nil }
+            }
+            return try #require(sent.first)
+        }
         for (index, op) in bad.enumerated() {
-            try await raw.send(#"{"type":"ops","cseq":\#(index + 1),"ops":[\#(rename),\#(op)]}"#)
-            let reject = try await raw.next("reject")
-            #expect(reject.cseq == index + 1, "\(op)")
-            #expect(hosted.model == before, "\(op)")
+            let answer = try change(index + 1, [rename, op])
+            #expect(answer.header.kind == .reject, "\(op)")
+            #expect(try Relay.Decision(try answer.opened(with: host.key)).cseq == UInt64(index + 1))
+            #expect(host.document.replica == start, "\(op)")
         }
         // A good one goes through, numbered, back to its author too.
-        try await raw.send(#"{"type":"ops","cseq":\#(bad.count + 1),"ops":[\#(rename)]}"#)
-        let confirmed = try await raw.next("ops")
-        #expect(confirmed.cseq == bad.count + 1 && confirmed.author == host.peers.keys.first && (confirmed.seq ?? 0) > 0)
-        #expect(hosted.model.tables[0].name == "renamed")
+        let made = try change(bad.count + 1, [rename])
+        let decision = try Relay.Decision(try made.opened(with: host.key))
+        #expect(made.header.kind == .ops && decision.author == 2 && decision.cseq == UInt64(bad.count + 1))
     }
 
     @Test func everyoneEndsUpTheSameWhateverTheyDoAtOnce() async throws {
-        let (hosted, host, port) = try await hosting()
-        defer { host.close() }
-        let (_, a, _) = try await joining(host, port: port)
-        let (_, b, _) = try await joining(host, port: port)
+        let (hosted, host, relay) = try await hosting()
+        defer { host.close(); relay.stop() }
+        let (_, a, _) = try await joining(host)
+        let (_, b, _) = try await joining(host)
         let table = hosted.model.tables[0].id
         // Both add a column at the end of one table, and both rename another, at once.
         edit(a) { _ = $0.addColumn(to: table, after: $0.table(table)?.columns.last?.id) }
@@ -1466,9 +1418,9 @@ struct JoineryTests {
     }
 
     @Test func aTurnedDownChangeIsTakenBackAndLaterOnesStay() async throws {
-        let (hosted, host, port) = try await hosting()
-        defer { host.close() }
-        let (_, guest, undo) = try await joining(host, port: port)
+        let (hosted, host, relay) = try await hosting()
+        defer { host.close(); relay.stop() }
+        let (_, guest, _) = try await joining(host)
         let doomed = hosted.model.tables[0].id, other = hosted.model.tables[1].id
         edit(hosted) { $0.removeTable(doomed) }
         // Sent before the guest hears of it: a rename of the table now gone, then a move of another.
@@ -1480,9 +1432,9 @@ struct JoineryTests {
     }
 
     @Test func undoInASessionUndoesOnlyYourOwn() async throws {
-        let (hosted, host, port) = try await hosting()
-        defer { host.close() }
-        let (_, guest, undo) = try await joining(host, port: port)
+        let (hosted, host, relay) = try await hosting()
+        defer { host.close(); relay.stop() }
+        let (_, guest, undo) = try await joining(host)
         let id = hosted.model.tables[0].id
         let original = try #require(hosted.model.table(id))
         edit(guest) { $0.tables[0].name = "guest_name" }
@@ -1498,31 +1450,35 @@ struct JoineryTests {
     }
 
     @Test func presenceShowsWhoIsHereAndWhere() async throws {
-        let (hosted, host, port) = try await hosting()
-        defer { host.close() }
-        let (a, _, _) = try await joining(host, port: port)
-        let (b, _, _) = try await joining(host, port: port)
+        let (hosted, host, relay) = try await hosting()
+        defer { host.close(); relay.stop() }
+        let (a, _, _) = try await joining(host)
+        let (b, _, _) = try await joining(host)
+        let hostID = String(Relay.hostPeer)
         // B was told of the host and A on joining; A hears of B.
-        #expect(b.peers.count == 2 && b.peers["host"] != nil)
+        #expect(b.peers.count == 2 && b.peers[hostID] != nil)
         try await until { a.peers.count == 2 }
+        // Everyone's color is their own, and the same to everyone.
+        #expect(Set(b.peers.values.map(\.color)).count == 2 && a.peers[hostID]?.color == "blue")
         let table = hosted.model.tables[0].id
         a.share(cursor: CGPoint(x: 10, y: 20), selection: [table])
         try await until { b.peers.values.contains { $0.cursor == [10, 20] && $0.selection == [table.uuidString] } }
         #expect(host.peers.values.contains { $0.cursor == [10, 20] })
         // The host's own pointer too.
         host.share(cursor: CGPoint(x: 5, y: 6), selection: [])
-        try await until { a.peers["host"]?.cursor == [5, 6] && b.peers["host"]?.cursor == [5, 6] }
+        try await until { a.peers[hostID]?.cursor == [5, 6] && b.peers[hostID]?.cursor == [5, 6] }
         // Off the canvas: no pointer.
         a.share(cursor: nil, selection: [])
-        try await until { b.peers.values.contains { $0.id != "host" && $0.cursor == nil && $0.selection == [] } }
+        try await until { b.peers.values.contains { $0.id != hostID && $0.cursor == nil && $0.selection == [] } }
         // Leaving: gone for everyone.
         a.close()
         try await until { host.peers.count == 1 && b.peers.count == 1 }
     }
 
     @Test func whenTheHostStopsGuestsKeepTheirCopy() async throws {
-        let (hosted, host, port) = try await hosting()
-        let (client, guest, _) = try await joining(host, port: port)
+        let (hosted, host, relay) = try await hosting()
+        defer { relay.stop() }
+        let (client, guest, _) = try await joining(host)
         edit(hosted) { $0.tables[0].name = "last" }
         try await until { guest.model == hosted.model }
         host.close()
@@ -1535,49 +1491,33 @@ struct JoineryTests {
 
     @Test func bigModelsTravelWhole() async throws {
         let big = DataModel.synthetic(tables: 400, foreignKeys: 600, groups: 10)
-        let (hosted, host, port) = try await hosting(big)
-        defer { host.close() }
-        let (_, guest, undo) = try await joining(host, port: port)
+        let (hosted, host, relay) = try await hosting(big)
+        defer { host.close(); relay.stop() }
+        let (_, guest, _) = try await joining(host)
         #expect(guest.model == hosted.model && guest.model.tables.count == 400)
         edit(hosted) { $0.arrange(.hierarchical) }
         try await until { guest.model == hosted.model }
     }
 
     @Test func linksSayWhereAndWithWhat() throws {
-        let cases: [(String, String?, String?)] = [
-            ("https://abc.trycloudflare.com/#token=t1", "wss://abc.trycloudflare.com/", "t1"),
-            ("http://localhost:8724/#token=t2", "ws://localhost:8724/", "t2"),
-            ("  https://x.ngrok.app#name=Ann&token=t3 ", "wss://x.ngrok.app/", "t3"),
-            ("https://x.ngrok.app/", nil, nil),
-            ("https://x.ngrok.app/#token=", nil, nil),
-            ("ftp://x/#token=t", nil, nil),
-            ("not a link", nil, nil),
-        ]
-        for (link, url, token) in cases {
-            let address = SessionLink.address(of: link)
-            #expect(address?.url.absoluteString == url && address?.token == token, "\(link)")
+        let key = SymmetricKey(size: .bits256)
+        for canEdit in [true, false] {
+            let link = Relay.Link(relay: URL(string: "https://relay.example.com")!, room: "abc", key: key, secret: "s3cret", canEdit: canEdit)
+            #expect(link.text.hasPrefix("https://relay.example.com/r/abc#key="))
+            #expect(link.text.hasSuffix(canEdit ? "&token=s3cret" : "&view=s3cret"))
+            #expect(Relay.Link(link.text) == link && Relay.Link("  \(link.text)\n") == link)
+            #expect(link.socket.absoluteString == "wss://relay.example.com/")
         }
-        let model = try openStorefront()
-        let host = try SessionHost(model: model, port: 0, token: "abc")
-        defer { host.close() }
-        #expect(host.link(at: "https://t.example.com/") == "https://t.example.com/#token=abc")
-        #expect(host.link(at: "localhost:8724") == "http://localhost:8724/#token=abc")
-        #expect(SessionLink.address(of: host.link(at: "https://t.example.com"))?.token == "abc")
-        #expect(SessionHost.newToken().count >= 20 && SessionHost.newToken() != SessionHost.newToken())
-    }
-
-    @Test func thePortServesThePageAndNothingElse() async throws {
-        let (_, host, port) = try await hosting()
-        defer { host.close() }
-        func status(_ path: String, method: String = "GET") async throws -> Int {
-            var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)\(path)")!)
-            request.httpMethod = method
-            return (try await URLSession.shared.data(for: request).1 as? HTTPURLResponse)?.statusCode ?? 0
+        let local = Relay.Link(relay: URL(string: "http://localhost:8787/")!, room: "r", key: key, secret: "s", canEdit: true)
+        #expect(local.text.hasPrefix("http://localhost:8787/r/r#") && local.socket.absoluteString == "ws://localhost:8787/")
+        let good = local.text
+        for bad in [
+            "not a link", "ftp://x/r/r#key=k&token=t", good.replacingOccurrences(of: "/r/r", with: "/x/r"),
+            good.replacingOccurrences(of: "token=s", with: "token="), String(good.prefix { $0 != "#" }),
+            good.replacingOccurrences(of: "key=", with: "key=AAAA"),
+        ] {
+            #expect(Relay.Link(bad) == nil, "\(bad)")
         }
-        #expect(try await status("/") == 200)
-        #expect(try await status("/?from=link") == 200)
-        #expect(try await status("/model.json") == 404)
-        #expect(try await status("/", method: "POST") == 405)
     }
 
     /// Digests are only comparable if every language writes an entity's JSON alike: these are what JavaScript's

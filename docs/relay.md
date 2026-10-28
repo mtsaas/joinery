@@ -296,6 +296,10 @@ out to a relay and gets links back. The app keeps one session protocol, and the 
 `RelayCore`, a Swift version of the relay that's pure like `HostCore` and `ClientCore`, still gets written. It's what
 the simulation runs and what the Zig relay is checked against byte for byte, but it doesn't ship.
 
+As of step 5, it's gone: `HostCore`, `ClientCore`, the JSON messages, the Mac's port and the tunnel instructions are
+removed. `RelayCore` also serves the app's own tests, behind real sockets in the test process (`JoineryTests/TestRelay.swift`),
+so the app's sessions are tested end to end without the Zig binary.
+
 ### Bringing your own relay
 
 Settings has a Relay field: our hosted relay by default, or the address of one you run. Share, and the MCP
@@ -379,7 +383,20 @@ Each step ends with tests passing, and nothing goes in front of the Zig work tha
    that fixed space can hold what it keeps: clients, names and titles have length limits, a room remembers at most
    1,024 clients, and a host's goodbye is passed on as its bytes rather than re-read as text.
 5. **The app on the relay:** Share connects out to the relay set in Settings, the local port and the tunnel
-   instructions go, and two copies of the app plus a browser share through a locally run relay.
+   instructions go, and two copies of the app plus a browser share through a locally run relay. Done. Details settled
+   on the way:
+   - **Presence** (pointers and selections) is a sealed `presence` frame: a cursor, if any, as two f64s, then the
+     selected IDs. The relay stamps who it's from. Names come from `joined`, and colors from the peer number (the host
+     is blue), so neither is sent.
+   - **View links** carry `view=` in place of `token=`. A change made on one is taken back at once, with a note, and
+     never sent.
+   - **Limits** are checked before sending: a host whose snapshot is over the relay's limit stops sharing and says so;
+     a guest's change over the frame limit is taken back.
+   - **The web client** is served by the relay at `/r/<room>`, embedded from the app's `WebClient.html` at build time,
+     and is a port of `RelayGuestCore` with WebCrypto. Frames are opened and sealed asynchronously, so each way goes
+     through a queue, in order.
+   - **The default relay** is `https://relay.joinery.clarkmccauley.com`, which step 6 deploys. Until then, Settings ▸
+     Sharing points the app at another, such as `http://localhost:8787`.
 6. **Deployment** behind Cloudflare.
 
 ## Open questions

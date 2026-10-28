@@ -161,6 +161,37 @@ struct WireTests {
         }
     }
 
+    /// The relay's messages, as the web client reads and writes them.
+    @Test func theWebClientSpeaksTheRelaysMessages() throws {
+        let context = try webWire()
+        let hello = try call(context, """
+            (() => Array.from(Wire.encodeHello({ role: "view", room: "r", secret: "s", client: "c", applied: 4, name: "Ann" })))
+            """, [])
+        #expect(try Relay.Hello(bytes(hello)) == Relay.Hello(role: .view, room: "r", secret: "s", client: "c", applied: 4, name: Array("Ann".utf8)))
+        let welcome = Relay.Welcome(peer: 3, room: "room", hostSecret: "h", limits: Relay.Limits(maxFrame: 5, maxSnapshot: 6, logBytes: 7, maxPeers: 8),
+                                    latest: 9, version: 1, title: Array("Shop é".utf8), peers: [1: Array("Host".utf8), 2: []])
+        let read = try call(context, "(b => { const w = Wire.decodeWelcome(Uint8Array.from(b)); w.peers = [...w.peers]; return JSON.stringify(w); })",
+                            [welcome.frame.body.map(Int.init)])
+        #expect(read.toString() == #"{"peer":3,"room":"room","limits":{"maxFrame":5,"maxSnapshot":6,"logBytes":7,"maxPeers":8},"latest":9,"version":1,"title":"Shop é","peers":[[1,"Host"],[2,""]]}"#)
+        let decision = Relay.Decision(author: 2, cseq: 300, digest: Array(1...8), content: [9, 9])
+        let readDecision = try call(context, "(b => { const d = Wire.decodeDecision(Uint8Array.from(b)); return JSON.stringify([d.author, d.cseq, Array.from(d.digest), Array.from(d.content)]); })",
+                                    [decision.body.map(Int.init)])
+        #expect(readDecision.toString() == "[2,300,[1,2,3,4,5,6,7,8],[9,9]]")
+        let snapshot = Relay.Snapshot(digest: Array(0..<8), taken: [2: 4], entities: [["id": .string("a"), "kind": .string("table")]])
+        let readSnapshot = try call(context, "(b => { const s = Wire.decodeSnapshot(Uint8Array.from(b)); return JSON.stringify([[...s.taken], s.entities]); })",
+                                    [snapshot.body.map(Int.init)])
+        #expect(readSnapshot.toString() == #"[[[2,4]],[{"id":"a","kind":"table"}]]"#)
+        for presence in [Relay.Presence(cursor: [1.5, -2.25], selection: ["A", "B"]), Relay.Presence()] {
+            let json = presence.cursor.map { "[\($0[0]),\($0[1])]" } ?? "null"
+            let selection = String(decoding: try JSONEncoder().encode(presence.selection), as: UTF8.self)
+            let written = try call(context, "(s => Array.from(Wire.encodePresence(JSON.parse(s))))",
+                                   [#"{"cursor":\#(json),"selection":\#(selection)}"#])
+            #expect(try Relay.Presence(bytes(written)) == presence)
+            let back = try call(context, "(b => JSON.stringify(Wire.decodePresence(Uint8Array.from(b))))", [presence.body.map(Int.init)])
+            #expect(back.toString() == #"{"cursor":\#(json),"selection":\#(selection)}"#)
+        }
+    }
+
     // MARK: Sealing
 
     @Test func sealedFramesOpenOnlyAsSealed() throws {

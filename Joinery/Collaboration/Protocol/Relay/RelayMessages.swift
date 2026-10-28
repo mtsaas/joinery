@@ -1,9 +1,12 @@
+import CryptoKit
 import Foundation
 
 /// The bodies of a relayed session's messages (see `docs/relay.md`). A relay reads only `Hello`; it writes `Welcome`,
 /// `joined`, `left`, `pong` and `bye`; everything else it passes on as bytes. Peer 1 is always the host.
 enum Relay {
     static let hostPeer: UInt32 = 1
+    /// The relay sessions go through unless Settings names another.
+    static let ours = URL(string: "https://relay.joinery.clarkmccauley.com")!
     /// The room version this copy speaks: what's inside the encryption, the ops and the model's fields.
     static let roomVersion: UInt64 = 1
     /// The longest a `hello`'s client, name and title can be, in bytes, so a relay can keep them in fixed space.
@@ -210,6 +213,111 @@ enum Relay {
             }
             entities = try Wire.decode(reader.rest()).compactMap { if case .put(let entity) = $0 { entity } else { nil } }
         }
+    }
+
+    /// Where someone's pointer is and what they have selected, sealed: the relay stamps who it's from.
+    struct Presence: Equatable {
+        /// In canvas points, if it's over the canvas.
+        var cursor: [Double]?
+        /// The IDs of what's selected.
+        var selection: [String] = []
+
+        var body: [UInt8] {
+            var body: [UInt8] = [cursor == nil ? 0 : 1]
+            for value in cursor ?? [] { body.append(littleEndian: value.bitPattern) }
+            body.appendVarint(selection.count)
+            for id in selection { body.appendString(id) }
+            return body
+        }
+
+        init(cursor: [Double]? = nil, selection: [String] = []) {
+            self.cursor = cursor
+            self.selection = selection
+        }
+
+        init(_ body: [UInt8]) throws(Wire.Malformed) {
+            var reader = Wire.Reader(body)
+            if try reader.byte() != 0 {
+                cursor = [Double(bitPattern: try reader.integer()), Double(bitPattern: try reader.integer())]
+            }
+            for _ in 0..<(try reader.count()) { selection.append(try reader.string()) }
+        }
+    }
+
+    /// Someone in a room, as everyone else shows them: named as they joined, colored by their peer.
+    static func peer(_ peer: UInt32, name: [UInt8]) -> Peer {
+        Peer(id: String(peer), name: name.isEmpty ? "Guest" : String(decoding: name, as: UTF8.self), color: color(of: peer))
+    }
+
+    /// Everyone's color, by their peer, so it needn't be sent: the host's is blue.
+    static func color(of peer: UInt32) -> String {
+        let palette = ["blue", "purple", "pink", "orange", "green", "teal", "indigo", "red", "mint", "cyan", "brown", "yellow"]
+        return palette[Int(peer &- 1) % palette.count]
+    }
+
+    /// A share link, `https://<relay>/r/<room>#key=…&token=…` (or `&view=…`, to only watch). The key and secret are
+    /// after the `#`, so a browser never sends them, and the relay never learns the key.
+    struct Link: Equatable {
+        /// The relay's address, as `https://…` or `http://…`.
+        var relay: URL
+        var room: String
+        var key: SymmetricKey
+        var secret: String
+        var canEdit: Bool
+
+        static func == (a: Link, b: Link) -> Bool {
+            a.relay == b.relay && a.room == b.room && a.secret == b.secret && a.canEdit == b.canEdit
+                && a.key.withUnsafeBytes { Data($0) } == b.key.withUnsafeBytes { Data($0) }
+        }
+
+        var text: String {
+            let key = key.withUnsafeBytes { Data($0) }.base64EncodedString()
+                .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+            let base = relay.absoluteString.hasSuffix("/") ? String(relay.absoluteString.dropLast()) : relay.absoluteString
+            return "\(base)/r/\(room)#key=\(key)&\(canEdit ? "token" : "view")=\(secret)"
+        }
+
+        /// Where to connect: the relay's WebSocket.
+        var socket: URL { Relay.socket(of: relay) }
+
+        init(relay: URL, room: String, key: SymmetricKey, secret: String, canEdit: Bool) {
+            self.relay = relay
+            self.room = room
+            self.key = key
+            self.secret = secret
+            self.canEdit = canEdit
+        }
+
+        init?(_ text: String) {
+            guard let parts = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
+                  parts.scheme == "https" || parts.scheme == "http", let host = parts.host, !host.isEmpty,
+                  parts.path.hasPrefix("/r/"), case let room = String(parts.path.dropFirst(3)), !room.isEmpty, !room.contains("/")
+            else { return nil }
+            var fields: [String: String] = [:]
+            for pair in (parts.fragment ?? "").split(separator: "&") {
+                let field = pair.split(separator: "=", maxSplits: 1)
+                if field.count == 2 { fields[String(field[0])] = String(field[1]) }
+            }
+            var base64 = (fields["key"] ?? "").replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+            base64 += String(repeating: "=", count: (4 - base64.count % 4) % 4)
+            guard let key = Data(base64Encoded: base64), key.count == 32, let secret = fields["token"] ?? fields["view"], !secret.isEmpty
+            else { return nil }
+            var relay = parts
+            relay.path = ""
+            relay.fragment = nil
+            relay.query = nil
+            guard let url = relay.url else { return nil }
+            self.init(relay: url, room: room, key: SymmetricKey(data: key), secret: secret, canEdit: fields["token"] != nil)
+        }
+    }
+
+    /// A relay's WebSocket, from its address: `wss://` for `https://`, `ws://` for `http://`.
+    static func socket(of relay: URL) -> URL {
+        var parts = URLComponents(url: relay, resolvingAgainstBaseURL: false) ?? URLComponents()
+        parts.scheme = parts.scheme == "http" ? "ws" : "wss"
+        parts.path = "/"
+        parts.fragment = nil
+        return parts.url ?? relay
     }
 
     /// Why a relay or host ended a session, or turned a connection away.

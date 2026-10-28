@@ -67,21 +67,19 @@ ties and bend points square to them.
 
 Share a data model live and others can edit it with you, in Joinery or in a browser.
 
-- **Share:** the people button at the top right of the editor. Start Sharing serves the open data model on port 8724 of this Mac, for this Mac only.
-- **Exposing it:** expose the port with a tunnel, such as `cloudflared tunnel --url http://localhost:8724` or `ngrok http 8724`. Paste the tunnel's address into the panel, then copy the link it makes.
-- **From an AI assistant:** the `start_sharing` MCP tool starts sharing and gives the port. Once you've exposed it, the assistant calls it again with the tunnel's address for the link to send.
-- **The link in a browser** opens the data model in Joinery's web client. You can pan, zoom, move and rename tables there.
+- **Share:** the people button at the top right of the editor. Start Sharing connects to a relay and gives two links: one to edit, one only to watch.
+- **The relay** passes changes between everyone and can't read them: everything is encrypted end to end, with a key only the links carry. Settings ▸ Sharing picks which relay: Joinery's, or one you run (`relay/`, `zig build run`). Links name their relay, so people joining needn't set anything.
+- **From an AI assistant:** the `start_sharing` MCP tool starts sharing and returns both links.
+- **The link in a browser** opens the data model in Joinery's web client, served by the relay. You can pan, zoom, move and rename tables there.
 - **The link in Joinery:** paste it into Join in the library's toolbar. Like remote access, the data model is open only while the session is: it isn't added to the library, and it closes when you leave or the host stops sharing.
 - **Seeing each other:** everyone's pointer shows with their name, and what they've selected is ringed in their color. The share button shows who's here.
 - **Undo:** ⌘Z undoes only your own changes, even when others have changed things since.
 - **Conflicts:** if your change refers to something that's just been deleted, it's taken back and you're told.
-- **Dropped connections:** if a connection drops, Joinery and the web client reconnect on their own, sooner at first. Edits made meanwhile are sent then, each made once, and the copy catches up to the host's.
-- **Checking copies:** each change carries a checksum of the host's copy. If a copy ever differs, or misses a change, it fetches the host's copy afresh.
+- **Dropped connections:** Joinery and the web client reconnect on their own, sooner at first. Edits made meanwhile are sent then, each made once, and the copy catches up to the host's. The host reconnects too; if it's gone more than 30 seconds, the session ends.
+- **Checking copies:** each change carries a checksum of the host's copy. If a copy ever differs, it fetches the host's copy afresh.
 - **The host's copy** is the one that's saved, with its version history. Stopping sharing, or closing the data model, ends the session.
 
-`docs/collaboration.md` describes the protocol, enough to write another client. The token in the link is the only thing between the internet and editing, so share it as you would a password.
-
-Sessions are moving to a relay, so sharing will need no tunnel and links will be end-to-end encrypted (`docs/relay.md`). The relay is in `relay/`, written in Zig and checked byte for byte against the Swift reference; the app doesn't use it yet.
+`docs/relay.md` describes the protocol and the relay. A link is the only thing between the internet and your data model, so share it as you would a password.
 
 ## AI assistants (MCP)
 

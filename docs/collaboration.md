@@ -1,5 +1,9 @@
 # Live sessions: the protocol
 
+> **The messages and transport here are gone.** Sessions now go through a relay, in binary and end-to-end encrypted:
+> see [relay.md](relay.md). What still holds is the model as a replicated state machine, the ops, the digest, and why
+> every copy comes back to the host's, which relay.md builds on.
+
 Joinery shares a data model live through a **session**:
 - **Host:** one person's Mac. It holds the true copy and saves it.
 - **Guests:** everyone else. A guest can be another Joinery, or a browser running the built-in web client.

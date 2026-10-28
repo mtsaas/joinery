@@ -122,6 +122,8 @@ const Wire = (() => {
       throw malformed("a number too long");
     }
     count() { const n = this.varint(); if (n > this.bytes.length - this.index) throw malformed("a count past the end"); return n; }
+    blob() { return this.take(this.count()); }
+    rest() { const out = this.bytes.subarray(this.index); this.index = this.bytes.length; return out; }
     string() {
       const bytes = this.take(this.count());
       try { return text.decode(bytes); } catch { throw malformed("text that isn't UTF-8"); }
@@ -206,6 +208,53 @@ const Wire = (() => {
       if (!kind) throw malformed("an unknown kind of message");
       return { kind, flags: d.getUint16(2, true), length: d.getUint32(4, true), seq: Number(d.getBigUint64(8, true)), peer: d.getUint32(16, true) };
     },
+    // A whole frame: a header, then `body`.
+    frame(kind, seq, body = new Uint8Array(0)) {
+      const frame = new Uint8Array(HEADER_SIZE + body.length);
+      frame.set(this.encodeHeader({ kind, length: body.length, seq })); frame.set(body, HEADER_SIZE);
+      return frame;
+    },
+    // The relay's messages, as RelayMessages.swift writes them. Names and titles are shown, so read leniently.
+    encodeHello({ role, room, secret, client, applied = null, version = 1, name = "" }) {
+      const w = new Writer();
+      w.byte({ host: 1, resume: 2, guest: 3, view: 4 }[role]);
+      w.string(room); w.string(secret); w.string(client);
+      w.varint(applied === null ? 0 : applied + 1); w.varint(version);
+      w.string(name); w.varint(0);
+      return w.done();
+    },
+    decodeWelcome(body) {
+      const r = new Reader(body), shown = new TextDecoder();
+      const welcome = { peer: r.varint(), room: r.string() };
+      for (let i = 0; i < 3; i++) r.string();
+      welcome.limits = { maxFrame: r.varint(), maxSnapshot: r.varint(), logBytes: r.varint(), maxPeers: r.varint() };
+      welcome.latest = r.varint(); welcome.version = r.varint(); welcome.title = shown.decode(r.blob());
+      welcome.peers = new Map();
+      for (let i = 0, n = r.count(); i < n; i++) { const peer = r.varint(); welcome.peers.set(peer, shown.decode(r.blob())); }
+      return welcome;
+    },
+    // The host's decision on a change: who made it, its cseq, the digest after it, and its ops or why it's turned down.
+    decodeDecision(body) {
+      const r = new Reader(body);
+      return { author: r.varint(), cseq: r.varint(), digest: r.take(8), content: r.rest() };
+    },
+    decodeSnapshot(body) {
+      const r = new Reader(body), digest = r.take(8), taken = new Map();
+      for (let i = 0, n = r.count(); i < n; i++) { const peer = r.varint(); taken.set(peer, r.varint()); }
+      return { digest, taken, entities: this.decodeOps(r.rest()).map(op => op.entity) };
+    },
+    // Where someone's pointer is ([x, y] or null) and what they have selected.
+    encodePresence({ cursor, selection }) {
+      const w = new Writer();
+      w.byte(cursor ? 1 : 0);
+      if (cursor) { w.number(cursor[0]); w.number(cursor[1]); }
+      w.varint(selection.length); selection.forEach(id => w.string(id));
+      return w.done();
+    },
+    decodePresence(body) {
+      const r = new Reader(body), cursor = r.byte() ? [r.take(8), r.take(8)].map(b => new DataView(b.buffer, b.byteOffset, 8).getFloat64(0, true)) : null;
+      return { cursor, selection: Array.from({ length: r.count() }, () => r.string()) };
+    },
     // Bodies sealed with the room key, as Seal.swift does: AES-256-GCM, the body written as nonce, ciphertext and tag,
     // with the header (its peer zeroed, as the relay writes that) authenticated alongside.
     importKey(raw) { return crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]); },
@@ -233,8 +282,8 @@ const Wire = (() => {
 </script>
 <script>
 "use strict";
-// Joinery's session protocol, version 1: see docs/collaboration.md. The host's copy is the true one; changes made here
-// show at once and are sent, and the host's, in its order, are laid under them as they arrive.
+// A guest of a relayed session, as RelayGuestCore.swift is: see docs/relay.md. The host's copy is the true one; changes
+// made here show at once and are sent, and the host's decisions, in order, are laid under them as they arrive.
 const W = 236, HEADER = 30, ROW = 22, KEY = 30, TYPE = 86, RADIUS = 10, PAD = 24, LABEL = 22;
 const COLORS = { blue: "#0a84ff", purple: "#bf5af2", pink: "#ff375f", red: "#ff453a", orange: "#ff9f0a", yellow: "#ffd60a",
   green: "#30d158", teal: "#40c8e0", indigo: "#5e5ce6", mint: "#63e6e2", cyan: "#64d2ff", brown: "#ac8e68" };
@@ -242,9 +291,9 @@ const $ = id => document.getElementById(id);
 const svg = $("canvas"), world = $("world");
 const ns = "http://www.w3.org/2000/svg";
 
-// The host's document as of change `seq`, with its digest; changes made here it hasn't taken yet; what's shown, the one
-// with the other on top. See docs/collaboration.md for why this always comes back to the host's copy.
-let confirmed = new Map(), digest = [0, 0], seq = 0, pending = [], shown = new Map(), you = null, nextCseq = 1;
+// The host's document as of decision `seq`, with its digest; changes made here it hasn't decided on yet; what's shown,
+// the one with the other on top. See docs/relay.md for why this always comes back to the host's copy.
+let confirmed = new Map(), digest = [0, 0], seq = 0, hasCopy = false, pending = [], shown = new Map(), you = null, nextCseq = 1;
 const client = (crypto.randomUUID && crypto.randomUUID()) || String(Math.random()).slice(2) + String(Date.now());
 // Until someone pans or zooms, the view keeps the whole model in it.
 let peers = new Map(), view = { x: 0, y: 0, zoom: 1 }, moved = false, drag = null;
@@ -264,7 +313,9 @@ function hash(entity) {
   for (const byte of encoder.encode(canonical(entity))) { a = Math.imul(a ^ byte, 16777619) >>> 0; b = Math.imul(b ^ byte, 16777619) >>> 0; }
   return [a, b];
 }
-const hex = d => d[0].toString(16).padStart(8, "0") + d[1].toString(16).padStart(8, "0");
+// As a frame carries a digest: each sum as 4 little-endian bytes.
+const digestBytes = d => { const b = new Uint8Array(8), v = new DataView(b.buffer); v.setUint32(0, d[0], true); v.setUint32(4, d[1], true); return b; };
+const same = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 function apply(state, op, sum) {
   const id = op.op === "put" ? op.entity.id : op.id, old = state.get(id);
   if (op.op === "put") state.set(id, op.entity);
@@ -285,9 +336,13 @@ function relay() {
 }
 function submit(ops) {
   if (!ops.length || ended) return;
+  if (!link.canEdit) { toast("You joined with a view link, so you can watch but not edit."); return relay(); }
+  // The relay would let go of it, and of every try after.
+  const body = Wire.encodeOps(ops);
+  if (24 + 28 + body.length > limits.maxFrame) { toast("That change is too big for the relay."); return relay(); }
   const change = { cseq: nextCseq++, ops };
   pending.push(change);
-  if (connected) { send({ type: "ops", cseq: change.cseq, ops }); sentThrough = change.cseq; }
+  if (connected) sendChange(change);
   relay();
 }
 const byOrder = (a, b) => (a.order || "") < (b.order || "") ? -1 : (a.order || "") > (b.order || "") ? 1 : (a.id < b.id ? -1 : 1);
@@ -420,9 +475,9 @@ const toCanvas = e => [(e.clientX - view.x) / view.zoom, (e.clientY - view.y) / 
 let lastPresence = 0, selection = [];
 function sharePresence(cursor) {
   const now = performance.now();
-  if (now - lastPresence < 50 || !you) return;
+  if (now - lastPresence < 50 || !connected) return;
   lastPresence = now;
-  send({ type: "presence", cursor, selection });
+  sendSealed("presence", 0, Wire.encodePresence({ cursor, selection }));
 }
 svg.addEventListener("pointerdown", e => {
   const id = e.target.dataset && e.target.dataset.table;
@@ -451,7 +506,7 @@ svg.addEventListener("pointerup", () => {
   } else { drag = null; render(); }
   svg.classList.remove("panning");
 });
-svg.addEventListener("pointerleave", () => { if (you) send({ type: "presence", cursor: null, selection }); });
+svg.addEventListener("pointerleave", () => { if (connected) sendSealed("presence", 0, Wire.encodePresence({ cursor: null, selection })); });
 svg.addEventListener("dblclick", e => {
   const id = e.target.dataset && e.target.dataset.table, table = id && shown.get(id);
   if (!table) return;
@@ -471,15 +526,34 @@ svg.addEventListener("wheel", e => {
 
 // MARK: Connection
 
-// Anything heard that doesn't fit (a change out of order, a digest that doesn't match, a reply to a change not sent
-// next) drops the connection; on reconnecting, the host sends its copy afresh and says which of the pending changes it
-// has taken, and the rest are sent again. Lost connections are retried, sooner at first.
+// The link: /r/<room>#key=<room key>&token=<secret> (or &view=, to only watch). What's after the # never leaves here.
+const link = (() => {
+  const fields = new URLSearchParams(location.hash.slice(1)), match = location.pathname.match(/^\/r\/([^/]+)$/);
+  const secret = fields.get("token") || fields.get("view");
+  let key = null;
+  try { key = Uint8Array.from(atob((fields.get("key") || "").replace(/-/g, "+").replace(/_/g, "/")), c => c.charCodeAt(0)); } catch {}
+  return match && secret && key && key.length === 32 ? { room: match[1], secret, key, canEdit: !!fields.get("token") } : null;
+})();
+const COLOR_ORDER = ["blue", "purple", "pink", "orange", "green", "teal", "indigo", "red", "mint", "cyan", "brown", "yellow"];
+const person = (peer, name) => ({ id: peer, name: name || "Guest", color: COLOR_ORDER[(peer - 1) % COLOR_ORDER.length], cursor: null, selection: [] });
+
+// Anything heard that doesn't fit (a decision out of order, a digest that doesn't match, a decision on a change not
+// sent next) drops the connection, and on reconnecting the relay catches this copy up from where it was, or from the
+// host's snapshot. Lost connections are retried, sooner at first.
 let socket = null, generation = 0, connected = false, ended = false, welcomedOnce = false, checksDigests = true;
-let attempts = 0, heard = 0, pinged = 0, sentThrough = 0, pingCovers = 0;
-const token = new URLSearchParams(location.hash.slice(1)).get("token");
+let attempts = 0, heard = 0, pinged = 0, roomKey = null, limits = { maxFrame: 1 << 20 };
+// Frames are opened and sealed asynchronously, so each way they go through a queue, in order.
+let incoming = Promise.resolve(), outgoing = Promise.resolve();
 let name = new URLSearchParams(location.hash.slice(1)).get("name");
 
-function send(message) { if (socket && socket.readyState === 1) socket.send(JSON.stringify(message)); }
+function sendSealed(kind, seq, body) {
+  const mine = generation;
+  outgoing = outgoing.then(async () => {
+    const frame = await Wire.seal(roomKey, { kind, seq }, body);
+    if (mine === generation && socket && socket.readyState === 1) socket.send(frame);
+  }).catch(() => {});
+}
+const sendChange = change => sendSealed("change", change.cseq, Wire.encodeOps(change.ops));
 function toast(message) {
   const t = $("toast"); t.textContent = message; t.hidden = false;
   clearTimeout(toast.timer); toast.timer = setTimeout(() => t.hidden = true, 4000);
@@ -497,84 +571,121 @@ function reconnect(delay) {
   if (welcomedOnce) status("Reconnecting…");
   setTimeout(connect, delay * 1000);
 }
-const resync = () => reconnect(0);
+// Starts afresh: caught up from where this copy is, or, if it can't be trusted, from a snapshot.
+function resync(discardingCopy) {
+  if (discardingCopy) hasCopy = false;
+  attempts = 0;
+  reconnect(0);
+}
 function disconnected() {
   if (ended) return;
   if (connected) attempts = 0;
   attempts += 1;
-  if (!welcomedOnce && attempts > 3) return end("Couldn't connect: check the link, and that its host is still sharing.");
+  if (!welcomedOnce && attempts > 3) return end("Couldn't join: check the link, and that its host is still sharing.");
   reconnect(Math.min(10, .25 * 2 ** (attempts - 1)));
 }
 function connect() {
   if (ended) return;
   const mine = ++generation;
   socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/");
+  socket.binaryType = "arraybuffer";
   socket.onopen = () => {
     if (mine !== generation) return;
-    heard = pinged = Date.now(); sentThrough = pingCovers = 0;
-    send({ type: "hello", protocol: 1, token, name, client });
+    heard = pinged = Date.now();
+    const hello = Wire.encodeHello({ role: link.canEdit ? "guest" : "view", room: link.room, secret: link.secret, client,
+      applied: hasCopy ? seq : null, name });
+    socket.send(Wire.frame("hello", 0, hello));
   };
-  socket.onmessage = event => { if (mine === generation) receive(event.data); };
+  socket.onmessage = event => {
+    if (mine !== generation) return;
+    const bytes = new Uint8Array(event.data);
+    incoming = incoming.then(() => mine === generation && receive(bytes)).catch(() => mine === generation && resync());
+  };
   socket.onclose = () => { if (mine === generation) disconnected(); };
 }
-function receive(text) {
+async function receive(bytes) {
   heard = Date.now();
-  let m;
-  try { m = JSON.parse(text); } catch { return resync(); }
-  if (m.type === "welcome") return welcome(m);
-  if (m.type === "reject" && m.cseq == null) return end(m.reason || "Turned away.");
-  if (m.type === "bye") return end(m.reason || "The session has ended.");
+  const header = Wire.decodeHeader(bytes), body = bytes.subarray(24);
+  if (bytes.length !== 24 + header.length) return resync();
+  if (header.kind === "hello") return welcome(Wire.decodeWelcome(body));
+  if (header.kind === "bye") return end(new TextDecoder().decode(body) || "The session has ended.");
   if (!connected) return resync();
-  if (m.type === "ops") {
-    if (m.seq !== seq + 1 || !Array.isArray(m.ops)) return resync();
-    m.ops.forEach(op => apply(confirmed, op, digest));
-    seq = m.seq;
-    if (m.author === you) {
-      if (!pending.length || pending[0].cseq !== m.cseq) return resync();
-      pending.shift();
+  switch (header.kind) {
+    case "snapshot": {
+      let plain;
+      // Not opening is a wrong key, not a bad connection: trying again won't help.
+      try { plain = (await Wire.open(roomKey, bytes)).body; } catch { return end("Couldn't read this session: check the link."); }
+      const snapshot = Wire.decodeSnapshot(plain);
+      confirmed = new Map(); digest = [0, 0];
+      snapshot.entities.forEach(entity => apply(confirmed, { op: "put", entity }, digest));
+      seq = header.seq; hasCopy = true;
+      if (!same(snapshot.digest, digestBytes(digest))) checksDigests = false;
+      // What the host had taken of the changes made here is in its copy, made or turned down.
+      const taken = snapshot.taken.get(you) || 0;
+      pending = pending.filter(p => p.cseq > taken);
+      status("");
+      return relay();
     }
-    if (checksDigests && m.hash !== hex(digest)) return resync();
-    relay();
-  } else if (m.type === "reject") {
-    if (!pending.length || pending[0].cseq !== m.cseq) return resync();
-    pending.shift(); relay(); toast("A change was taken back: " + (m.reason || ""));
-  } else if (m.type === "pong") {
-    // As well: no change still waiting here has been taken, as its answer would have come first, unless it went to a
-    // connection since let go of.
-    const taken = m.acked || 0;
-    if (m.seq !== seq || taken < pingCovers || (pending.length && pending[0].cseq <= taken) || (checksDigests && m.hash !== hex(digest))) return resync();
-  } else if (m.type === "joined" || m.type === "presence") {
-    if (m.peer.id !== you) { peers.set(m.peer.id, m.peer); render(); }
-  } else if (m.type === "left") { peers.delete(m.peer.id); render(); }
+    case "ops": case "reject": {
+      if (!hasCopy || header.seq !== seq + 1) return resync();
+      const decision = Wire.decodeDecision((await Wire.open(roomKey, bytes)).body);
+      if (header.kind === "ops") {
+        let ops;
+        try { ops = Wire.decodeOps(decision.content); } catch { return resync(true); }
+        ops.forEach(op => apply(confirmed, op, digest));
+      }
+      seq = header.seq;
+      if (decision.author === you) {
+        if (!pending.length || pending[0].cseq !== decision.cseq) return resync();
+        pending.shift();
+        if (header.kind === "reject") toast("A change was taken back: " + new TextDecoder().decode(decision.content));
+      }
+      if (checksDigests && !same(decision.digest, digestBytes(digest))) return resync(true);
+      return relay();
+    }
+    case "pong":
+      // Everything the relay sent before it has come.
+      if (hasCopy && header.seq !== seq) return resync();
+      return;
+    case "joined":
+      peers.set(header.peer, person(header.peer, new TextDecoder().decode(body)));
+      // The host's back: what it may have missed while away, sent again.
+      if (header.peer === 1) pending.forEach(sendChange);
+      return render();
+    case "left":
+      peers.delete(header.peer);
+      return render();
+    case "presence": {
+      let presence;
+      try { presence = Wire.decodePresence((await Wire.open(roomKey, bytes)).body); } catch { return; }
+      const peer = peers.get(header.peer) || person(header.peer, "");
+      peers.set(header.peer, { ...peer, ...presence });
+      return render();
+    }
+  }
 }
 function welcome(m) {
-  if (!m.you || typeof m.seq !== "number" || !Array.isArray(m.entities)) return resync();
-  confirmed = new Map(); digest = [0, 0];
-  m.entities.forEach(entity => apply(confirmed, { op: "put", entity }, digest));
-  seq = m.seq; you = m.you;
-  // Its copy, whole, is the truth: a digest that doesn't match it means it writes JSON differently.
-  if (m.hash !== hex(digest)) checksDigests = false;
-  // What the host took of the changes made here, made or turned down, is in its copy or never will be.
-  pending = pending.filter(p => p.cseq > (m.acked || 0));
-  peers = new Map(m.peers.map(p => [p.id, p]));
-  connected = true; attempts = 0; welcomedOnce = true;
-  $("title").textContent = m.title; document.title = m.title + " — Joinery";
-  status("");
-  for (const change of pending) { send({ type: "ops", cseq: change.cseq, ops: change.ops }); sentThrough = change.cseq; }
-  relay();
+  if (m.version !== 1) return end(m.version > 1 ? "This session needs a newer Joinery." : "The host needs a newer Joinery.");
+  you = m.peer; limits = m.limits;
+  peers = new Map([...m.peers].map(([peer, name]) => [peer, person(peer, name)]));
+  connected = true; attempts = 0;
+  if (!welcomedOnce) { welcomedOnce = true; $("title").textContent = m.title; document.title = m.title + " — Joinery"; }
+  // Sent again: those the host has taken already, it ignores; the rest it takes, in order.
+  pending.forEach(sendChange);
+  render();
 }
 setInterval(() => {
   if (!connected) return;
   const now = Date.now();
   if (now - heard > 25000) return resync();
-  if (now - pinged >= 10000) { pinged = now; pingCovers = sentThrough; send({ type: "ping" }); }
+  if (now - pinged >= 10000) { pinged = now; socket.send(Wire.frame("ping", seq)); }
 }, 1000);
 
-if (!token) status("This link has no token. Ask for the whole link.");
+if (!link) status("This link isn't whole. Ask for the whole link: it has #key= in it.");
 else {
   try { name = name || localStorage.getItem("joinery.name"); } catch {}
   if (!name) { name = (prompt("Your name, for others to see", "") || "").trim() || "Guest"; try { localStorage.setItem("joinery.name", name); } catch {} }
-  connect();
+  Wire.importKey(link.key).then(key => { roomKey = key; connect(); }, () => status("This browser can't open encrypted sessions."));
 }
 addEventListener("resize", () => moved ? place() : render());
 </script>

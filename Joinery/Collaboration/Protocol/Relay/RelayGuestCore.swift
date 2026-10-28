@@ -34,7 +34,10 @@ final class RelayGuestCore {
     let client = UUID().uuidString
     private(set) var state = State.connecting
     private(set) var you: UInt32?
-    private(set) var peers: [UInt32: [UInt8]] = [:]
+    /// Everyone else here.
+    private(set) var peers: [UInt32: Peer] = [:]
+    /// What the relay holds the room to, once it's said.
+    private(set) var limits = Relay.Limits()
     /// The host's document, as of `seq`, once there's a copy.
     private(set) var confirmed = CheckedReplica()
     private(set) var seq: UInt64 = 0
@@ -89,11 +92,24 @@ final class RelayGuestCore {
 
     /// A change made here: shown at once, and sent when it can be.
     func changedHere(_ ops: [Replica.Op]) -> [Effect] {
-        guard canEdit, !ops.isEmpty, state != .ended else { return [] }
+        guard !ops.isEmpty, state != .ended else { return [] }
+        // A view link: taken back at once.
+        guard canEdit else { return [.refused("You joined with a view link, so you can watch but not edit."), .show(shown)] }
+        // The relay would let go of it, and of every try after.
+        let size = Wire.Header.size + Wire.Frame.sealing + Wire.encode(ops).count
+        guard size <= limits.maxFrame else {
+            return [.refused("It's \(size / 1024) KB, and the relay takes changes up to \(limits.maxFrame / 1024) KB."), .show(shown)]
+        }
         pending.append((nextCseq, ops))
         nextCseq += 1
         guard state == .connected else { return [] }
         return [.send(changeFrame(pending.last!))]
+    }
+
+    /// Where this guest's pointer is and what it has selected, for everyone else.
+    func share(_ presence: Relay.Presence) -> [Effect] {
+        guard state == .connected else { return [] }
+        return [.send(Wire.Frame(.presence, sealing: presence.body, with: key).bytes)]
     }
 
     func tick(at now: Date) -> [Effect] {
@@ -129,11 +145,15 @@ final class RelayGuestCore {
             guard !hasCopy || frame.header.seq == seq else { return resync() }
             return []
         case .joined:
-            peers[frame.header.peer] = frame.body
+            peers[frame.header.peer] = Relay.peer(frame.header.peer, name: frame.body)
             // The host's back: what it may have missed while away, sent again.
             return frame.header.peer == Relay.hostPeer ? pending.map { .send(changeFrame($0)) } : []
         case .left:
             peers[frame.header.peer] = nil
+            return []
+        case .presence:
+            guard let plain = try? frame.opened(with: key), let presence = try? Relay.Presence(plain) else { return [] }
+            peers[frame.header.peer, default: Relay.peer(frame.header.peer, name: [])].show(presence)
             return []
         default:
             return []
@@ -148,7 +168,8 @@ final class RelayGuestCore {
             return end(welcome.version > Relay.roomVersion ? "This session needs a newer Joinery." : "The host needs a newer Joinery.")
         }
         you = welcome.peer
-        peers = welcome.peers
+        limits = welcome.limits
+        peers = welcome.peers.reduce(into: [:]) { $0[$1.key] = Relay.peer($1.key, name: $1.value) }
         state = .connected
         attempts = 0
         var effects: [Effect] = []

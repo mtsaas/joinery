@@ -191,9 +191,8 @@ final class MCPServer {
                     with the editing tools, then get_changes. Joinery shows the result as a diff. The \
                     review_schema_changes prompt has the steps in full.
 
-                    To let others edit the open data model live, start_sharing: it serves it on a port of this Mac. \
-                    Expose that port publicly with a tunnel, then call start_sharing again with the tunnel's address \
-                    for the link to send.
+                    To let others edit the open data model live, start_sharing: it shares it through a relay and \
+                    returns links to send, one to edit and one only to watch.
                     """,
             ])
         case "ping":
@@ -301,19 +300,11 @@ final class MCPServer {
             "name": "start_sharing",
             "description": """
                 Shares the open data model live, so others can edit it with you: in a browser, or in Joinery with Join. \
-                Serves it on a port of this Mac, for this Mac only, and returns the port and the link. To share beyond \
-                this Mac, expose the port with a tunnel (such as `cloudflared tunnel --url http://localhost:<port>` or \
-                `ngrok http <port>`), then call start_sharing again with the tunnel's public address to get the link to \
-                send. Calling it while already sharing keeps the session and its link's token, only giving the link at \
-                the new address. The link's token gives full editing, so treat it as a password.
+                Shares it through the relay set in Joinery's Settings, end-to-end encrypted, and returns two links: one \
+                to edit, one only to watch. Calling it while already sharing gives the same links. Anyone with a link \
+                can join while sharing lasts, so treat links as passwords.
                 """,
-            "inputSchema": [
-                "type": "object",
-                "properties": [
-                    "address": ["type": "string", "description": "Where others reach the port, such as the tunnel's https://… address. This Mac's own address if left out."],
-                    "port": ["type": "integer", "description": "The port to serve on, when first starting; 8724 if left out."],
-                ],
-            ],
+            "inputSchema": ["type": "object", "properties": [String: Any]()],
         ],
     ]
 
@@ -401,19 +392,16 @@ final class MCPServer {
             if open.session != nil, !(open.session is SessionHost) {
                 throw ModelTools.Failure("\(open.name) is a session joined from someone else; only its host can share it.")
             }
-            let host = try open.session as? SessionHost ?? SessionHost(model: open, port: (arguments["port"] as? Int).flatMap(UInt16.init(exactly:)) ?? SessionHost.defaultPort)
+            let host = open.session as? SessionHost ?? SessionHost(model: open)
             open.session = host
-            // The port is taken, or isn't, a moment after starting.
-            for _ in 0..<100 where host.port == nil && open.session === host { try? await Task.sleep(for: .milliseconds(20)) }
-            guard let port = host.port, open.session === host else { throw ModelTools.Failure("Couldn't start sharing: \(host.status)") }
-            let address = (arguments["address"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-            // The share panel shows the same link.
-            if let address { UserDefaults.standard.set(address, forKey: "sessionAddress") }
-            let link = host.link(at: address ?? "localhost:\(port)")
+            // The relay makes the room a moment after connecting, or can't be reached.
+            for _ in 0..<100 where host.links == nil && open.session === host { try? await Task.sleep(for: .milliseconds(50)) }
+            guard let links = host.links, open.session === host else {
+                if open.session === host { open.session = nil; host.close() }
+                throw ModelTools.Failure("Couldn't start sharing: \(host.status). The relay is \(SessionHost.relay.absoluteString), set in Joinery's Settings.")
+            }
             let others = host.peers.isEmpty ? "No one else has joined yet." : "\(host.peers.count) others have joined."
-            return address == nil
-                ? "Sharing \(open.name) on port \(port), on this Mac only, at \(link). To share beyond this Mac, expose port \(port) with a tunnel, then call start_sharing again with its public address. \(others)"
-                : "Sharing \(open.name) at \(link): send that link to whoever should edit it, as you would a password. It opens in a browser, or in Joinery with Join. Make sure the tunnel forwards to port \(port). \(others)"
+            return "Sharing \(open.name). Edit link: \(links.edit) View link: \(links.view) Send them as you would a password; each opens in a browser, or in Joinery with Join. \(others)"
         default:
             guard ModelTools.names.contains(name) else { throw ModelTools.Failure("There's no tool called \(name).") }
             guard let open = library.open else {

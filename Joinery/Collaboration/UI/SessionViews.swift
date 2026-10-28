@@ -8,9 +8,6 @@ extension Peer {
 /// Sharing the open model, or the session it's in: how others join, and who's here.
 struct SharePanel: View {
     let open: OpenModel
-    /// Where others reach this Mac's port, as the tunnel exposing it says: kept, as a tunnel's address often is.
-    @AppStorage("sessionAddress") private var address = ""
-    @State private var copied = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -18,15 +15,19 @@ struct SharePanel: View {
                 hosting(host)
             } else if let session = open.session {
                 Label(session.status, systemImage: "person.2.fill").font(.headline)
+                if (session as? SessionClient)?.canEdit == false {
+                    Text("You can watch, but not edit: the link you joined with is a view link.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
                 people(session.peers.values.sorted { $0.name < $1.name })
                 Button("Leave Session", role: .destructive) { session.close() }
                     .help("Close the data model and leave the session")
             } else {
                 Text("Share Live").font(.headline)
-                Text("Others can join through a link and edit with you as you go. Their pointers and changes show here, and this Mac keeps the data model.")
+                Text("Others can join through a link and edit with you as you go, in Joinery or a browser. Everything is encrypted end to end, and this Mac keeps the data model.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                Button("Start Sharing") { start() }
+                Button("Start Sharing") { open.session = SessionHost(model: open) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
             }
@@ -38,32 +39,19 @@ struct SharePanel: View {
     private func hosting(_ host: SessionHost) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Label(host.status, systemImage: "dot.radiowaves.left.and.right").font(.headline)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Public address").font(.subheadline).foregroundStyle(.secondary)
-                TextField("Public address", text: $address, prompt: Text("Paste your tunnel's address"))
-                    .textFieldStyle(.roundedBorder)
-                Text("Expose port \(String(host.port ?? SessionHost.defaultPort)) with a tunnel, and paste its address. Without one, the link works on this Mac only.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            let link = host.link(at: address.isEmpty ? "localhost:\(host.port ?? SessionHost.defaultPort)" : address)
-            HStack {
-                Text(link).font(.caption.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
-                Spacer()
-                Button(copied ? "Copied" : "Copy Link") {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(link, forType: .string)
-                    copied = true
+            if let links = host.links {
+                VStack(alignment: .leading, spacing: 8) {
+                    CopyLink(title: "Edit link", link: links.edit)
+                    CopyLink(title: "View link", link: links.view)
+                    Text("Send a link as you would a password: anyone with it can join while you share. It opens in a browser, or in Joinery with Join.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Text("Opened in a browser, the link shows the data model there; pasted into Join in Joinery, it opens it here.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             people([host.me] + host.peers.values.sorted { $0.name < $1.name })
             Button("Stop Sharing", role: .destructive) { host.close() }
-                .help("Everyone else is let go, keeping a copy as it is")
+                .help("Ends the session for everyone, and the links stop working")
         }
     }
 
@@ -74,17 +62,31 @@ struct SharePanel: View {
                 HStack(spacing: 8) {
                     Avatar(peer: peer)
                     Text(peer.name)
-                    if peer.id == "host" { Text("Host").font(.caption).foregroundStyle(.secondary) }
+                    if peer.id == String(Relay.hostPeer) { Text("Host").font(.caption).foregroundStyle(.secondary) }
                 }
             }
         }
     }
+}
 
-    private func start() {
-        do {
-            open.session = try SessionHost(model: open)
-        } catch {
-            Library.shared.failure = "Couldn't start sharing: \(error.localizedDescription)"
+/// A link, shortened, with a button that copies it.
+private struct CopyLink: View {
+    let title: String
+    let link: String
+    @State private var copied = false
+
+    var body: some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.subheadline)
+                Text(link).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+            }
+            Spacer()
+            Button(copied ? "Copied" : "Copy") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(link, forType: .string)
+                copied = true
+            }
         }
     }
 }
@@ -113,12 +115,12 @@ struct JoinPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Join a Shared Data Model").font(.headline)
-            TextField("Link", text: $link, prompt: Text("https://…/#token=…"))
+            TextField("Link", text: $link, prompt: Text("https://…/r/…#key=…"))
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(join)
                 .onChange(of: link) { isInvalid = false }
             if isInvalid {
-                Text("That isn't a share link. It ends with #token= and a code.").font(.caption).foregroundStyle(.red)
+                Text("That isn't a share link. Ask for the whole link: it has #key= in it.").font(.caption).foregroundStyle(.red)
             } else if let status = library.joining?.status {
                 Text(status).font(.caption).foregroundStyle(.secondary)
             } else {
@@ -139,7 +141,7 @@ struct JoinPanel: View {
         .frame(width: 360)
         .onAppear {
             // A link just copied is very likely the one.
-            if let copied = NSPasteboard.general.string(forType: .string), SessionLink.address(of: copied) != nil { link = copied }
+            if let copied = NSPasteboard.general.string(forType: .string), Relay.Link(copied) != nil { link = copied }
         }
     }
 

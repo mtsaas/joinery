@@ -394,15 +394,12 @@ enum DebugHooks {
                 default: break
                 }
             case "share":
-                // Hosts a session on the open model, on JOINERY_SHARE_PORT with JOINERY_SHARE_TOKEN if given.
+                // Hosts a session on the open model, through JOINERY_RELAY if given, and prints its links.
                 guard let open = Library.shared.open else { break }
-                do {
-                    let host = try SessionHost(model: open, port: environment["JOINERY_SHARE_PORT"].flatMap(UInt16.init) ?? SessionHost.defaultPort,
-                                               token: environment["JOINERY_SHARE_TOKEN"] ?? SessionHost.newToken())
-                    open.session = host
-                    try? await Task.sleep(for: .seconds(0.3))
-                    print("sharing:", host.status, host.link(at: "localhost:\(host.port ?? 0)"))
-                } catch { print("share failed:", error.localizedDescription) }
+                let host = SessionHost(model: open, relay: environment["JOINERY_RELAY"].flatMap(URL.init(string:)) ?? SessionHost.relay)
+                open.session = host
+                for _ in 0..<50 where host.links == nil { try? await Task.sleep(for: .milliseconds(100)) }
+                print("sharing:", host.status, host.links?.edit ?? "", host.links?.view ?? "")
             case "join" where words.count == 2:
                 print("join:", Library.shared.join(words[1]) ? "connecting" : "not a link")
             case "presence" where numbers.count == 2:

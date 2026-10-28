@@ -2,11 +2,75 @@ import CryptoKit
 import Foundation
 import Network
 
-/// One connection to a shared session's port, as a server sees it. A browser asking for the page is sent it and let go;
-/// anything asking to upgrade becomes a WebSocket (RFC 6455) carrying text messages, each a JSON `Message`.
+@testable import Joinery
+
+/// A relay in the test process, for the app's sessions to share through: `RelayCore`, the reference the Zig relay is
+/// checked against, behind WebSockets on a free port of this Mac.
+@MainActor
+final class TestRelay {
+    private(set) var port: UInt16?
+    let core = RelayCore()
+    private let listener: NWListener
+    private var sockets: [RelayCore.Connection: SocketPeer] = [:]
+    private var nextConnection = 1
+
+    var address: URL { URL(string: "http://127.0.0.1:\(port ?? 0)")! }
+
+    init() throws {
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: .any)
+        listener = try NWListener(using: parameters)
+        listener.newConnectionHandler = { [weak self] connection in
+            Task { @MainActor in self?.accept(SocketPeer(connection, page: Data())) }
+        }
+        listener.stateUpdateHandler = { [weak self] state in
+            Task { @MainActor in if case .ready = state { self?.port = self?.listener.port?.rawValue } }
+        }
+        listener.start(queue: .main)
+    }
+
+    /// A relay that's listening.
+    static func started() async throws -> TestRelay {
+        let relay = try TestRelay()
+        for _ in 0..<300 where relay.port == nil { try await Task.sleep(for: .milliseconds(10)) }
+        return relay
+    }
+
+    func stop() {
+        listener.cancel()
+        for socket in sockets.values { socket.close() }
+    }
+
+    private func accept(_ socket: SocketPeer) {
+        let connection = nextConnection
+        nextConnection += 1
+        sockets[connection] = socket
+        core.opened(connection, at: .now)
+        socket.onMessage = { [weak self] bytes in
+            guard let self else { return }
+            self.perform(self.core.received(bytes, on: connection, at: .now))
+        }
+        socket.onClose = { [weak self] in
+            guard let self, self.sockets.removeValue(forKey: connection) != nil else { return }
+            self.perform(self.core.closed(connection, at: .now))
+        }
+        socket.start()
+    }
+
+    private func perform(_ effects: [RelayCore.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .send(let connection, let bytes): sockets[connection]?.send(bytes)
+            case .close(let connection): sockets.removeValue(forKey: connection)?.close()
+            }
+        }
+    }
+}
+
+/// One connection to the test relay, as a server sees it: a WebSocket (RFC 6455) carrying binary messages.
 @MainActor
 final class SocketPeer {
-    var onText: ((String) -> Void)?
+    var onMessage: (([UInt8]) -> Void)?
     var onClose: (() -> Void)?
     /// Larger messages close the connection: nothing in a session needs one this big.
     static let maximumMessage = 16 << 20
@@ -30,8 +94,8 @@ final class SocketPeer {
         receive()
     }
 
-    func send(_ text: String) {
-        send(opcode: 1, Data(text.utf8))
+    func send(_ bytes: [UInt8]) {
+        send(opcode: 2, Data(bytes))
     }
 
     func close() {
@@ -101,18 +165,18 @@ final class SocketPeer {
     private func readFrames() {
         while !isClosed, let frame = nextFrame() {
             switch frame.opcode {
-            case 0, 1:
+            case 0, 2:
                 fragments += frame.payload
                 guard fragments.count <= Self.maximumMessage else { return close() }
                 if frame.isFinal {
-                    let text = String(decoding: fragments, as: UTF8.self)
+                    let bytes = [UInt8](fragments)
                     fragments = Data()
-                    onText?(text)
+                    onMessage?(bytes)
                 }
             case 8: close()
             case 9: send(opcode: 10, frame.payload)
             case 10: break
-            // Binary, or anything else: not part of the protocol.
+            // Text, or anything else: not part of the protocol.
             default: close()
             }
         }

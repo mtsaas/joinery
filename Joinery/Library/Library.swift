@@ -169,7 +169,7 @@ final class Library {
                     if self.open?.url == url { self.selection = nil }
                     try? self.files.removeItem(at: folder)
                     // Leaving needs no telling.
-                    if reason != ClientCore.leftReason { self.failure = reason }
+                    if reason != SessionClient.leftReason { self.failure = reason }
                 }
             }
         }
