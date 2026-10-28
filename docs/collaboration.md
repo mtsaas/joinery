@@ -138,7 +138,7 @@ What it does:
   3. If it's your own change, it must answer your oldest pending change, which you then drop.
   4. The digest must match.
 - **On a `reject` with `cseq`:** it must answer your oldest pending change, which you drop.
-- **On `pong`:** its `seq` must equal yours, its `acked` must be at least `sentThrough` as it was when you sent the ping, and the digest must match.
+- **On `pong`:** its `seq` must equal yours, its `acked` must be at least `sentThrough` as it was when you sent the ping, your oldest pending change must be numbered above its `acked`, and the digest must match.
 - **When a check fails** (an `ops` out of order, a reply to the wrong change, a digest or `pong` that doesn't match, a message that won't parse): **resync**. Close the connection and connect again at once.
 - **When the connection drops:** connect again after 0.25 s, doubling each time up to 10 s.
 - **Giving up:** a client that has never been let in gives up after 4 failed tries. One that has, keeps trying.
@@ -177,7 +177,7 @@ Let `D(n)` be the host's document after its `n`th change. `D(0)` is the document
 - A pending change stays pending until the guest hears it was taken: its own `ops` echoed back, a `reject`, or a `welcome` whose `acked` covers it.
 - While pending, the guest sends it on every new connection, after the `welcome`.
 - A connection can drop partway, losing a change or its answer. The guest then reconnects, and the `welcome` says, through `acked`, whether the host took it. Taken: the guest drops it, and its result, made or turned down, is already in `D(seq)`. Not taken: the guest sends it again.
-- If a change is lost while the connection stays up (TCP rules this out, but the protocol doesn't rely on that), the host sees the next change's number skip and closes the connection. If nothing follows it, the next `pong`'s `acked` falls short of what was sent before the ping, and the guest resyncs.
+- If a change is lost while the connection stays up (TCP rules this out, but the protocol doesn't rely on that), the host sees the next change's number skip and closes the connection. If nothing follows it, the next `pong`'s `acked` falls short of what was sent before the ping, and the guest resyncs. If a change's answer is the thing lost, the next `pong`'s `acked` covers a change still pending. Every answer the host sent before that `pong` would already have arrived, so none is coming, and the guest resyncs. The simulation found this case.
 - So, as long as connections work some of the time, every change is eventually taken.
 
 **4. The copy shown is always well defined.** What a guest shows is `D(seq)` with its pending changes on top. Applying an op to something that has since been deleted does nothing. That's the same thing the host would decide, because the host turns such a change down.
