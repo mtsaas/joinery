@@ -11,6 +11,8 @@ final class SessionClient: Session {
 
     private(set) var peers: [String: Peer] = [:]
     private(set) var status = "Connecting…"
+    /// This person, as others see them, once let in.
+    var me: Peer? { core.you.map { Relay.peer($0, name: Array(core.name.utf8)) } }
     /// Whether this link lets this person edit, or only watch.
     var canEdit: Bool { core.canEdit }
 

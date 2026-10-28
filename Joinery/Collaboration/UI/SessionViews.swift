@@ -19,7 +19,8 @@ struct SharePanel: View {
                     Text("You can watch, but not edit: the link you joined with is a view link.")
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                people(session.peers.values.sorted { $0.name < $1.name })
+                let me = (session as? SessionClient)?.me
+                people([me].compactMap { $0 } + session.peers.values.sorted { $0.name < $1.name }, you: me?.id)
                 Button("Leave Session", role: .destructive) { session.close() }
                     .help("Close the data model and leave the session")
             } else {
@@ -33,7 +34,7 @@ struct SharePanel: View {
             }
         }
         .padding(16)
-        .frame(width: 340)
+        .frame(width: 340, alignment: .leading)
     }
 
     private func hosting(_ host: SessionHost) -> some View {
@@ -49,20 +50,24 @@ struct SharePanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            people([host.me] + host.peers.values.sorted { $0.name < $1.name })
+            people([host.me] + host.peers.values.sorted { $0.name < $1.name }, you: host.me.id)
             Button("Stop Sharing", role: .destructive) { host.close() }
                 .help("Ends the session for everyone, and the links stop working")
         }
     }
 
-    private func people(_ peers: [Peer]) -> some View {
+    private func people(_ peers: [Peer], you: Peer.ID?) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(peers.count == 1 ? "Only you so far" : "\(peers.count) people").font(.subheadline).foregroundStyle(.secondary)
             ForEach(peers) { peer in
                 HStack(spacing: 8) {
                     Avatar(peer: peer)
                     Text(peer.name)
-                    if peer.id == String(Relay.hostPeer) { Text("Host").font(.caption).foregroundStyle(.secondary) }
+                    if peer.id == you {
+                        Text("You").font(.caption).foregroundStyle(.secondary)
+                    } else if peer.id == String(Relay.hostPeer) {
+                        Text("Host").font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
         }
