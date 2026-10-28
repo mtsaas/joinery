@@ -339,6 +339,8 @@ private struct PresenceSharing: ViewModifier {
     @State private var hovered: CGPoint?
     /// When presence was last shared, to share it at most twenty times a second.
     @State private var lastShared = Date.distantPast
+    /// Shares what's latest once the wait's over, when sharing it now was held back.
+    @State private var trailing: Task<Void, Never>?
 
     func body(content: Content) -> some View {
         content
@@ -360,20 +362,39 @@ private struct PresenceSharing: ViewModifier {
                 if let new { hovered = new }
                 share(throttled: true)
             }
-            // Letting go is always sent, so what others see of a drag doesn't stay behind.
-            .onChange(of: canvas.dragOffset) { share(throttled: canvas.dragOffset != nil) }
+            .onChange(of: canvas.dragOffset) { old, new in
+                // Letting go: where it ended, then that it has, so others hold it exactly there until the change lands.
+                if new == nil, let old { send(drag: old) }
+                share(throttled: new != nil)
+            }
             .onChange(of: canvas.marquee) { share(throttled: canvas.marquee != nil) }
     }
 
+    /// Shares presence as it is now, or if `throttled` and it was shared less than 50 ms ago, once that's up, so the last
+    /// of a movement is never left unsent.
     private func share(throttled: Bool = false) {
-        guard let session = open.session else { return }
-        if throttled {
-            guard Date.now.timeIntervalSince(lastShared) > 0.05 else { return }
-            lastShared = .now
+        let wait = 0.05 - Date.now.timeIntervalSince(lastShared)
+        if throttled && wait > 0 {
+            if trailing == nil {
+                trailing = Task {
+                    try? await Task.sleep(for: .seconds(wait))
+                    guard !Task.isCancelled else { return }
+                    trailing = nil
+                    share()
+                }
+            }
+            return
         }
+        send(drag: canvas.dragOffset)
+    }
+
+    private func send(drag: CGPoint?) {
+        guard let session = open.session else { return }
+        trailing?.cancel()
+        trailing = nil
+        lastShared = .now
         // A group's tables move with it, so they're what others are told are dragged.
-        let selection = canvas.dragOffset == nil ? canvas.selectedTables : canvas.selectedTablesAndMembers(in: open.model)
-        session.share(Relay.Presence(cursor: canvas.dragPointer ?? hovered, selection: selection,
-                                     drag: canvas.dragOffset, marquee: canvas.marquee))
+        let selection = drag == nil ? canvas.selectedTables : canvas.selectedTablesAndMembers(in: open.model)
+        session.share(Relay.Presence(cursor: canvas.dragPointer ?? hovered, selection: selection, drag: drag, marquee: canvas.marquee))
     }
 }
