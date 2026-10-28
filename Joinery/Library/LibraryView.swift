@@ -61,6 +61,8 @@ struct ModelEditor: View {
     @State private var lastShared = Date.distantPast
     /// Where this person's pointer is on the canvas, as last shared.
     @State private var sharedCursor: CGPoint?
+    /// Where the canvas is in the window: it reaches up under the toolbar, so its views' origins aren't its own.
+    @State private var canvasOrigin = CGPoint.zero
     /// An earlier version shown instead of the model, read-only, from the version history.
     @State private var preview: VersionHistory.Preview?
     /// With an earlier version shown: it, it and now together with the changes marked, or now.
@@ -76,6 +78,7 @@ struct ModelEditor: View {
         let isComparing = base != nil
         let model = Binding { shown ?? canvas.shown(open.model) } set: { if !isComparing { open.change(to: $0) } }
         CanvasView(model: model, canvas: canvas, diff: diff)
+            .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { canvasOrigin = $0 }
             // Under the toolbar, which floats over it, but not the sidebar, so fitting the model fits what's visible.
             .ignoresSafeArea(edges: .top)
             .toolbar {
@@ -157,9 +160,9 @@ struct ModelEditor: View {
                 PresenceLayer(open: open, tables: model.wrappedValue.tables, canvas: canvas)
                     .ignoresSafeArea(edges: .top)
             }
-            .onContinuousHover { phase in
+            .onContinuousHover(coordinateSpace: .global) { phase in
                 if case .active(let location) = phase {
-                    sharedCursor = canvas.canvasPoint(location)
+                    sharedCursor = canvas.canvasPoint(location - canvasOrigin)
                     guard Date.now.timeIntervalSince(lastShared) > 0.05 else { return }
                     lastShared = .now
                 } else {
