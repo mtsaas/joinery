@@ -2,15 +2,15 @@
 
 Status: proposal. Nothing here is built yet.
 
-We will add a hosted relay so anyone can share without a tunnel. The sharing Mac stays the authority on the data model,
+We will replace local sharing and tunnels with a hosted relay, so anyone can share with one click. The sharing Mac stays the authority on the data model,
 exactly as in [collaboration.md](collaboration.md). The relay forwards guests' changes to the host, keeps the host's
 published changes in a bounded log, and sends those same bytes to every guest. It never decodes a change: bodies are
 end-to-end encrypted with a key the relay never sees, and the relay reads only a fixed 24-byte header. Because it reads
-nothing else, it can be written in Zig with every byte of memory allocated at startup.
+nothing else, it can be written in Zig with each room's memory allocated once, when the room is made.
 
-This extends the protocol in collaboration.md rather than replacing it. The rules that make every copy right, a single
-authority that numbers changes and guests that resync on any gap, carry over unchanged. What's new is the hop through
-the relay, a binary framing, encryption, and compaction of the log.
+This supersedes the transport in collaboration.md: the Mac no longer listens on a port, and nobody runs a tunnel. The
+rules that make every copy right, a single authority that numbers changes and guests that resync on any gap, carry over
+unchanged. What's new is the hop through the relay, a binary framing, encryption, and compaction of the log.
 
 ## Why the host stays the authority
 
@@ -55,6 +55,20 @@ Presence (pointers and selections) isn't logged. The relay keeps the latest pres
 overwrites it on each update, and sends it on when the socket has room. A dropped pointer update costs nothing; the
 next one replaces it.
 
+## Limits
+
+The relay's limits are part of the protocol. Its reply to `hello` carries them: the largest frame, the largest
+snapshot, the log size and the most people in a room. Clients check against them before sending, so a change the relay
+would refuse never leaves the Mac:
+
+- **The host** won't start sharing a model whose encrypted snapshot is over the snapshot limit, and says why.
+- **Anyone editing** gets a change refused locally if its encrypted frame would be over the frame limit, with the same
+  message the host would give for any other change it turns down. The editor takes it back, as it does now.
+- **The relay** still enforces every limit, and closes a connection that sends past one. A client that checks first
+  never sees that.
+
+Encryption adds 28 bytes and the header 24, so clients check the size of the finished frame, not of the ops.
+
 ## Frames
 
 Every message is one WebSocket binary message. Browsers can only speak WebSocket, so the relay speaks it too.
@@ -94,8 +108,8 @@ Client-to-server frames are masked, as browsers require. The relay unmasks each 
 frames straight into the log, guest frames into the room's inbox for the host. That's the only pass the relay makes
 over a body.
 
-On Linux the relay sends with io_uring and zero-copy sends from registered buffers. Every send is a pointer into
-memory that was allocated at startup.
+On Linux the relay sends with io_uring and zero-copy sends. Each room's block is registered with io_uring when the
+room is made, so every send is a pointer into memory that's already registered.
 
 ## The log and compaction
 
@@ -124,10 +138,16 @@ no cursor needs them.
 guest's last change if that's still kept, the snapshot route if not. Either way the guest checks the digest at the
 end, as `welcome` is checked today.
 
-## Memory: allocated once
+## Memory: allocated once per room
 
-The relay allocates everything at startup and never again. Limits come from configuration, and when a pool is
-exhausted the relay turns the newcomer away instead of growing.
+Each room's memory is allocated in one block when the room is made, and freed when it ends. Nothing inside a room
+allocates after that: its log, snapshots, inbox and people all live in that block, and when one is full the relay
+applies the rules above (drop the lagging guest, stop reading, turn the newcomer away) instead of growing. With no
+rooms, the relay holds only its listening socket. The number of rooms is limited only by the machine, plus an optional
+cap in configuration.
+
+Every room's block is the same size, so a freed block is reused for the next room as is, and memory doesn't fragment
+however rooms come and go.
 
 Per room, with the defaults we'd start from:
 
@@ -139,15 +159,23 @@ Per room, with the defaults we'd start from:
 | Peers, 32 × (connection state, presence slot) | 32 × 2 KiB = 64 KiB |
 | Total | about 4.3 MiB |
 
-1,024 rooms is about 4.4 GiB, which fits a modest server. The largest frame is 1 MiB, which a single paste of a few
+1,024 rooms at once is about 4.4 GiB, which fits a modest server. The largest frame is 1 MiB, which a single paste of a few
 hundred tables stays well under. The largest model is the snapshot slot, 1 MiB encrypted, which holds Sakila, the
 largest example at 24 KB, about 40 times over.
 
-Connections are a fixed pool across rooms, each with a fixed receive buffer that only holds a frame until it's
-unmasked into the ring or the inbox. When the inbox is full, the relay stops reading from that room's guests until the
-host catches up. TCP then slows the guests down, and nothing grows.
+Frames are read straight into the room's block, with no buffer in between. A frame's header gives its length, so the
+relay reserves that much in the ring (from the host) or the inbox (from a guest) and reads the body into it, unmasking
+as it goes. Two guests sending at once get two reservations. A connection that hasn't joined a room yet has only a 4 KiB
+buffer for its `hello`, freed once it joins.
+
+When the inbox can't fit a guest's next frame, the relay stops reading from that guest until the host catches up. TCP
+then slows the guest down, and nothing grows.
 
 ## Links and secrets
+
+Sharing starts with the host's `hello` asking for a room. The relay makes one and replies with its ID, its limits, and
+the host, guest and view secrets, keeping only their hashes. The host makes the room key itself and never sends it to
+the relay. The links it hands out look like this:
 
 ```
 https://<relay>/r/<room>#key=<room key>&token=<guest secret>
@@ -166,20 +194,19 @@ the host stops sharing and shares again, which makes a new room with new secrets
 
 ## Abuse
 
-Anyone can create a room, which is the main abuse risk. To start with, the relay limits rooms per IP, connections per
-IP and room, frames per second per connection, and frame size, and closes rooms whose host has been gone for 30
-seconds. Encryption means the relay can't see what's being stored. That's the point, but it also means abuse can't be
-filtered by content, only by volume.
+Out of scope for now. Cloudflare, in front of the relay, rate-limits by IP. Encryption means the relay can't see what's
+stored, so if abuse needs more than rate limits it will be by volume, not content.
 
-TLS ends at Cloudflare in front of the relay; Zig's standard library has no TLS server. Cloudflare sees only the
-encrypted bodies.
+TLS ends at Cloudflare; Zig's standard library has no TLS server. Cloudflare sees only the encrypted bodies.
 
-## Local sharing
+## What happens to local sharing
 
-The Mac's own sharing moves to the same protocol: the app runs a Swift version of the relay (`RelayCore`, pure like
-`HostCore` and `ClientCore`) on the local port, with the host as a client of it. There's then one protocol, one web
-client and one simulation, whether a session is hosted or tunneled. The Swift relay doesn't need static allocation;
-it's the reference the Zig one is tested against.
+It goes. The relay replaces the Mac's listening port, the tunnel and the share panel's address field: Share connects
+out to the relay and gets links back. The app keeps one session protocol, and the web client is served by the relay.
+
+`RelayCore`, a Swift version of the relay that's pure like `HostCore` and `ClientCore`, still gets written. It's what
+the simulation runs and what the Zig relay is checked against byte for byte, but it doesn't ship. Developing against
+a relay means running the Zig one locally.
 
 ## Downsides
 
@@ -187,8 +214,9 @@ it's the reference the Zig one is tested against.
 - **Guests' changes take one more trip** than a relay that decided for itself.
 - **The relay can't help with anything that needs the model:** history, search, previews, checking changes. All of it
   has to happen on clients.
-- **Static allocation means hard limits.** A model bigger than the snapshot slot can't be shared through the hosted
-  relay at all, and the error has to say so plainly.
+- **Fixed room sizes mean hard limits.** A model bigger than the snapshot slot can't be shared at all, and with local
+  sharing gone there's no other way to share it. The host checks before sharing and says so plainly.
+- **Sharing needs the internet,** even between two Macs on one desk, because local sharing is gone.
 - **Zig hasn't reached 1.0.** Each new version can break the build, and we'll pay for that in small rewrites. If it
   costs more than it saves, Rust is the fallback; the protocol doesn't depend on the language.
 
@@ -210,17 +238,16 @@ Each step ends with tests passing, and nothing goes in front of the Zig work tha
    mid-stream. The invariants are the same: every guest's confirmed copy is `D(seq)` after every step; at the end,
    everyone has the host's copy and every change was taken exactly once.
 3. **Encryption,** in Swift (CryptoKit) and the web client (WebCrypto), with each side decrypting the other's frames.
-4. **Local sharing on `RelayCore`,** replacing the v1 path once the simulation and the two-app checks pass.
-5. **The Zig relay,** checked by replaying frames recorded from the Swift simulation and comparing what it sends,
+4. **The Zig relay,** checked by replaying frames recorded from the Swift simulation and comparing what it sends,
    byte for byte, with what `RelayCore` sent.
-6. **Deployment** behind Cloudflare, with the limits above.
+5. **The app on the relay:** Share connects out, the local port and the tunnel instructions go, and two copies of the
+   app plus a browser share through a locally run relay.
+6. **Deployment** behind Cloudflare.
 
 ## Open questions
 
 - **How big can a model get?** We haven't measured an encrypted snapshot of a 1,000-table model. If it's over 1 MiB,
   the snapshot slot grows or snapshots go in chunks; we'll measure in step 1.
-- **Should room creation need sign-in?** Rate limits are enough until someone abuses them. If they do, rooms need an
-  owner.
 - **How long should a host's absence last before the room ends?** 30 seconds covers a network change, but not a laptop
   lid closing. We'll revisit this after using it.
 - **Is a 2 MiB ring the right default?** It's sized by guessing at heavy editing. Step 2's simulation should tell us how
