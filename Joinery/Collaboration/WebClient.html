@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Joinery</title>
+<style>
+  :root {
+    --canvas: #ffffff; --dot: rgba(0,0,0,.13); --card: #ffffff; --border: rgba(0,0,0,.1); --text: #1d1d1f;
+    --secondary: rgba(60,60,67,.6); --shadow: rgba(0,0,0,.09); --glass: rgba(255,255,255,.72); --accent: #0a84ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --canvas: #1e1e1e; --dot: rgba(255,255,255,.11); --card: #2c2c2c; --border: rgba(255,255,255,.1); --text: #f5f5f7;
+      --secondary: rgba(235,235,245,.6); --shadow: rgba(0,0,0,.4); --glass: rgba(40,40,40,.72);
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--canvas); color: var(--text); overflow: hidden;
+    font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  svg { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: default; user-select: none; }
+  svg.panning { cursor: grabbing; }
+  .header { cursor: grab; }
+  .name { font-weight: 600; font-size: 13px; fill: var(--text); }
+  .col { font-size: 11px; fill: var(--text); }
+  .pk { font-weight: 500; }
+  .type { font: 10px ui-monospace, "SF Mono", Menlo, monospace; fill: var(--secondary); }
+  .key { font: 700 9px ui-rounded, -apple-system, system-ui, sans-serif; fill: var(--secondary); }
+  .group-name { font-weight: 600; font-size: 12px; }
+  .bar { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; gap: 8px; align-items: center; pointer-events: none; }
+  .pill { pointer-events: auto; background: var(--glass); backdrop-filter: blur(20px) saturate(1.8); -webkit-backdrop-filter: blur(20px) saturate(1.8);
+    border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; display: flex; gap: 8px; align-items: center; }
+  .title { font-weight: 600; }
+  .spacer { flex: 1; }
+  .avatar { width: 22px; height: 22px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 600;
+    display: grid; place-items: center; margin-left: -6px; border: 2px solid var(--canvas); }
+  .avatar:first-child { margin-left: 0; }
+  .status { position: fixed; inset: 0; display: grid; place-items: center; pointer-events: none; color: var(--secondary); font-size: 15px; }
+  .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); }
+  @media (max-width: 600px) { .hint { display: none; } }
+</style>
+</head>
+<body>
+<svg id="canvas" aria-label="Data model">
+  <defs>
+    <pattern id="dots" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="var(--dot)"/></pattern>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="160%"><feDropShadow dx="0" dy="6" stdDeviation="7" flood-color="var(--shadow)"/></filter>
+  </defs>
+  <rect id="grid" width="100%" height="100%" fill="url(#dots)"/>
+  <g id="world"><g id="groups"></g><g id="wires"></g><g id="tables"></g><g id="cursors"></g></g>
+</svg>
+<div class="bar">
+  <div class="pill"><span class="title" id="title">Joinery</span></div>
+  <div class="spacer"></div>
+  <div class="pill hint">Drag to pan · ⌘-scroll to zoom · double-click a name to rename</div>
+  <div class="pill" id="people" aria-label="People here"></div>
+</div>
+<div class="status" id="status">Connecting…</div>
+<div class="pill toast" id="toast" hidden></div>
+<script>
+"use strict";
+// Joinery's session protocol, version 1: see docs/collaboration.md. The host's copy is the true one; changes made here
+// show at once and are sent, and the host's, in its order, are laid under them as they arrive.
+const W = 236, HEADER = 30, ROW = 22, KEY = 30, TYPE = 86, RADIUS = 10, PAD = 24, LABEL = 22;
+const COLORS = { blue: "#0a84ff", purple: "#bf5af2", pink: "#ff375f", red: "#ff453a", orange: "#ff9f0a", yellow: "#ffd60a",
+  green: "#30d158", teal: "#40c8e0", indigo: "#5e5ce6", mint: "#63e6e2", cyan: "#64d2ff", brown: "#ac8e68" };
+const $ = id => document.getElementById(id);
+const svg = $("canvas"), world = $("world");
+const ns = "http://www.w3.org/2000/svg";
+
+let confirmed = new Map(), pending = [], shown = new Map(), you = null, cseq = 0;
+let peers = new Map(), view = { x: 0, y: 0, zoom: 1 }, fitted = false, drag = null;
+
+// MARK: State
+
+function apply(state, op) {
+  if (op.op === "put") state.set(op.entity.id, op.entity);
+  else if (op.op === "set") {
+    const entity = state.get(op.id);
+    if (entity) { const copy = { ...entity }; if (op.value === null) delete copy[op.field]; else copy[op.field] = op.value; state.set(op.id, copy); }
+  } else if (op.op === "delete") state.delete(op.id);
+}
+function relay() {
+  shown = new Map(confirmed);
+  for (const change of pending) change.ops.forEach(op => apply(shown, op));
+  render();
+}
+function submit(ops) {
+  if (!ops.length || !you) return;
+  pending.push({ cseq: ++cseq, ops });
+  send({ type: "ops", cseq, ops });
+  relay();
+}
+const byOrder = (a, b) => (a.order || "") < (b.order || "") ? -1 : (a.order || "") > (b.order || "") ? 1 : (a.id < b.id ? -1 : 1);
+function model() {
+  const all = [...shown.values()], kind = k => all.filter(e => e.kind === k).sort(byOrder);
+  const tables = kind("table").map(t => ({ ...t, columns: kind("column").filter(c => c.table === t.id) }));
+  return { tables, relationships: kind("relationship"), groups: kind("group") };
+}
+
+// MARK: Drawing
+
+function el(name, attributes, parent) {
+  const node = document.createElementNS(ns, name);
+  for (const [key, value] of Object.entries(attributes || {})) node.setAttribute(key, value);
+  if (parent) parent.appendChild(node);
+  return node;
+}
+function text(parent, string, x, y, cls, width) {
+  const node = el("text", { x, y, class: cls }, parent);
+  node.textContent = string;
+  if (width && string.length * 6.5 > width) {
+    let s = string; while (s.length > 1 && s.length * 6.5 > width) s = s.slice(0, -1);
+    node.textContent = s + "…";
+  }
+  return node;
+}
+const height = t => HEADER + t.columns.length * ROW;
+const position = t => ({ x: t.position[0] + (drag && drag.ids.has(t.id) ? drag.dx : 0), y: t.position[1] + (drag && drag.ids.has(t.id) ? drag.dy : 0) });
+
+function render() {
+  const { tables, relationships, groups } = model();
+  for (const id of ["groups", "wires", "tables"]) $(id).replaceChildren();
+  const where = new Map(), colorOf = new Map();
+  for (const t of tables) {
+    const p = position(t);
+    t.columns.forEach((c, i) => { where.set(c.id, { x: p.x, y: p.y + HEADER + i * ROW + ROW / 2, table: t }); colorOf.set(c.id, t.color); });
+  }
+  // Groups, round their tables.
+  for (const g of groups) {
+    const members = tables.filter(t => t.group === g.id);
+    if (!members.length) continue;
+    const xs = members.map(t => position(t).x), ys = members.map(t => position(t).y);
+    const x = Math.min(...xs) - PAD, y = Math.min(...ys) - PAD - LABEL;
+    const right = Math.max(...members.map(t => position(t).x + W)) + PAD, bottom = Math.max(...members.map(t => position(t).y + height(t))) + PAD;
+    const color = COLORS[g.color] || COLORS.indigo;
+    el("rect", { x, y, width: right - x, height: bottom - y, rx: RADIUS + PAD, fill: color, "fill-opacity": .07, stroke: color, "stroke-opacity": .35 }, $("groups"));
+    text($("groups"), g.name, x + PAD, y + PAD - 4, "group-name").setAttribute("fill", color);
+  }
+  // Wires, between the near sides of their columns.
+  for (const r of relationships) {
+    const a = where.get(r.from), b = where.get(r.to);
+    if (!a || !b) continue;
+    const ax = a.x + W / 2 < b.x + W / 2 ? a.x + W : a.x, bx = a.x + W / 2 < b.x + W / 2 ? b.x : b.x + W;
+    const bend = Math.max(40, Math.abs(bx - ax) / 2), sa = ax === a.x ? -1 : 1, sb = bx === b.x ? -1 : 1;
+    el("path", { d: `M${ax},${a.y} C${ax + sa * bend},${a.y} ${bx + sb * bend},${b.y} ${bx},${b.y}`, fill: "none",
+      stroke: COLORS[colorOf.get(r.to)] || "gray", "stroke-width": 2.25, "stroke-linecap": "round" }, $("wires"));
+  }
+  const foreign = new Map(relationships.map(r => [r.from, colorOf.get(r.to)]));
+  // Tables.
+  for (const t of tables) {
+    const p = position(t), h = height(t), color = COLORS[t.color] || COLORS.blue;
+    const g = el("g", { transform: `translate(${p.x},${p.y})`, "data-id": t.id }, $("tables"));
+    el("rect", { width: W, height: h, rx: RADIUS, fill: "var(--card)", filter: "url(#shadow)" }, g);
+    const head = el("path", { d: `M0,${HEADER}V${RADIUS}a${RADIUS},${RADIUS} 0 0 1 ${RADIUS},-${RADIUS}H${W - RADIUS}a${RADIUS},${RADIUS} 0 0 1 ${RADIUS},${RADIUS}V${HEADER}Z`,
+      fill: color, "fill-opacity": .13, class: "header" }, g);
+    head.dataset.table = t.id;
+    text(g, t.name, 26, 19, "name", W - 34).dataset.table = t.id;
+    for (let row = 0; row < 3; row++) for (let col = 0; col < 2; col++) el("circle", { cx: 9.5 + col * 4.5, cy: HEADER / 2 - 4.5 + row * 4.5, r: 1.5, fill: "var(--secondary)" }, g);
+    t.columns.forEach((c, i) => {
+      const y = HEADER + i * ROW;
+      if (i) el("rect", { x: 0, y, width: W, height: .5, fill: "var(--border)" }, g);
+      const key = c.isPrimaryKey ? "PK" : foreign.has(c.id) ? "FK" : "·";
+      const k = text(g, key, KEY / 2, y + 15, "key");
+      k.setAttribute("text-anchor", "middle");
+      if (key === "FK") k.setAttribute("fill", COLORS[foreign.get(c.id)] || "gray");
+      text(g, c.name, KEY + 8, y + 15, "col" + (c.isPrimaryKey ? " pk" : ""), W - KEY - TYPE - 16);
+      text(g, c.type + (c.isNullable ? "?" : ""), W - TYPE + 8, y + 15, "type");
+    });
+    for (const x of [KEY, W - TYPE]) el("rect", { x, y: HEADER, width: .5, height: h - HEADER, fill: "var(--border)" }, g);
+    el("rect", { x: .25, y: .25, width: W - .5, height: h - .5, rx: RADIUS, fill: "none", stroke: "var(--border)", "stroke-width": .5 }, g);
+    // Who else has it selected.
+    const by = [...peers.values()].filter(peer => (peer.selection || []).includes(t.id));
+    by.forEach((peer, n) => el("rect", { x: -3 - n * 3, y: -3 - n * 3, width: W + 6 + n * 6, height: h + 6 + n * 6, rx: RADIUS + 3 + n * 3,
+      fill: "none", stroke: COLORS[peer.color] || "gray", "stroke-width": 2 }, g));
+  }
+  renderCursors();
+  if (!fitted && tables.length) fit(tables);
+  place();
+}
+
+function renderCursors() {
+  $("cursors").replaceChildren();
+  for (const peer of peers.values()) {
+    if (!peer.cursor) continue;
+    const color = COLORS[peer.color] || "gray", s = 1 / view.zoom;
+    const g = el("g", { transform: `translate(${peer.cursor[0]},${peer.cursor[1]}) scale(${s})` }, $("cursors"));
+    el("path", { d: "M0,0 L0,16 L4.5,12 L7.5,19 L10,18 L7,11 L12.5,11 Z", fill: color, stroke: "white", "stroke-width": 1.2, "stroke-linejoin": "round" }, g);
+    const label = text(g, peer.name, 18, 26, "");
+    label.setAttribute("fill", "white"); label.setAttribute("font-size", "11"); label.setAttribute("font-weight", "600");
+    const width = peer.name.length * 6.6 + 12;
+    g.insertBefore(el("rect", { x: 12, y: 14, width, height: 17, rx: 8.5, fill: color }), label);
+  }
+  const people = [...peers.values()];
+  $("people").replaceChildren(...people.map(peer => {
+    const a = document.createElement("div");
+    a.className = "avatar"; a.style.background = COLORS[peer.color] || "gray"; a.title = peer.name;
+    a.textContent = peer.name.split(/\s+/).map(w => w[0]).join("").slice(0, 2).toUpperCase();
+    return a;
+  }));
+  $("people").hidden = !people.length;
+}
+
+function fit(tables) {
+  const xs = tables.map(t => t.position[0]), ys = tables.map(t => t.position[1]);
+  const left = Math.min(...xs), top = Math.min(...ys), right = Math.max(...xs) + W, bottom = Math.max(...tables.map(t => t.position[1] + height(t)));
+  view.zoom = Math.min(1.5, Math.min((innerWidth - 80) / (right - left), (innerHeight - 140) / (bottom - top)));
+  view.x = (innerWidth - (right - left) * view.zoom) / 2 - left * view.zoom;
+  view.y = 70 + (innerHeight - 110 - (bottom - top) * view.zoom) / 2 - top * view.zoom;
+  fitted = true;
+}
+function place() {
+  world.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.zoom})`);
+  const pattern = $("dots");
+  pattern.setAttribute("patternTransform", `translate(${view.x},${view.y}) scale(${view.zoom})`);
+}
+const toCanvas = e => [(e.clientX - view.x) / view.zoom, (e.clientY - view.y) / view.zoom];
+
+// MARK: Input
+
+let lastPresence = 0, selection = [];
+function sharePresence(cursor) {
+  const now = performance.now();
+  if (now - lastPresence < 50 || !you) return;
+  lastPresence = now;
+  send({ type: "presence", cursor, selection });
+}
+svg.addEventListener("pointerdown", e => {
+  const id = e.target.dataset && e.target.dataset.table;
+  svg.setPointerCapture(e.pointerId);
+  if (id) {
+    selection = [id];
+    drag = { kind: "table", ids: new Set([id]), start: toCanvas(e), dx: 0, dy: 0 };
+  } else {
+    selection = [];
+    drag = { kind: "pan", start: [e.clientX - view.x, e.clientY - view.y], ids: new Set(), dx: 0, dy: 0 };
+    svg.classList.add("panning");
+  }
+});
+svg.addEventListener("pointermove", e => {
+  const cursor = toCanvas(e);
+  if (drag && drag.kind === "pan") { view.x = e.clientX - drag.start[0]; view.y = e.clientY - drag.start[1]; place(); renderCursors(); }
+  else if (drag) { drag.dx = Math.round(cursor[0] - drag.start[0]); drag.dy = Math.round(cursor[1] - drag.start[1]); render(); }
+  sharePresence(cursor);
+});
+svg.addEventListener("pointerup", () => {
+  if (drag && drag.kind === "table" && (drag.dx || drag.dy)) {
+    const ops = [...drag.ids].map(id => { const t = shown.get(id); return { op: "set", id, field: "position", value: [t.position[0] + drag.dx, t.position[1] + drag.dy] }; });
+    drag = null;
+    submit(ops);
+  } else { drag = null; render(); }
+  svg.classList.remove("panning");
+});
+svg.addEventListener("pointerleave", () => { if (you) send({ type: "presence", cursor: null, selection }); });
+svg.addEventListener("dblclick", e => {
+  const id = e.target.dataset && e.target.dataset.table, table = id && shown.get(id);
+  if (!table) return;
+  const name = prompt("Table name", table.name);
+  if (name && name.trim() && name.trim() !== table.name) submit([{ op: "set", id, field: "name", value: name.trim() }]);
+});
+svg.addEventListener("wheel", e => {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    const zoom = Math.min(4, Math.max(.1, view.zoom * Math.exp(-e.deltaY * .01)));
+    view.x = e.clientX - (e.clientX - view.x) * zoom / view.zoom; view.y = e.clientY - (e.clientY - view.y) * zoom / view.zoom;
+    view.zoom = zoom;
+  } else { view.x -= e.deltaX; view.y -= e.deltaY; }
+  place(); renderCursors();
+}, { passive: false });
+
+// MARK: Connection
+
+let socket;
+function send(message) { if (socket && socket.readyState === 1) socket.send(JSON.stringify(message)); }
+function toast(message) {
+  const t = $("toast"); t.textContent = message; t.hidden = false;
+  clearTimeout(toast.timer); toast.timer = setTimeout(() => t.hidden = true, 4000);
+}
+function connect() {
+  const token = new URLSearchParams(location.hash.slice(1)).get("token");
+  if (!token) { $("status").textContent = "This link has no token. Ask for the whole link."; return; }
+  let name = localStorage.getItem("joinery.name");
+  if (!name) { name = (prompt("Your name, for others to see", "") || "").trim() || "Guest"; try { localStorage.setItem("joinery.name", name); } catch {} }
+  socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/");
+  socket.onopen = () => send({ type: "hello", protocol: 1, token, name });
+  socket.onmessage = event => {
+    const m = JSON.parse(event.data);
+    if (m.type === "welcome") {
+      you = m.you; confirmed = new Map(m.entities.map(e => [e.id, e])); pending = [];
+      peers = new Map(m.peers.map(p => [p.id, p])); $("title").textContent = m.title; document.title = m.title + " — Joinery";
+      $("status").textContent = ""; relay();
+    } else if (m.type === "ops") {
+      m.ops.forEach(op => apply(confirmed, op));
+      if (m.author === you && pending.length && pending[0].cseq === m.cseq) pending.shift();
+      relay();
+    } else if (m.type === "reject") {
+      if (m.cseq == null) { $("status").textContent = m.reason || "Turned away."; return; }
+      pending = pending.filter(p => p.cseq !== m.cseq); relay(); toast("A change was taken back: " + (m.reason || ""));
+    } else if (m.type === "joined" || m.type === "presence") {
+      if (m.peer.id !== you) { peers.set(m.peer.id, m.peer); render(); }
+    } else if (m.type === "left") { peers.delete(m.peer.id); render(); }
+  };
+  socket.onclose = () => { if (you) $("status").textContent = "The session has ended."; else if (!$("status").textContent.startsWith("That")) $("status").textContent = "Couldn't connect."; you = null; };
+}
+addEventListener("resize", () => { place(); });
+connect();
+</script>
+</body>
+</html>

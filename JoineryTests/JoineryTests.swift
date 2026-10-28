@@ -1240,4 +1240,82 @@ struct JoineryTests {
         }
         #expect(!undo.canRedo)
     }
+
+    // MARK: Sessions
+
+    /// A model file of Storefront in a folder of its own, opened.
+    private func openStorefront() throws -> OpenModel {
+        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let example = try #require(Bundle.main.urls(forResourcesWithExtension: "joinery", subdirectory: nil)?.first { $0.lastPathComponent == "Storefront.joinery" })
+        let url = folder.appending(path: "Storefront.joinery")
+        try FileManager.default.copyItem(at: example, to: url)
+        return try OpenModel(url: url)
+    }
+
+    /// Waits up to a few seconds for `condition`.
+    private func until(_ condition: () -> Bool) async throws {
+        for _ in 0..<300 where !condition() { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(condition())
+    }
+
+    @Test func aJoinedCopyStaysTheSameAsTheHosts() async throws {
+        let hosted = try openStorefront()
+        let host = try SessionHost(model: hosted, port: 0)
+        defer { host.close() }
+        try await until { host.port != nil }
+        let port = try #require(host.port)
+
+        // The page, for browsers.
+        let (page, response) = try await URLSession.shared.data(from: URL(string: "http://127.0.0.1:\(port)/")!)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200 && String(decoding: page, as: UTF8.self).contains("<html"))
+
+        // A wrong token is turned away.
+        var strangerJoined = false
+        let stranger = SessionClient(link: "http://127.0.0.1:\(port)/#token=wrong") { _, _ in strangerJoined = true }
+        try await until { stranger?.status != "Connecting…" }
+        #expect(!strangerJoined && host.peers.isEmpty)
+
+        var joined: OpenModel?
+        var title = ""
+        let client = try #require(SessionClient(link: host.link(at: "127.0.0.1:\(port)")) { name, _ in
+            title = name
+            // Joining makes a file of the host's copy and opens it; any file will do, as it takes the host's copy on.
+            joined = try? self.openStorefront()
+        })
+        try await until { joined != nil }
+        let guest = try #require(joined)
+        client.attach(to: guest)
+        #expect(title == "Storefront" && guest.model == hosted.model && host.peers.count == 1)
+
+        // The guest's change reaches the host, and the host's the guest.
+        var model = guest.model
+        model.tables[0].name = "from_guest"
+        _ = model.addColumn(to: model.tables[1].id, after: nil)
+        guest.change(to: model)
+        try await until { hosted.model == guest.model }
+        model = hosted.model
+        model.tables[2].position.x += 200
+        model.removeTable(model.tables[3].id)
+        hosted.change(to: model)
+        try await until { guest.model == hosted.model }
+        #expect(guest.model.tables.contains { $0.name == "from_guest" } && guest.model.tables.count == hosted.model.tables.count)
+
+        // At once: the host deletes a table while the guest renames it. The guest's change is turned down, and both
+        // end up without the table.
+        let doomed = hosted.model.tables[0].id
+        var renamed = guest.model
+        renamed.tables[0].name = "too_late"
+        var deleted = hosted.model
+        deleted.removeTable(doomed)
+        hosted.change(to: deleted)
+        guest.change(to: renamed)
+        try await until { guest.model == hosted.model && guest.model.table(doomed) == nil }
+
+        // Presence reaches the host.
+        client.share(cursor: CGPoint(x: 12, y: 34), selection: [hosted.model.tables[0].id])
+        try await until { host.peers.values.first?.cursor == [12, 34] }
+        client.close()
+        try await until { host.peers.isEmpty }
+    }
 }

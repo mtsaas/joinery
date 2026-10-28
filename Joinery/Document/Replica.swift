@@ -125,7 +125,7 @@ struct Replica: Equatable {
             let old = entities.updateValue(entity, forKey: id)
             return old.map(Op.put) ?? .delete(id: id)
         case .set(let id, let field, let value):
-            guard entities[id] != nil, field != "id" else { return nil }
+            guard entities[id] != nil, field != "id", field != "kind" else { return nil }
             let old = entities[id]?[field] ?? .null
             entities[id]?[field] = value == .null ? nil : value
             return .set(id: id, field: field, value: old)
@@ -138,6 +138,30 @@ struct Replica: Equatable {
     /// - Returns: What undoes them all, in the order to apply it.
     mutating func apply(_ ops: [Op]) -> [Op] {
         ops.compactMap { apply($0) }.reversed()
+    }
+
+    // MARK: Checking
+
+    /// Why `entity` can't be in it, if it can't: an unknown kind, fields its kind can't be read from, a bad order key,
+    /// or, for a column or port, a table or group that isn't there. Checked before taking another's change.
+    func problem(with entity: Entity) -> String? {
+        guard let kind = entity["kind"]?.string.flatMap(Kind.init) else { return "Unknown kind of thing." }
+        if let order = entity["order"], order.string.map(OrderKey.isValid) != true { return "A bad order key." }
+        func reads<T: Decodable>(_ type: T.Type) -> Bool {
+            (try? JSONDecoder().decode(T.self, from: JSONEncoder().encode(entity))) != nil
+        }
+        func has(_ field: String, ofKind parent: Kind) -> Bool {
+            entity[field]?.string.flatMap { entities[$0]?["kind"]?.string } == parent.rawValue
+        }
+        let isReadable = switch kind {
+        case .table: reads(Table.self)
+        case .column: reads(Column.self) && has("table", ofKind: .table)
+        case .relationship: reads(Relationship.self)
+        case .zipTie: reads(ZipTie.self)
+        case .group: reads(TableGroup.self)
+        case .port: reads(GroupPort.self) && has("group", ofKind: .group)
+        }
+        return isReadable ? nil : "A \(kind.rawValue) that can't be read, or isn't in anything."
     }
 
     // MARK: Order
@@ -272,6 +296,16 @@ enum JSON: Codable, Equatable {
 
 /// On the wire: `{"op": "put", "entity": {…}}`, `{"op": "set", "id": …, "field": …, "value": …}`,
 /// `{"op": "delete", "id": …}`.
+extension Replica.Op {
+    /// The ID of the entity it's on.
+    var id: String {
+        switch self {
+        case .put(let entity): entity["id"]?.string ?? ""
+        case .set(let id, _, _), .delete(let id): id
+        }
+    }
+}
+
 extension Replica.Op: Codable {
     private enum CodingKeys: String, CodingKey { case op, entity, id, field, value }
 
