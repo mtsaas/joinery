@@ -130,7 +130,7 @@ From the baseline on, the canvas shows the comparison bar: Before, Changes and A
 
 Released copies check the feed through [Sparkle](https://sparkle-project.org) and offer each new version; Joinery ▸ Check for Updates… checks at once. Copies built in Xcode don't check. Each update is signed with a key kept in your login keychain, and Joinery installs only updates signed with it, so back the key up (`generate_keys -x <file>`, in Sparkle's tools, and keep it somewhere safe). Lose it and released copies can't be updated again.
 
-`scripts/release.sh <version> --dry-run` builds the disk image at `build/release` without notarizing or publishing it.
+`scripts/release.sh <version> --dry-run` builds the disk image at `build/release` without notarizing or publishing it. `--skip-notarization` publishes without notarizing; macOS then blocks the first download from opening until it's allowed in System Settings ▸ Privacy & Security ▸ Open Anyway.
 
 Once, before the first release:
 - **The bucket:** `infra/main.tf`. Copy `infra/terraform.tfvars.example` to `terraform.tfvars`, fill it in, then `CLOUDFLARE_API_TOKEN=… terraform -chdir=infra init && terraform -chdir=infra apply`. Releases are served at the bucket's r2.dev address, or at `domain` if set.
