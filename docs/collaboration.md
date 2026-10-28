@@ -194,7 +194,7 @@ Let `D(n)` be the host's document after its `n`th change. `D(0)` is the document
 - In half the runs it also loses, repeats, swaps and garbles messages, things TCP never does.
 - Everyone makes random edits throughout.
 
-After every step it checks point 1 for every guest. At the end, it checks point 5 and that every guest's changes were each taken exactly once. 180 runs go with every test run; 2,000 longer ones were run while developing it.
+After every step it checks point 1 for every guest. At the end, it checks point 5 and that every guest's changes were each taken exactly once. 600 runs go with every test run. While developing it, 3,000 longer runs were made as well.
 
 ## Limits
 

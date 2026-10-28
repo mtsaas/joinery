@@ -1,25 +1,21 @@
 import Foundation
 
-/// What a session hosts: the true copy, and what can take others' changes to it.
-@MainActor
-protocol SharedDocument: AnyObject {
-    var title: String { get }
-    var replica: Replica { get }
-    /// Takes another's change whole, tidied after, or throws and leaves it as it was (`Replica.receive`).
-    func receive(_ ops: [Replica.Op]) throws -> [Replica.Op]
-}
-
-/// The host's side of the protocol, without the network: what's heard on each connection in, what to send and close
-/// out, so it can be tested by simulation. `SessionHost` connects it to sockets. See docs/collaboration.md.
+/// The host's side of the protocol, without the network or the app: what's heard on each connection in, what to send,
+/// close and apply out, so it can be tested by simulation, on any thread. `SessionHost` connects it to sockets and the
+/// open model. See docs/collaboration.md.
+///
+/// It keeps the document itself: the open model is changed by applying, in order, the ops it's told of (`changedHere`)
+/// and the ops it hands out (`Effect.apply`), so the two are always the same.
 ///
 /// It numbers every change to the document, `seq` 1, 2, 3…, and sends each to every client in that order, with the
 /// document's digest after it. It takes each client's changes exactly once and in the client's order: `cseq` must be one
 /// past the last it took from that client, on any connection, or the connection's closed for the client to reconnect.
-@MainActor
 final class HostCore {
     typealias Connection = Int
 
     enum Effect {
+        /// Another's change, taken, and the tidying after it: to make to the open model.
+        case apply([Replica.Op])
         case send(Connection, Message)
         case close(Connection)
     }
@@ -32,9 +28,10 @@ final class HostCore {
     /// Clients are let go if nothing's heard from them in this long, as they ping every ten seconds.
     static let timeout: TimeInterval = 30
 
-    private unowned let document: any SharedDocument
-    /// The document as clients have been sent it, with its digest: always the same as `document.replica`.
-    private(set) var sent: CheckedReplica
+    /// The document, with its digest, as of change `seq`.
+    private(set) var document: CheckedReplica
+    /// What it's called, for those joining.
+    var title: String
 
     private struct Link {
         var heard: Date
@@ -52,11 +49,11 @@ final class HostCore {
     var onPublish: ((Message) -> Void)?
     private static let palette = ["purple", "pink", "orange", "green", "teal", "indigo", "red", "mint", "cyan", "brown", "yellow"]
 
-    init(document: any SharedDocument, token: String, name: String) {
-        self.document = document
+    init(_ replica: Replica, title: String, token: String, name: String) {
+        document = CheckedReplica(replica)
+        self.title = title
         self.token = token
         me = Peer(id: "host", name: name, color: "blue")
-        sent = CheckedReplica(document.replica)
     }
 
     // MARK: Events
@@ -98,7 +95,7 @@ final class HostCore {
             var pong = Message("pong")
             pong.seq = seq
             pong.acked = taken[client] ?? 0
-            pong.hash = sent.digest.description
+            pong.hash = document.digest.description
             return [.send(connection, pong)]
         default:
             // From a later version, perhaps: not this one's business.
@@ -106,9 +103,10 @@ final class HostCore {
         }
     }
 
-    /// The document changed here, by `ops` already made to it.
+    /// The document changed here, by `ops`, as they were made to the open model.
     func changedHere(_ ops: [Replica.Op]) -> [Effect] {
-        publish(ops, author: me.id)
+        document.apply(ops)
+        return publish(ops, author: me.id)
     }
 
     func share(_ presence: Peer) -> [Effect] {
@@ -157,9 +155,9 @@ final class HostCore {
         welcome.you = peer
         welcome.seq = seq
         welcome.acked = taken[client] ?? 0
-        welcome.hash = sent.digest.description
-        welcome.title = document.title
-        welcome.entities = sent.replica.entities.keys.sorted().compactMap { sent.replica.entities[$0] }
+        welcome.hash = document.digest.description
+        welcome.title = title
+        welcome.entities = document.replica.entities.keys.sorted().compactMap { document.replica.entities[$0] }
         welcome.peers = [me] + peers.values.filter { $0.id != peer }.sorted { $0.id < $1.id }
         effects.append(.send(connection, welcome))
         if isNew, let person = peers[peer] {
@@ -181,7 +179,7 @@ final class HostCore {
         let ops = message.ops ?? []
         do {
             let tidying = try document.receive(ops)
-            return publish(ops, author: peer, cseq: cseq) + publish(tidying, author: me.id)
+            return [.apply(ops + tidying)] + publish(ops, author: peer, cseq: cseq) + publish(tidying, author: me.id)
         } catch {
             var reject = Message("reject")
             reject.cseq = cseq
@@ -194,14 +192,13 @@ final class HostCore {
     /// theirs was made.
     private func publish(_ ops: [Replica.Op], author: String, cseq: Int? = nil) -> [Effect] {
         guard !ops.isEmpty else { return [] }
-        sent.apply(ops)
         seq += 1
         var message = Message("ops")
         message.seq = seq
         message.author = author
         message.cseq = cseq
         message.ops = ops
-        message.hash = sent.digest.description
+        message.hash = document.digest.description
         onPublish?(message)
         return broadcast(message)
     }

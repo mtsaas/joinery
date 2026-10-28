@@ -52,6 +52,16 @@ struct CheckedReplica: Equatable {
         digest = Digest(replica.entities.values)
     }
 
+    /// Takes another's change as `Replica.receive` does, all of it, tidied after, or none.
+    /// - Returns: The tidying ops it applied after the change's.
+    mutating func receive(_ ops: [Replica.Op]) throws -> [Replica.Op] {
+        var trial = replica
+        let tidying = try trial.receive(ops)
+        apply(ops)
+        apply(tidying)
+        return tidying
+    }
+
     /// Applies `ops` as `Replica.apply` does, updating the digest by the entities each changes.
     mutating func apply(_ ops: [Replica.Op]) {
         for op in ops {

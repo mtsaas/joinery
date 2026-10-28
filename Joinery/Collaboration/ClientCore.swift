@@ -1,14 +1,13 @@
 import Foundation
 
-/// A client's side of the protocol, without the network: what's heard in, what to send, show and do out, so it can be
-/// tested by simulation. `SessionClient` connects it to a WebSocket. See docs/collaboration.md for why it's correct.
+/// A client's side of the protocol, without the network or the app: what's heard in, what to send, show and do out, so
+/// it can be tested by simulation, on any thread. `SessionClient` connects it to a WebSocket. See docs/collaboration.md for why it's correct.
 ///
 /// It keeps `confirmed`, the host's document as of change `seq`, and `pending`, the changes made here the host hasn't
 /// yet taken; what's shown is the one with the other on top. Whenever anything heard doesn't fit (a change out of
 /// order, a digest that doesn't match, a reply to a change it didn't send next) the connection is dropped, and on
 /// reconnecting the host sends its copy afresh, says which of the pending changes it's taken, and the rest are sent
 /// again. So however connections fail, every change made here is taken once, and the copy here comes back to the host's.
-@MainActor
 final class ClientCore {
     enum Effect {
         case send(Message)

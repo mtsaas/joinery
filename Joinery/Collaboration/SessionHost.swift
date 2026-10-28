@@ -26,7 +26,7 @@ final class SessionHost: Session {
     /// Starts listening on `port` on this Mac only (0 for any free one), for the open model.
     init(model: OpenModel, port: UInt16 = defaultPort, token: String = SessionHost.newToken()) throws {
         self.model = model
-        core = HostCore(document: model, token: token, name: Self.ownName)
+        core = HostCore(model.replica, title: model.name, token: token, name: Self.ownName)
         let parameters = NWParameters.tcp
         // Only this Mac: the tunnel that exposes it connects from here too.
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port) ?? .any)
@@ -107,6 +107,7 @@ final class SessionHost: Session {
         core.opened(connection, at: .now)
         socket.onText = { [weak self] text in
             guard let self else { return }
+            self.core.title = self.model?.name ?? self.core.title
             self.perform(self.core.received(text, on: connection, at: .now))
         }
         socket.onClose = { [weak self] in
@@ -119,14 +120,11 @@ final class SessionHost: Session {
     private func perform(_ effects: [HostCore.Effect]) {
         for effect in effects {
             switch effect {
+            case .apply(let ops): model?.applyFromSession(ops)
             case .send(let connection, let message): sockets[connection]?.send(message.text)
             case .close(let connection): sockets[connection]?.close()
             }
         }
         if peers != core.peers { peers = core.peers }
     }
-}
-
-extension OpenModel: SharedDocument {
-    var title: String { name }
 }

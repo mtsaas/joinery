@@ -9,9 +9,9 @@ import Testing
 /// every client's confirmed copy must be the host's document exactly as it was at some change; at the end, with the
 /// network let settle, every copy must be the host's, and every change made by every client must have been taken, made
 /// or turned down, exactly once.
-@MainActor
+/// Not on the main actor: each run is independent, so they run side by side, on every core.
 struct SessionSimulation {
-    @Test(arguments: 1...120 as ClosedRange<UInt64>)
+    @Test(arguments: 1...400 as ClosedRange<UInt64>)
     func everyCopyComesBackToTheHosts(seed: UInt64) throws {
         let simulation = try Simulation(seed: seed, clients: 3)
         for _ in 0..<250 { simulation.step(); try simulation.checkInvariant() }
@@ -20,7 +20,7 @@ struct SessionSimulation {
     }
 
     /// The same without the faults TCP rules out: nothing lost, repeated or garbled except by cutting a connection.
-    @Test(arguments: 1...60 as ClosedRange<UInt64>)
+    @Test(arguments: 1...200 as ClosedRange<UInt64>)
     func everyCopyComesBackWithOnlyDroppedConnections(seed: UInt64) throws {
         let simulation = try Simulation(seed: seed &+ 10_000, clients: 4, faults: false)
         for _ in 0..<300 { simulation.step(); try simulation.checkInvariant() }
@@ -34,8 +34,7 @@ extension SessionSimulation {
     /// nothing else that comes after it says it's missing. The next ping finds it taken, and the client starts afresh.
     @Test func aChangeWhoseAnswerIsLostIsntWaitedForForever() throws {
         let example = try #require(Bundle.main.urls(forResourcesWithExtension: "joinery", subdirectory: nil)?.first { $0.lastPathComponent == "Storefront.joinery" })
-        let document = Simulation.Document(Replica(try DataModel(contentsOf: example)))
-        let host = HostCore(document: document, token: "t", name: "Host")
+        let host = HostCore(Replica(try DataModel(contentsOf: example)), title: "t", token: "t", name: "Host")
         let client = ClientCore(token: "t", name: "Guest")
         var now = Date(timeIntervalSinceReferenceDate: 0)
         func sent(_ effects: [ClientCore.Effect]) -> [String] { effects.compactMap { if case .send(let m) = $0 { m.text } else { nil } } }
@@ -58,7 +57,7 @@ extension SessionSimulation {
         guard case .reconnect? = client.received(pong[0], at: now).first else { Issue.record("waited forever"); return }
         _ = host.closed(1)
         join(on: 2)
-        #expect(client.pending.isEmpty && client.state == .connected && client.confirmed.replica == document.replica)
+        #expect(client.pending.isEmpty && client.state == .connected && client.confirmed.replica == host.document.replica)
     }
 
     /// Joining a host that can't be reached gives up, saying so, after a few tries, sooner at first.
@@ -93,15 +92,7 @@ extension SessionSimulation {
     }
 }
 
-@MainActor
 fileprivate final class Simulation {
-    final class Document: SharedDocument {
-        let title = "Simulated"
-        var replica: Replica
-        init(_ replica: Replica) { self.replica = replica }
-        func receive(_ ops: [Replica.Op]) throws -> [Replica.Op] { try replica.receive(ops) }
-    }
-
     final class Link {
         let id: Int, client: Int
         var toHost: [String] = [], toClient: [String] = []
@@ -120,8 +111,9 @@ fileprivate final class Simulation {
 
     var random: Seeded
     let faults: Bool
-    let document: Document
     let host: HostCore
+    /// The host's open model, as the app keeps it: changed by its own edits, and by what the host core hands out.
+    var hostModel: Replica
     var clients: [ClientCore]
     /// What each client shows.
     var shown: [Replica]
@@ -143,8 +135,8 @@ fileprivate final class Simulation {
         self.faults = faults
         let example = try #require(Bundle.main.urls(forResourcesWithExtension: "joinery", subdirectory: nil)?.first { $0.lastPathComponent == "Storefront.joinery" })
         let start = Replica(try DataModel(contentsOf: example))
-        document = Document(start)
-        host = HostCore(document: document, token: "t", name: "Host")
+        hostModel = start
+        host = HostCore(start, title: "Simulated", token: "t", name: "Host")
         clients = (0..<count).map { _ in ClientCore(token: "t", name: "Guest") }
         shown = Array(repeating: Replica(), count: count)
         history = [0: start]
@@ -213,12 +205,12 @@ fileprivate final class Simulation {
     }
 
     private func hostEdits() {
-        let model = document.replica.model
+        let model = hostModel.model
         var edited = model
         Self.randomEdit(&edited, &random)
-        let ops = document.replica.ops(to: Replica(edited, keeping: document.replica, was: model))
+        let ops = hostModel.ops(to: Replica(edited, keeping: hostModel, was: model))
         guard !ops.isEmpty else { return }
-        _ = document.replica.apply(ops)
+        _ = hostModel.apply(ops)
         route(host.changedHere(ops))
     }
 
@@ -296,6 +288,8 @@ fileprivate final class Simulation {
     private func route(_ effects: [HostCore.Effect]) {
         for effect in effects {
             switch effect {
+            case .apply(let ops):
+                _ = hostModel.apply(ops)
             case .send(let id, let message):
                 guard let link = links[id] else { continue }
                 // Turned down is taken, whether or not the client hears so.
@@ -344,8 +338,8 @@ fileprivate final class Simulation {
     /// it shows is that with its pending changes on top; and the host's copy of what it's sent is its document.
     func checkInvariant() throws {
         #expect(problems.isEmpty, "\(problems)")
-        #expect(host.sent.replica == document.replica)
-        #expect(host.sent.digest == Digest(document.replica.entities.values))
+        #expect(hostModel == host.document.replica, "the host's model isn't its core's document")
+        #expect(host.document.digest == Digest(host.document.replica.entities.values))
         for (index, client) in clients.enumerated() where client.you != nil {
             let expected = try #require(history[client.seq], "client \(index) at unknown change \(client.seq)")
             #expect(client.confirmed.replica == expected, "client \(index) at change \(client.seq)")
@@ -376,13 +370,13 @@ fileprivate final class Simulation {
 
     func checkSettled() throws {
         try checkInvariant()
-        #expect(following == document.replica)
+        #expect(following == host.document.replica)
         for (index, client) in clients.enumerated() {
             #expect(client.state == .connected, "client \(index) is \(client.state)")
             #expect(client.pending.isEmpty, "client \(index) still has \(client.pending.count) to send")
             #expect(client.seq == host.seq)
-            #expect(client.confirmed.replica == document.replica, "client \(index)'s copy isn't the host's")
-            #expect(shown[index] == document.replica, "client \(index) shows something else")
+            #expect(client.confirmed.replica == host.document.replica, "client \(index)'s copy isn't the host's")
+            #expect(shown[index] == host.document.replica, "client \(index) shows something else")
             // Every change it made, taken once: made or turned down, none lost, none twice.
             #expect(settled[index].sorted() == Array(1...max(made[index], 1)).prefix(made[index]).map { $0 }, "client \(index): made \(made[index]), settled \(settled[index].sorted())")
         }

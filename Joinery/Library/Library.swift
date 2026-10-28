@@ -450,14 +450,12 @@ final class OpenModel {
         scheduleSave()
     }
 
-    /// Another person's change, from a session this hosts: all of it, tidied up after, or none (see
-    /// `Replica.receive`). Undo here is left alone: it undoes only changes made here.
-    /// - Returns: The ops that tidied up after it, to send on too.
-    func receive(_ ops: [Replica.Op]) throws -> [Replica.Op] {
-        let tidying = try replica.receive(ops)
+    /// Another person's change, taken by a session this hosts (`HostCore`), and the tidying after it. Undo here is left
+    /// alone: it undoes only changes made here.
+    func applyFromSession(_ ops: [Replica.Op]) {
+        _ = replica.apply(ops)
         model = replica.model
         scheduleSave()
-        return tidying
     }
 
     /// Takes on `replica` as it is, as a session joined replaces it with the host's.
