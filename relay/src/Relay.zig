@@ -35,6 +35,52 @@ lobby: DoublyLinkedList = .{},
 now: i64 = 0,
 /// Where the frames the relay writes itself are built, each sent before the next is built.
 scratch: [scratch_size]u8 = undefined,
+/// What's happened since it started, for monitoring.
+metrics: Metrics = .{},
+
+/// Counts of what the relay has done since it started. Counting is an add each, and allocates nothing.
+pub const Metrics = struct {
+    rooms_made: u64 = 0,
+    rooms_ended: u64 = 0,
+    joins: u64 = 0,
+    /// Decisions (made and turned down) taken into a room's log.
+    decisions: u64 = 0,
+    /// Guests' changes passed to a host.
+    changes: u64 = 0,
+    snapshots: u64 = 0,
+    snapshot_requests: u64 = 0,
+    /// Connections let go of, and turned away, by why.
+    drops: [max_reasons]Reason = undefined,
+    reasons: usize = 0,
+
+    pub const Reason = struct { why: []const u8, count: u64 };
+    const max_reasons = 32;
+
+    fn dropped(m: *Metrics, why: []const u8) void {
+        for (m.drops[0..m.reasons]) |*r| if (std.mem.eql(u8, r.why, why)) {
+            r.count += 1;
+            return;
+        };
+        // Every reason is written in this file, so there are only so many.
+        std.debug.assert(m.reasons < max_reasons);
+        m.drops[m.reasons] = .{ .why = why, .count = 1 };
+        m.reasons += 1;
+    }
+};
+
+/// How things stand, for monitoring: worked out when asked, by visiting each room.
+pub const Gauges = struct { rooms: usize, peers: usize, lobby: usize, log_bytes: usize };
+
+pub fn gauges(relay: *const Relay) Gauges {
+    var g: Gauges = .{ .rooms = relay.rooms.count(), .peers = 0, .lobby = relay.lobby.len(), .log_bytes = 0 };
+    var next = relay.room_list.first;
+    while (next) |node| : (next = node.next) {
+        const room: *const Room = @fieldParentPtr("node", node);
+        g.peers += room.guests.items.len + @intFromBool(room.host != null);
+        g.log_bytes += room.log.bytes;
+    }
+    return g;
+}
 
 /// Connections are let go if nothing's heard on them in this long, in ms, as everyone pings every ten seconds.
 pub const timeout = 30_000;
@@ -254,6 +300,7 @@ fn join(relay: *Relay, link: *Link, h: wire.Hello, room: *Room) void {
         g.applied = wire.seqOf(snapshot);
     }
     room.add(g);
+    relay.metrics.joins += 1;
     var w = relay.frameWriter();
     w.raw(h.name);
     relay.sendToEveryone(room, link, w.finish(.joined, 0, peer));
@@ -318,6 +365,7 @@ fn fromHost(relay: *Relay, room: *Room, header: wire.Header, frame: []u8) void {
             @memcpy(snapshot, frame);
             room.snapshot = snapshot;
             room.snapshot_requested = false;
+            relay.metrics.snapshots += 1;
             if (header.seq > room.latest) {
                 // Changes that never reached here: the log can't catch anyone up past them, so it starts again.
                 room.log.clear();
@@ -359,12 +407,14 @@ fn fromHost(relay: *Relay, room: *Room, header: wire.Header, frame: []u8) void {
             }
             room.log.push(frame);
             room.latest = header.seq;
+            relay.metrics.decisions += 1;
             for (room.guests.items) |*g| {
                 relay.out.send(g.link, frame);
                 g.sent = room.latest;
             }
             if (!room.snapshot_requested and room.log.bytes * 2 > relay.limits.log_bytes) {
                 room.snapshot_requested = true;
+                relay.metrics.snapshot_requests += 1;
                 var w = relay.frameWriter();
                 relay.out.send(host, w.finish(.snapshot_request, 0, 0));
             }
@@ -393,6 +443,7 @@ fn fromGuest(relay: *Relay, room: *Room, g: *Guest, header: wire.Header, frame: 
             const host = room.host orelse return;
             wire.stamp(frame, g.peer);
             relay.out.send(host, frame);
+            relay.metrics.changes += 1;
         },
         .presence => {
             wire.stamp(frame, g.peer);
@@ -424,6 +475,7 @@ fn sendToEveryone(relay: *Relay, room: *const Room, excluded: ?*const Link, fram
 /// Closes a connection, as the relay's decision, saying why.
 fn drop(relay: *Relay, link: *Link, why: []const u8) void {
     log.info("{f} dropped: {s}", .{ who(link), why });
+    relay.metrics.dropped(why);
     relay.out.close(link);
     relay.forget(link);
 }
@@ -463,6 +515,7 @@ fn end(relay: *Relay, room: *Room, reason: []const u8) void {
 
 fn endWith(relay: *Relay, room: *Room, bye_frame: []const u8) void {
     log.info("room {s} ended: {s}", .{ room.shortID(), bye_frame[wire.header_size..] });
+    relay.metrics.rooms_ended += 1;
     if (room.host) |host| {
         relay.out.send(host, bye_frame);
         relay.out.close(host);
@@ -635,6 +688,7 @@ fn makeRoom(relay: *Relay, h: wire.Hello) Allocator.Error!*Room {
     };
     relay.rooms.putAssumeCapacityNoClobber(&room.id, room);
     log.info("room {s} made, rooms open: {d}", .{ room.shortID(), relay.rooms.count() });
+    relay.metrics.rooms_made += 1;
     relay.room_list.append(&room.node);
     return room;
 }

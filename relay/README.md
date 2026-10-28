@@ -11,6 +11,12 @@ zig build bench                       # time per frame for each step, and alloca
 zig build -Doptimize=ReleaseSafe      # zig-out/bin/joinery-relay
 ```
 
+Prometheus metrics are at `http://127.0.0.1:9187/metrics`, on a port of their own that only this machine can reach
+(`--metrics-address` and `--metrics-port` change that): rooms, peers and connections open, bytes held in logs, frames
+and bytes in and out, rooms made and ended, joins, decisions, guests' changes, snapshots, connections closed for
+falling behind, and every connection let go of or turned away, by why (`joinery_relay_dropped_total{reason=…}`). The
+relay's own memory is left to the process exporter of wherever it runs.
+
 - **`src/Relay.zig`** is the relay, without the network. It's a port of `RelayCore.swift`, which is the reference.
   `src/replay_test.zig` replays what that one heard in the app's simulation (`src/testdata/`) and checks this one sends
   the same bytes on every connection. After changing the protocol, run `scripts/record-relay-traces.sh` from the

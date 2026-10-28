@@ -1,7 +1,10 @@
 //! joinery-relay: shares Joinery sessions between people, end-to-end encrypted, without reading them. See
 //! docs/relay.md.
 //!
-//!     joinery-relay [--address 127.0.0.1] [--port 8787]
+//!     joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]
+//!
+//! Prometheus metrics are at http://<metrics address>:<metrics port>/metrics, on this machine only unless the metrics
+//! address says otherwise.
 
 const std = @import("std");
 const Server = @import("Server.zig");
@@ -25,6 +28,8 @@ pub fn main(init: std.process.Init) !void {
     const io = init.io;
     var address_text: []const u8 = "127.0.0.1";
     var port: u16 = 8787;
+    var metrics_address_text: []const u8 = "127.0.0.1";
+    var metrics_port: u16 = 9187;
     var args = init.minimal.args.iterate();
     _ = args.skip();
     while (args.next()) |arg| {
@@ -33,20 +38,29 @@ pub fn main(init: std.process.Init) !void {
             address_text = value;
         } else if (std.mem.eql(u8, arg, "--port")) {
             port = std.fmt.parseInt(u16, value, 10) catch return usage();
+        } else if (std.mem.eql(u8, arg, "--metrics-address")) {
+            metrics_address_text = value;
+        } else if (std.mem.eql(u8, arg, "--metrics-port")) {
+            metrics_port = std.fmt.parseInt(u16, value, 10) catch return usage();
         } else return usage();
     }
 
     const address = try std.Io.net.IpAddress.parse(address_text, port);
     var listener = try address.listen(io, .{ .reuse_address = true });
     defer listener.deinit(io);
+    const metrics_address = try std.Io.net.IpAddress.parse(metrics_address_text, metrics_port);
+    var metrics_listener = try metrics_address.listen(io, .{ .reuse_address = true });
+    defer metrics_listener.deinit(io);
     var server: Server = undefined;
     try server.init(io, init.gpa, .{});
     defer server.deinit();
-    std.log.info("relaying on {f}", .{address});
+    std.log.info("relaying on {f}, metrics at http://{f}/metrics", .{ address, metrics_address });
+    var metrics = try io.concurrent(Server.serveMetrics, .{ &server, &metrics_listener });
+    defer metrics.cancel(io) catch {};
     try server.serve(&listener);
 }
 
 fn usage() error{Usage} {
-    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787]", .{});
+    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]", .{});
     return error.Usage;
 }

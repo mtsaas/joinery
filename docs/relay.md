@@ -343,7 +343,8 @@ has the numbers with the commit they're from (the relay handles a host's change 
 M-series Mac, before the copies into their outboxes). The no-allocation check is in the replay test: the relay
 allocates on an event only when the event makes a room.
 The load generator, and comparing against the last results automatically, come with step 5, when there's an app to
-generate load from.
+generate load from. In production, the relay exposes Prometheus metrics on a separate, private port (relay/README.md):
+counters and gauges only, kept in the relay as plain adds, so watching costs nothing per frame.
 
 ## Downsides
 

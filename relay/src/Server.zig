@@ -23,6 +23,21 @@ mutex: Io.Mutex = .init,
 relay: Relay,
 csprng: std.Random.DefaultCsprng,
 next_id: u64 = 1,
+/// The network's side of the metrics, counted under the mutex.
+counts: Counts = .{},
+/// When it started, in seconds since 1970, for monitoring.
+started: i64 = 0,
+
+const Counts = struct {
+    connections_open: u64 = 0,
+    connections: u64 = 0,
+    frames_in: u64 = 0,
+    bytes_in: u64 = 0,
+    frames_out: u64 = 0,
+    bytes_out: u64 = 0,
+    /// Connections closed for falling too far behind to queue for.
+    lagging: u64 = 0,
+};
 
 /// Lets go of silent connections, and ends rooms whose host has gone, this often.
 const tick_interval: Io.Duration = .fromSeconds(1);
@@ -36,6 +51,7 @@ pub fn init(server: *Server, io: Io, gpa: Allocator, config: Relay.Config) !void
         .limits = config.limits,
         .csprng = .init(seed),
         .relay = undefined,
+        .started = @divFloor(Io.Clock.real.now(io).toMilliseconds(), 1000),
     };
     server.relay = .init(gpa, server.csprng.random(), .{ .ptr = server, .vtable = &.{ .send = send, .close = close } }, config);
 }
@@ -57,6 +73,112 @@ pub fn serve(server: *Server, listener: *Io.net.Server) !void {
             log.warn("turned a connection away: no thread for it", .{});
         };
     }
+}
+
+// Metrics
+
+/// Answers Prometheus's scrapes of `/metrics` on `listener`, one at a time, until it fails or the task's canceled.
+pub fn serveMetrics(server: *Server, listener: *Io.net.Server) Io.Cancelable!void {
+    const io = server.io;
+    while (true) {
+        const stream = listener.accept(io) catch |err| switch (err) {
+            error.Canceled => return error.Canceled,
+            else => continue,
+        };
+        defer stream.close(io);
+        server.answerScrape(stream) catch {};
+    }
+}
+
+fn answerScrape(server: *Server, stream: Io.net.Stream) !void {
+    const io = server.io;
+    var read_buffer: [4096]u8 = undefined;
+    var write_buffer: [4096]u8 = undefined;
+    var reader = stream.reader(io, &read_buffer);
+    var writer = stream.writer(io, &write_buffer);
+    var http: std.http.Server = .init(&reader.interface, &writer.interface);
+    var request = try http.receiveHead();
+    if (!std.mem.eql(u8, request.head.target, "/metrics")) return request.respond("Not found.\n", .{ .status = .not_found });
+    var body_buffer: [16 * 1024]u8 = undefined;
+    var body: Io.Writer = .fixed(&body_buffer);
+    {
+        try server.mutex.lock(io);
+        defer server.mutex.unlock(io);
+        try writeMetrics(&body, &server.relay, server.counts, server.started);
+    }
+    try request.respond(body.buffered(), .{ .extra_headers = &.{
+        .{ .name = "content-type", .value = "text/plain; version=0.0.4; charset=utf-8" },
+    } });
+}
+
+/// The metrics, in Prometheus's text format.
+fn writeMetrics(w: *Io.Writer, relay: *const Relay, counts: Counts, started: i64) Io.Writer.Error!void {
+    const g = relay.gauges();
+    const m = relay.metrics;
+    const Metric = struct { name: []const u8, kind: []const u8, help: []const u8, value: u64 };
+    const metrics = [_]Metric{
+        .{ .name = "rooms", .kind = "gauge", .help = "Rooms open.", .value = g.rooms },
+        .{ .name = "peers", .kind = "gauge", .help = "Hosts and guests connected to rooms.", .value = g.peers },
+        .{ .name = "lobby", .kind = "gauge", .help = "Connections that haven't said hello yet.", .value = g.lobby },
+        .{ .name = "log_bytes", .kind = "gauge", .help = "Bytes of frames held in rooms' logs.", .value = g.log_bytes },
+        .{ .name = "connections", .kind = "gauge", .help = "WebSocket connections open.", .value = counts.connections_open },
+        .{ .name = "connections_total", .kind = "counter", .help = "WebSocket connections accepted.", .value = counts.connections },
+        .{ .name = "lagging_total", .kind = "counter", .help = "Connections closed for falling too far behind.", .value = counts.lagging },
+        .{ .name = "frames_received_total", .kind = "counter", .help = "Frames received.", .value = counts.frames_in },
+        .{ .name = "bytes_received_total", .kind = "counter", .help = "Bytes of frames received.", .value = counts.bytes_in },
+        .{ .name = "frames_sent_total", .kind = "counter", .help = "Frames sent.", .value = counts.frames_out },
+        .{ .name = "bytes_sent_total", .kind = "counter", .help = "Bytes of frames sent.", .value = counts.bytes_out },
+        .{ .name = "rooms_made_total", .kind = "counter", .help = "Rooms made.", .value = m.rooms_made },
+        .{ .name = "rooms_ended_total", .kind = "counter", .help = "Rooms ended.", .value = m.rooms_ended },
+        .{ .name = "joins_total", .kind = "counter", .help = "Guests let into rooms.", .value = m.joins },
+        .{ .name = "decisions_total", .kind = "counter", .help = "Hosts' decisions taken into logs.", .value = m.decisions },
+        .{ .name = "changes_total", .kind = "counter", .help = "Guests' changes passed to hosts.", .value = m.changes },
+        .{ .name = "snapshots_total", .kind = "counter", .help = "Snapshots received from hosts.", .value = m.snapshots },
+        .{ .name = "snapshot_requests_total", .kind = "counter", .help = "Snapshots asked of hosts.", .value = m.snapshot_requests },
+        .{ .name = "start_time_seconds", .kind = "gauge", .help = "When the relay started, in seconds since 1970.", .value = @intCast(started) },
+    };
+    for (metrics) |metric| {
+        try w.print("# HELP joinery_relay_{s} {s}\n# TYPE joinery_relay_{s} {s}\njoinery_relay_{s} {d}\n", .{
+            metric.name, metric.help, metric.name, metric.kind, metric.name, metric.value,
+        });
+    }
+    try w.writeAll("# HELP joinery_relay_dropped_total Connections let go of or turned away, by why.\n" ++
+        "# TYPE joinery_relay_dropped_total counter\n");
+    for (m.drops[0..m.reasons]) |r| {
+        try w.writeAll("joinery_relay_dropped_total{reason=\"");
+        // Label values escape backslashes, quotes and newlines.
+        for (r.why) |c| switch (c) {
+            '\\', '"' => try w.print("\\{c}", .{c}),
+            '\n' => try w.writeAll("\\n"),
+            else => try w.writeByte(c),
+        };
+        try w.print("\"}} {d}\n", .{r.count});
+    }
+}
+
+test "metrics are in Prometheus's format" {
+    var prng: std.Random.DefaultPrng = .init(1);
+    const Discard = struct {
+        fn send(_: *anyopaque, _: *Relay.Link, _: []const u8) void {}
+        fn close(_: *anyopaque, _: *Relay.Link) void {}
+    };
+    var ignored: u8 = 0;
+    var relay: Relay = .init(std.testing.allocator, prng.random(), .{ .ptr = &ignored, .vtable = &.{ .send = Discard.send, .close = Discard.close } }, .{});
+    defer relay.deinit();
+    var link: Relay.Link = .{ .id = 1 };
+    relay.opened(&link, 0);
+    var frame: [24]u8 = @splat(0);
+    frame[0] = wire.version;
+    frame[1] = @backingInt(wire.Kind.ping);
+    relay.received(&link, &frame, 0); // Not a hello: dropped.
+
+    var buffer: [16 * 1024]u8 = undefined;
+    var w: Io.Writer = .fixed(&buffer);
+    try writeMetrics(&w, &relay, .{ .connections_open = 2 }, 1700000000);
+    const text = w.buffered();
+    try std.testing.expect(std.mem.indexOf(u8, text, "# TYPE joinery_relay_rooms gauge\njoinery_relay_rooms 0\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "joinery_relay_connections 2\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "joinery_relay_dropped_total{reason=\"something other than hello first\"} 1\n") != null);
 }
 
 fn now(server: *const Server) i64 {
@@ -130,6 +252,8 @@ fn connection(server: *Server, stream: Io.net.Stream) Io.Cancelable!void {
         defer server.mutex.unlock(io);
         conn.link = .{ .id = server.next_id };
         server.next_id += 1;
+        server.counts.connections += 1;
+        server.counts.connections_open += 1;
         server.relay.opened(&conn.link, server.now());
     }
     var sender = io.concurrent(write, .{ server, &conn, &writer.interface }) catch null;
@@ -137,6 +261,7 @@ fn connection(server: *Server, stream: Io.net.Stream) Io.Cancelable!void {
 
     // Done reading: the relay's told, unless it's the one that closed it, in which case the writer finishes.
     server.mutex.lockUncancelable(io);
+    server.counts.connections_open -= 1;
     switch (conn.state) {
         .open, .lagging => {
             server.relay.closed(&conn.link, server.now());
@@ -158,6 +283,8 @@ fn read(server: *Server, conn: *Connection, ws: *WebSocket) !void {
         try server.mutex.lock(io);
         defer server.mutex.unlock(io);
         if (conn.state != .open) return;
+        server.counts.frames_in += 1;
+        server.counts.bytes_in += message.data.len;
         server.relay.received(&conn.link, message.data, server.now());
     }
 }
@@ -212,6 +339,7 @@ fn send(ptr: *anyopaque, link: *Relay.Link, frame: []const u8) void {
     const head = webSocketHeader(&header, frame.len);
     if (conn.outbox_len + head.len + frame.len > conn.outbox.len) {
         log.info("connection {d} dropped: its outbox is full, so it's too far behind", .{link.id});
+        server.counts.lagging += 1;
         conn.state = .lagging;
         conn.ready.signal(server.io);
         return;
@@ -219,6 +347,8 @@ fn send(ptr: *anyopaque, link: *Relay.Link, frame: []const u8) void {
     @memcpy(conn.outbox[conn.outbox_len..][0..head.len], head);
     @memcpy(conn.outbox[conn.outbox_len + head.len ..][0..frame.len], frame);
     conn.outbox_len += head.len + frame.len;
+    server.counts.frames_out += 1;
+    server.counts.bytes_out += frame.len;
     conn.ready.signal(server.io);
 }
 
