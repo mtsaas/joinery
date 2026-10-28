@@ -202,11 +202,46 @@ TLS ends at Cloudflare; Zig's standard library has no TLS server. Cloudflare see
 ## What happens to local sharing
 
 It goes. The relay replaces the Mac's listening port, the tunnel and the share panel's address field: Share connects
-out to the relay and gets links back. The app keeps one session protocol, and the web client is served by the relay.
+out to a relay and gets links back. The app keeps one session protocol, and the web client is served by the relay.
 
 `RelayCore`, a Swift version of the relay that's pure like `HostCore` and `ClientCore`, still gets written. It's what
-the simulation runs and what the Zig relay is checked against byte for byte, but it doesn't ship. Developing against
-a relay means running the Zig one locally.
+the simulation runs and what the Zig relay is checked against byte for byte, but it doesn't ship.
+
+### Bringing your own relay
+
+Settings has a Relay field: our hosted relay by default, or the address of one you run. Share, and the MCP
+`start_sharing` tool, use whichever is set. Links name their relay, so guests reach the right one without setting
+anything, and the web client comes from that relay too.
+
+The relay ships as one static binary with no configuration it can't start without. Running your own isn't about
+privacy, since no relay can read a model, but about control: keeping sessions on your own network, sharing between Macs
+with no internet, or not depending on our server. It also takes back the main cost of dropping local sharing.
+
+The relay's `hello` reply carries the protocol version it speaks. If it doesn't speak the app's, Share says so and
+names both versions, rather than failing partway through a session.
+
+## Measuring the relay
+
+The relay is only worth writing in Zig if it stays small and fast, so it's measured from its first commit, not tuned at
+the end. Three tools, all in the relay's repository, all run by one command:
+
+- **Micro-benchmarks** (`zig build bench`) for each step a frame takes: reading a header, unmasking, reserving and
+  appending to the log, building the sends for a room. Each reports time per frame and bytes allocated, which must be
+  zero.
+- **A load generator** that runs thousands of simulated rooms against a real relay, each with a host and guests
+  editing at a set rate, and reports the time from the host's send to each guest's receive (median and 99th
+  percentile), frames per second, CPU time per frame, system calls per frame, and the relay's memory against rooms ×
+  block size.
+- **A no-allocation check.** Tests run the relay with an allocator that fails on any allocation after a room's block,
+  so a stray allocation fails the build instead of showing up later as a slow percentile.
+
+Results go in the repository with the commit that produced them, and the bench command compares against the last
+ones. A change that makes the median or the 99th percentile more than 10% worse, or adds an allocation, a copy or a
+system call per frame, has to say why in its commit. Timing is only compared on one machine; the counts (allocations,
+copies, system calls) are compared everywhere.
+
+We don't have targets yet beyond the counts: zero allocations and one pass over each body (the unmask) per frame. The
+first load runs set the timing baseline, and we'll write targets down then rather than guess them now.
 
 ## Downsides
 
@@ -216,7 +251,8 @@ a relay means running the Zig one locally.
   has to happen on clients.
 - **Fixed room sizes mean hard limits.** A model bigger than the snapshot slot can't be shared at all, and with local
   sharing gone there's no other way to share it. The host checks before sharing and says so plainly.
-- **Sharing needs the internet,** even between two Macs on one desk, because local sharing is gone.
+- **Sharing needs a relay,** even between two Macs on one desk. Without the internet, that means running one
+  yourself.
 - **Zig hasn't reached 1.0.** Each new version can break the build, and we'll pay for that in small rewrites. If it
   costs more than it saves, Rust is the fallback; the protocol doesn't depend on the language.
 
@@ -239,9 +275,10 @@ Each step ends with tests passing, and nothing goes in front of the Zig work tha
    everyone has the host's copy and every change was taken exactly once.
 3. **Encryption,** in Swift (CryptoKit) and the web client (WebCrypto), with each side decrypting the other's frames.
 4. **The Zig relay,** checked by replaying frames recorded from the Swift simulation and comparing what it sends,
-   byte for byte, with what `RelayCore` sent.
-5. **The app on the relay:** Share connects out, the local port and the tunnel instructions go, and two copies of the
-   app plus a browser share through a locally run relay.
+   byte for byte, with what `RelayCore` sent. Benchmarks and the no-allocation check land with the first code, and
+   every later step runs them.
+5. **The app on the relay:** Share connects out to the relay set in Settings, the local port and the tunnel
+   instructions go, and two copies of the app plus a browser share through a locally run relay.
 6. **Deployment** behind Cloudflare.
 
 ## Open questions
