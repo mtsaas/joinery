@@ -181,7 +181,10 @@ As built, a room is a few allocations made together, not one block: the log ring
 largest frame (3 MiB) so a frame always fits whole without splitting at the ring's end (`relay/src/Log.zig` has the
 proof); one snapshot slot (1 MiB), since sends copy the snapshot out at once and no guest is ever partway through
 reading it; 31 guest slots; and 1,024 remembered clients (72 KiB), each keeping its peer for the room's life, after
-which new clients are turned away as if the room were full. A room's ID and secrets are kept as they are, not hashed,
+which new clients are turned away as if the room were full. The large buffers (a room's log and snapshot, a connection's read
+buffer and outbox) are taken without Zig's fill: in Debug and ReleaseSafe builds `Allocator.alloc` writes a pattern
+over new memory, which made every buffer resident at once, about 13 MiB a connection. Measured on a ReleaseSafe build
+with one room, a host and a guest, a 10 KB snapshot and 199 changes, the whole relay is 2.0 MB. A room's ID and secrets are kept as they are, not hashed,
 because the host gets its secrets back when it resumes. They're compared in constant time.
 
 Per room, with the defaults we'd start from:

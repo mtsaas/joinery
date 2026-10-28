@@ -108,10 +108,10 @@ fn connection(server: *Server, stream: Io.net.Stream) Io.Cancelable!void {
     defer stream.close(io);
     const pages = std.heap.page_allocator;
     // The largest message, the snapshot, with its WebSocket header.
-    const read_buffer = pages.alloc(u8, server.limits.max_snapshot + 14) catch return;
-    defer pages.free(read_buffer);
-    const outbox = pages.alloc(u8, 2 * outboxSize(server.limits)) catch return;
-    defer pages.free(outbox);
+    const read_buffer = Relay.reserve(pages, server.limits.max_snapshot + 14) catch return;
+    defer Relay.release(pages, read_buffer);
+    const outbox = Relay.reserve(pages, 2 * outboxSize(server.limits)) catch return;
+    defer Relay.release(pages, outbox);
 
     var write_buffer: [4096]u8 = undefined;
     var reader = stream.reader(io, read_buffer);

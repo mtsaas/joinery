@@ -606,8 +606,8 @@ fn makeRoom(relay: *Relay, h: wire.Hello) Allocator.Error!*Room {
     const log_capacity = Log.capacity(limits.log_bytes, limits.max_frame);
     const room = try gpa.create(Room);
     errdefer gpa.destroy(room);
-    const memory = try gpa.alloc(u8, log_capacity + limits.max_snapshot);
-    errdefer gpa.free(memory);
+    const memory = try reserve(gpa, log_capacity + limits.max_snapshot);
+    errdefer release(gpa, memory);
     const guests = try gpa.alloc(Guest, limits.max_peers - 1);
     errdefer gpa.free(guests);
     const clients = try gpa.alloc(Client, max_clients);
@@ -644,8 +644,19 @@ fn free(relay: *Relay, room: *Room) void {
     relay.room_list.remove(&room.node);
     relay.gpa.free(room.guests.allocatedSlice());
     relay.gpa.free(room.clients.allocatedSlice());
-    relay.gpa.free(room.memory);
+    release(relay.gpa, room.memory);
     relay.gpa.destroy(room);
+}
+
+/// Bytes for a buffer that's filled as it's used, such as a room's log. Unlike `Allocator.alloc`, they're not filled
+/// with a pattern first, which safety-checked builds do, so memory the OS hands over takes no room until it's written.
+pub fn reserve(allocator: Allocator, len: usize) Allocator.Error![]u8 {
+    const bytes = allocator.rawAlloc(len, .of(u8), @returnAddress()) orelse return error.OutOfMemory;
+    return bytes[0..len];
+}
+
+pub fn release(allocator: Allocator, bytes: []u8) void {
+    allocator.rawFree(bytes, .of(u8), @returnAddress());
 }
 
 /// 16 random bytes, as hex.
