@@ -34,11 +34,17 @@ struct Message: Codable {
     var `protocol`: Int?
     var token: String?
     var name: String?
+    /// Which client this is, the same through reconnecting.
+    var client: String?
     // welcome
     var you: String?
     var title: String?
     var entities: [Replica.Entity]?
     var peers: [Peer]?
+    /// The last of this client's changes the host has taken, made or turned down.
+    var acked: Int?
+    /// The document's digest, after the change (`Digest`).
+    var hash: String?
     // ops, reject
     var seq: Int?
     var cseq: Int?

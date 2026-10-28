@@ -140,6 +140,39 @@ struct Replica: Equatable {
         ops.compactMap { apply($0) }.reversed()
     }
 
+    // MARK: Taking changes
+
+    struct Refusal: LocalizedError {
+        let reason: String
+        var errorDescription: String? { reason }
+    }
+
+    /// Takes another's change: every op of it, then the ops that tidy up after it (see `tidying`), or, if any op can't
+    /// be made or leaves something that can't be read, none, as if it had never come.
+    /// - Returns: The tidying ops it applied after the change's.
+    mutating func receive(_ ops: [Op]) throws -> [Op] {
+        var next = self
+        for op in ops {
+            guard next.apply(op) != nil else { throw Refusal(reason: "That's been deleted or changed since.") }
+        }
+        for id in Set(ops.map(\.id)) {
+            if let entity = next.entities[id], let problem = next.problem(with: entity) { throw Refusal(reason: problem) }
+        }
+        let tidying = next.tidying()
+        _ = next.apply(tidying)
+        self = next
+        return tidying
+    }
+
+    /// Ops that tidy it up after ops made elsewhere, or undone after others' changes: what's left dangling (a key to a
+    /// column gone, say) repaired, and what can't be read, or whose table or group has gone, removed. None if it's tidy.
+    func tidying() -> [Op] {
+        let applied = model
+        var repaired = applied
+        repaired.repair()
+        return ops(to: Replica(repaired, keeping: self, was: applied))
+    }
+
     // MARK: Checking
 
     /// Why `entity` can't be in it, if it can't: an unknown kind, fields its kind can't be read from, a bad order key,

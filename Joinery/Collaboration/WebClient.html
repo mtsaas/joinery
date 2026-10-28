@@ -69,18 +69,41 @@ const $ = id => document.getElementById(id);
 const svg = $("canvas"), world = $("world");
 const ns = "http://www.w3.org/2000/svg";
 
-let confirmed = new Map(), pending = [], shown = new Map(), you = null, cseq = 0;
+// The host's document as of change `seq`, with its digest; changes made here it hasn't taken yet; what's shown, the one
+// with the other on top. See docs/collaboration.md for why this always comes back to the host's copy.
+let confirmed = new Map(), digest = [0, 0], seq = 0, pending = [], shown = new Map(), you = null, nextCseq = 1;
+const client = (crypto.randomUUID && crypto.randomUUID()) || String(Math.random()).slice(2) + String(Date.now());
 // Until someone pans or zooms, the view keeps the whole model in it.
 let peers = new Map(), view = { x: 0, y: 0, zoom: 1 }, moved = false, drag = null;
 
 // MARK: State
 
-function apply(state, op) {
-  if (op.op === "put") state.set(op.entity.id, op.entity);
+// The canonical JSON of an entity, as JSON.stringify writes it with every object's keys sorted, hashed by two FNV-1a
+// hashes; a document's digest is the sum of its entities', so each op only swaps the hashes of what it changes.
+function canonical(value) {
+  if (Array.isArray(value)) return "[" + value.map(canonical).join(",") + "]";
+  if (value && typeof value === "object") return "{" + Object.keys(value).sort().map(k => JSON.stringify(k) + ":" + canonical(value[k])).join(",") + "}";
+  return JSON.stringify(value);
+}
+const encoder = new TextEncoder();
+function hash(entity) {
+  let a = 2166136261, b = 3735928559;
+  for (const byte of encoder.encode(canonical(entity))) { a = Math.imul(a ^ byte, 16777619) >>> 0; b = Math.imul(b ^ byte, 16777619) >>> 0; }
+  return [a, b];
+}
+const hex = d => d[0].toString(16).padStart(8, "0") + d[1].toString(16).padStart(8, "0");
+function apply(state, op, sum) {
+  const id = op.op === "put" ? op.entity.id : op.id, old = state.get(id);
+  if (op.op === "put") state.set(id, op.entity);
   else if (op.op === "set") {
-    const entity = state.get(op.id);
-    if (entity) { const copy = { ...entity }; if (op.value === null) delete copy[op.field]; else copy[op.field] = op.value; state.set(op.id, copy); }
-  } else if (op.op === "delete") state.delete(op.id);
+    if (!old || op.field === "id" || op.field === "kind") return;
+    const copy = { ...old }; if (op.value === null) delete copy[op.field]; else copy[op.field] = op.value; state.set(id, copy);
+  } else if (op.op === "delete") state.delete(id);
+  if (sum) {
+    const now = state.get(id);
+    if (old) { const h = hash(old); sum[0] = (sum[0] - h[0]) >>> 0; sum[1] = (sum[1] - h[1]) >>> 0; }
+    if (now) { const h = hash(now); sum[0] = (sum[0] + h[0]) >>> 0; sum[1] = (sum[1] + h[1]) >>> 0; }
+  }
 }
 function relay() {
   shown = new Map(confirmed);
@@ -88,9 +111,10 @@ function relay() {
   render();
 }
 function submit(ops) {
-  if (!ops.length || !you) return;
-  pending.push({ cseq: ++cseq, ops });
-  send({ type: "ops", cseq, ops });
+  if (!ops.length || ended) return;
+  const change = { cseq: nextCseq++, ops };
+  pending.push(change);
+  if (connected) { send({ type: "ops", cseq: change.cseq, ops }); sentThrough = change.cseq; }
   relay();
 }
 const byOrder = (a, b) => (a.order || "") < (b.order || "") ? -1 : (a.order || "") > (b.order || "") ? 1 : (a.id < b.id ? -1 : 1);
@@ -274,41 +298,109 @@ svg.addEventListener("wheel", e => {
 
 // MARK: Connection
 
-let socket;
+// Anything heard that doesn't fit (a change out of order, a digest that doesn't match, a reply to a change not sent
+// next) drops the connection; on reconnecting, the host sends its copy afresh and says which of the pending changes it
+// has taken, and the rest are sent again. Lost connections are retried, sooner at first.
+let socket = null, generation = 0, connected = false, ended = false, welcomedOnce = false, checksDigests = true;
+let attempts = 0, heard = 0, pinged = 0, sentThrough = 0, pingCovers = 0;
+const token = new URLSearchParams(location.hash.slice(1)).get("token");
+let name = new URLSearchParams(location.hash.slice(1)).get("name");
+
 function send(message) { if (socket && socket.readyState === 1) socket.send(JSON.stringify(message)); }
 function toast(message) {
   const t = $("toast"); t.textContent = message; t.hidden = false;
   clearTimeout(toast.timer); toast.timer = setTimeout(() => t.hidden = true, 4000);
 }
+function status(text) { $("status").textContent = text; }
+function end(reason) {
+  ended = true; connected = false; generation++;
+  if (socket) socket.close();
+  peers.clear(); status(reason); render();
+}
+function reconnect(delay) {
+  if (ended) return;
+  generation++; connected = false;
+  if (socket) { socket.onclose = null; socket.close(); socket = null; }
+  if (welcomedOnce) status("Reconnecting…");
+  setTimeout(connect, delay * 1000);
+}
+const resync = () => reconnect(0);
+function disconnected() {
+  if (ended) return;
+  if (connected) attempts = 0;
+  attempts += 1;
+  if (!welcomedOnce && attempts > 3) return end("Couldn't connect: check the link, and that its host is still sharing.");
+  reconnect(Math.min(10, .25 * 2 ** (attempts - 1)));
+}
 function connect() {
-  const token = new URLSearchParams(location.hash.slice(1)).get("token");
-  if (!token) { $("status").textContent = "This link has no token. Ask for the whole link."; return; }
-  let name = new URLSearchParams(location.hash.slice(1)).get("name");
+  if (ended) return;
+  const mine = ++generation;
+  socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/");
+  socket.onopen = () => {
+    if (mine !== generation) return;
+    heard = pinged = Date.now(); sentThrough = pingCovers = 0;
+    send({ type: "hello", protocol: 1, token, name, client });
+  };
+  socket.onmessage = event => { if (mine === generation) receive(event.data); };
+  socket.onclose = () => { if (mine === generation) disconnected(); };
+}
+function receive(text) {
+  heard = Date.now();
+  let m;
+  try { m = JSON.parse(text); } catch { return resync(); }
+  if (m.type === "welcome") return welcome(m);
+  if (m.type === "reject" && m.cseq == null) return end(m.reason || "Turned away.");
+  if (m.type === "bye") return end(m.reason || "The session has ended.");
+  if (!connected) return resync();
+  if (m.type === "ops") {
+    if (m.seq !== seq + 1 || !Array.isArray(m.ops)) return resync();
+    m.ops.forEach(op => apply(confirmed, op, digest));
+    seq = m.seq;
+    if (m.author === you) {
+      if (!pending.length || pending[0].cseq !== m.cseq) return resync();
+      pending.shift();
+    }
+    if (checksDigests && m.hash !== hex(digest)) return resync();
+    relay();
+  } else if (m.type === "reject") {
+    if (!pending.length || pending[0].cseq !== m.cseq) return resync();
+    pending.shift(); relay(); toast("A change was taken back: " + (m.reason || ""));
+  } else if (m.type === "pong") {
+    if (m.seq !== seq || (m.acked || 0) < pingCovers || (checksDigests && m.hash !== hex(digest))) return resync();
+  } else if (m.type === "joined" || m.type === "presence") {
+    if (m.peer.id !== you) { peers.set(m.peer.id, m.peer); render(); }
+  } else if (m.type === "left") { peers.delete(m.peer.id); render(); }
+}
+function welcome(m) {
+  if (!m.you || typeof m.seq !== "number" || !Array.isArray(m.entities)) return resync();
+  confirmed = new Map(); digest = [0, 0];
+  m.entities.forEach(entity => apply(confirmed, { op: "put", entity }, digest));
+  seq = m.seq; you = m.you;
+  // Its copy, whole, is the truth: a digest that doesn't match it means it writes JSON differently.
+  if (m.hash !== hex(digest)) checksDigests = false;
+  // What the host took of the changes made here, made or turned down, is in its copy or never will be.
+  pending = pending.filter(p => p.cseq > (m.acked || 0));
+  peers = new Map(m.peers.map(p => [p.id, p]));
+  connected = true; attempts = 0; welcomedOnce = true;
+  $("title").textContent = m.title; document.title = m.title + " — Joinery";
+  status("");
+  for (const change of pending) { send({ type: "ops", cseq: change.cseq, ops: change.ops }); sentThrough = change.cseq; }
+  relay();
+}
+setInterval(() => {
+  if (!connected) return;
+  const now = Date.now();
+  if (now - heard > 25000) return resync();
+  if (now - pinged >= 10000) { pinged = now; pingCovers = sentThrough; send({ type: "ping" }); }
+}, 1000);
+
+if (!token) status("This link has no token. Ask for the whole link.");
+else {
   try { name = name || localStorage.getItem("joinery.name"); } catch {}
   if (!name) { name = (prompt("Your name, for others to see", "") || "").trim() || "Guest"; try { localStorage.setItem("joinery.name", name); } catch {} }
-  socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/");
-  socket.onopen = () => send({ type: "hello", protocol: 1, token, name });
-  socket.onmessage = event => {
-    const m = JSON.parse(event.data);
-    if (m.type === "welcome") {
-      you = m.you; confirmed = new Map(m.entities.map(e => [e.id, e])); pending = [];
-      peers = new Map(m.peers.map(p => [p.id, p])); $("title").textContent = m.title; document.title = m.title + " — Joinery";
-      $("status").textContent = ""; relay();
-    } else if (m.type === "ops") {
-      m.ops.forEach(op => apply(confirmed, op));
-      if (m.author === you && pending.length && pending[0].cseq === m.cseq) pending.shift();
-      relay();
-    } else if (m.type === "reject") {
-      if (m.cseq == null) { $("status").textContent = m.reason || "Turned away."; return; }
-      pending = pending.filter(p => p.cseq !== m.cseq); relay(); toast("A change was taken back: " + (m.reason || ""));
-    } else if (m.type === "joined" || m.type === "presence") {
-      if (m.peer.id !== you) { peers.set(m.peer.id, m.peer); render(); }
-    } else if (m.type === "left") { peers.delete(m.peer.id); render(); }
-  };
-  socket.onclose = () => { if (you) $("status").textContent = "The session has ended."; else if (!$("status").textContent.startsWith("That")) $("status").textContent = "Couldn't connect."; you = null; };
+  connect();
 }
 addEventListener("resize", () => moved ? place() : render());
-connect();
 </script>
 </body>
 </html>

@@ -1374,22 +1374,26 @@ struct JoineryTests {
                 if message.type == type { return message }
             }
         }
+        let client = UUID().uuidString
+        /// Whether the host closes the connection, with nothing more said.
+        func isClosed() async throws -> Bool {
+            do { _ = try await task.receive(); return false } catch { return true }
+        }
         func hello(_ token: String, protocol version: Int = 1) async throws {
-            try await send(#"{"type":"hello","protocol":\#(version),"token":"\#(token)","name":"Raw"}"#)
+            try await send(#"{"type":"hello","protocol":\#(version),"token":"\#(token)","name":"Raw","client":"\#(client)"}"#)
         }
     }
 
     @Test func onlyAProperHelloIsLetIn() async throws {
         let (hosted, host, port) = try await hosting()
         defer { host.close() }
-        // Anything before hello: turned away, and closed.
+        // Anything before hello, or not JSON at all: let go of, unanswered, so a client that sent it only reconnects.
         let early = RawClient(port: port)
         try await early.send(#"{"type":"ops","cseq":1,"ops":[]}"#)
-        #expect(try await early.next("reject").cseq == nil)
-        // Not JSON at all.
+        #expect(try await early.isClosed())
         let garbled = RawClient(port: port)
         try await garbled.send("{not json")
-        #expect(try await garbled.next("reject").reason?.isEmpty == false)
+        #expect(try await garbled.isClosed())
         // A protocol it doesn't speak.
         let future = RawClient(port: port)
         try await future.hello(host.token, protocol: 2)
@@ -1436,9 +1440,9 @@ struct JoineryTests {
             #expect(hosted.model == before, "\(op)")
         }
         // A good one goes through, numbered, back to its author too.
-        try await raw.send(#"{"type":"ops","cseq":99,"ops":[\#(rename)]}"#)
+        try await raw.send(#"{"type":"ops","cseq":\#(bad.count + 1),"ops":[\#(rename)]}"#)
         let confirmed = try await raw.next("ops")
-        #expect(confirmed.cseq == 99 && confirmed.author == host.peers.keys.first && (confirmed.seq ?? 0) > 0)
+        #expect(confirmed.cseq == bad.count + 1 && confirmed.author == host.peers.keys.first && (confirmed.seq ?? 0) > 0)
         #expect(hosted.model.tables[0].name == "renamed")
     }
 
@@ -1523,7 +1527,7 @@ struct JoineryTests {
         try await until { guest.model == hosted.model }
         host.close()
         try await until { guest.session == nil }
-        #expect(client.status.contains("ended") && guest.model.tables[0].name == "last")
+        #expect(client.status.contains("stopped") && guest.model.tables[0].name == "last")
         // Theirs to edit, alone.
         edit(guest) { $0.tables[0].name = "mine" }
         #expect(guest.model.tables[0].name == "mine" && hosted.model.tables[0].name == "last")
@@ -1574,5 +1578,27 @@ struct JoineryTests {
         #expect(try await status("/?from=link") == 200)
         #expect(try await status("/model.json") == 404)
         #expect(try await status("/", method: "POST") == 405)
+    }
+
+    /// Digests are only comparable if every language writes an entity's JSON alike: these are what JavaScript's
+    /// JSON.stringify writes.
+    @Test func canonicalJSONIsWhatJavaScriptWrites() {
+        let numbers: [(Double, String)] = [
+            (0, "0"), (-0.0, "0"), (24, "24"), (-3, "-3"), (1.5, "1.5"), (0.1, "0.1"), (0.30000000000000004, "0.30000000000000004"),
+            (123.456, "123.456"), (0.000001, "0.000001"), (0.0000001, "1e-7"), (1e20, "100000000000000000000"), (1e21, "1e+21"),
+            (123456789012, "123456789012"), (5e-324, "5e-324"), (1.7976931348623157e308, "1.7976931348623157e+308"), (-2.5e-8, "-2.5e-8"),
+            (.nan, "null"), (.infinity, "null"),
+        ]
+        for (number, written) in numbers { #expect(JSON.number(number).canonical == written, "\(number)") }
+        #expect(JSON.string("a\"b\\c\n\t\u{1}é/😀").canonical == #""a\"b\\c\n\t\u0001é/😀""#)
+        let object = JSON.object(["b": .array([.bool(true), .null]), "a": .number(1), "B": .string("x")])
+        #expect(object.canonical == #"{"B":"x","a":1,"b":[true,null]}"#)
+        // The digest of a document is the same however it's put together, and an op swaps only what it changes.
+        var replica = CheckedReplica(Replica())
+        let table: Replica.Entity = ["id": .string("T"), "kind": .string("table"), "name": .string("t")]
+        replica.apply([.put(table), .set(id: "T", field: "name", value: .string("u"))])
+        #expect(replica.digest == Digest(replica.replica.entities.values))
+        replica.apply([.delete(id: "T")])
+        #expect(replica.digest == Digest() && replica.digest.description == "0000000000000000")
     }
 }

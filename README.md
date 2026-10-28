@@ -74,6 +74,8 @@ Share a data model live and others can edit it with you, in Joinery or in a brow
 - **Seeing each other:** everyone's pointer shows with their name, and what they've selected is ringed in their color. The share button shows who's here.
 - **Undo:** ⌘Z undoes only your own changes, even when others have changed things since.
 - **Conflicts:** if your change refers to something that's just been deleted, it's taken back and you're told.
+- **Dropped connections:** if a connection drops, Joinery and the web client reconnect on their own, sooner at first. Edits made meanwhile are sent then, each made once, and the copy catches up to the host's.
+- **Checking copies:** each change carries a checksum of the host's copy. If a copy ever differs, or misses a change, it fetches the host's copy afresh.
 - **The host's copy** is the one that's saved, with its version history. Stopping sharing, or closing the data model, ends the session.
 
 `docs/collaboration.md` describes the protocol, enough to write another client. The token in the link is the only thing between the internet and editing, so share it as you would a password.

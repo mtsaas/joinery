@@ -2,42 +2,40 @@ import Foundation
 import Network
 
 /// Hosts a session on the open model: others join at `port`, here or through a tunnel that exposes it, with the
-/// token. The model here is the one true copy. Every change, made here or sent in, is numbered and sent to everyone
-/// in order, so all copies end up the same.
+/// token. Connects `HostCore`, which keeps the protocol, to sockets: the page and WebSockets on one port, on this Mac
+/// only.
 @MainActor @Observable
 final class SessionHost: Session {
     static let defaultPort: UInt16 = 8724
 
-    let token: String
-    let me: Peer
+    var token: String { core.token }
+    var me: Peer { core.me }
     private(set) var peers: [String: Peer] = [:]
     private(set) var status = "Starting…"
     /// The port it's listening on, once it is.
     private(set) var port: UInt16?
     var isHost: Bool { true }
 
+    @ObservationIgnored private let core: HostCore
     @ObservationIgnored private weak var model: OpenModel?
     @ObservationIgnored private var listener: NWListener?
-    /// Connections, and who each is once they've said hello.
-    @ObservationIgnored private var sockets: [ObjectIdentifier: SocketPeer] = [:]
-    @ObservationIgnored private var joined: [ObjectIdentifier: String] = [:]
-    @ObservationIgnored private var seq = 0
-    @ObservationIgnored private var colors = 0
+    @ObservationIgnored private var sockets: [HostCore.Connection: SocketPeer] = [:]
+    @ObservationIgnored private var nextConnection = 1
+    @ObservationIgnored private var ticker: Task<Void, Never>?
 
     /// Starts listening on `port` on this Mac only (0 for any free one), for the open model.
     init(model: OpenModel, port: UInt16 = defaultPort, token: String = SessionHost.newToken()) throws {
-        self.token = token
         self.model = model
-        me = Peer(id: "host", name: Self.ownName, color: "blue")
+        core = HostCore(document: model, token: token, name: Self.ownName)
         let parameters = NWParameters.tcp
         // Only this Mac: the tunnel that exposes it connects from here too.
         parameters.requiredLocalEndpoint = .hostPort(host: .ipv4(.loopback), port: NWEndpoint.Port(rawValue: port) ?? .any)
         parameters.allowLocalEndpointReuse = true
         let listener = try NWListener(using: parameters)
         self.listener = listener
-        let page = (Bundle.main.url(forResource: "WebClient", withExtension: "html")).flatMap { try? Data(contentsOf: $0) } ?? Data()
+        let page = Bundle.main.url(forResource: "WebClient", withExtension: "html").flatMap { try? Data(contentsOf: $0) } ?? Data()
         listener.newConnectionHandler = { [weak self] connection in
-            MainActor.assumeIsolated { self?.accept(SocketPeer(connection, page: page)) }
+            Task { @MainActor in self?.accept(SocketPeer(connection, page: page)) }
         }
         listener.stateUpdateHandler = { [weak self] state in
             Task { @MainActor in
@@ -55,7 +53,17 @@ final class SessionHost: Session {
             }
         }
         listener.start(queue: .main)
-        model.onChange = { [weak self] ops in self?.publish(ops, author: "host") }
+        model.onChange = { [weak self] ops in
+            guard let self else { return }
+            self.perform(self.core.changedHere(ops))
+        }
+        ticker = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard let self else { return }
+                self.perform(self.core.tick(at: .now))
+            }
+        }
     }
 
     /// 128 random bits, as letters and digits.
@@ -74,16 +82,16 @@ final class SessionHost: Session {
     }
 
     func share(cursor: CGPoint?, selection: [UUID]) {
-        var message = Message("presence")
-        message.peer = Peer(id: me.id, name: me.name, color: me.color, cursor: cursor.map { [$0.x, $0.y] },
-                            selection: selection.map(\.uuidString))
-        broadcast(message)
+        perform(core.share(Peer(id: me.id, name: me.name, color: me.color, cursor: cursor.map { [$0.x, $0.y] },
+                                selection: selection.map(\.uuidString))))
     }
 
     func close() {
+        guard listener != nil else { return }
+        perform(core.stop("The host stopped sharing. This copy is yours to keep."))
         listener?.cancel()
         listener = nil
-        for socket in sockets.values { socket.close() }
+        ticker?.cancel()
         sockets = [:]
         peers = [:]
         if model?.session === self { model?.session = nil }
@@ -91,114 +99,34 @@ final class SessionHost: Session {
         if status.hasPrefix("Sharing") || status.hasPrefix("Starting") { status = "Stopped sharing" }
     }
 
-    // MARK: Messages
-
     private func accept(_ socket: SocketPeer) {
-        let key = ObjectIdentifier(socket)
-        sockets[key] = socket
-        socket.onText = { [weak self, weak socket] text in
-            guard let self, let socket else { return }
-            self.receive(text, from: socket)
+        guard listener != nil else { return socket.close() }
+        let connection = nextConnection
+        nextConnection += 1
+        sockets[connection] = socket
+        core.opened(connection, at: .now)
+        socket.onText = { [weak self] text in
+            guard let self else { return }
+            self.perform(self.core.received(text, on: connection, at: .now))
         }
         socket.onClose = { [weak self] in
-            guard let self else { return }
-            self.sockets[key] = nil
-            if let id = self.joined.removeValue(forKey: key) {
-                self.peers[id] = nil
-                var left = Message("left")
-                left.peer = Peer(id: id, name: "", color: "")
-                self.broadcast(left)
-            }
+            guard let self, self.sockets.removeValue(forKey: connection) != nil else { return }
+            self.perform(self.core.closed(connection))
         }
         socket.start()
     }
 
-    private func receive(_ text: String, from socket: SocketPeer) {
-        let key = ObjectIdentifier(socket)
-        guard let message = Message(text: text) else { return reject(socket, "That isn't a message.") }
-        guard let id = joined[key] else {
-            // Only hello, with the token, before anything else.
-            guard message.type == "hello", message.token == token, message.protocol == Message.version else {
-                var refusal = Message("reject")
-                refusal.reason = message.protocol != Message.version && message.type == "hello"
-                    ? "This copy of Joinery speaks protocol \(Message.version)." : "That link isn't valid, or the session has ended."
-                socket.send(refusal.text)
-                return socket.close()
+    private func perform(_ effects: [HostCore.Effect]) {
+        for effect in effects {
+            switch effect {
+            case .send(let connection, let message): sockets[connection]?.send(message.text)
+            case .close(let connection): sockets[connection]?.close()
             }
-            welcome(socket, name: message.name)
-            return
         }
-        switch message.type {
-        case "ops":
-            guard let model, let ops = message.ops else { return }
-            do {
-                let tidying = try model.receive(ops)
-                publish(ops, author: id, cseq: message.cseq)
-                if !tidying.isEmpty { publish(tidying, author: "host") }
-            } catch {
-                var rejection = Message("reject")
-                rejection.cseq = message.cseq
-                rejection.reason = error.localizedDescription
-                socket.send(rejection.text)
-            }
-        case "presence":
-            guard var peer = peers[id] else { return }
-            peer.cursor = message.cursor
-            peer.selection = message.selection
-            peers[id] = peer
-            var presence = Message("presence")
-            presence.peer = peer
-            broadcast(presence, except: id)
-        default:
-            break
-        }
+        if peers != core.peers { peers = core.peers }
     }
+}
 
-    private func welcome(_ socket: SocketPeer, name: String?) {
-        guard let model else { return socket.close() }
-        let id = UUID().uuidString
-        let colors = ["purple", "pink", "orange", "green", "teal", "indigo", "red", "mint", "cyan", "brown", "yellow"]
-        let name = name?.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60)
-        let peer = Peer(id: id, name: name.map(String.init).flatMap { $0.isEmpty ? nil : $0 } ?? "Guest", color: colors[self.colors % colors.count])
-        self.colors += 1
-        var welcome = Message("welcome")
-        welcome.protocol = Message.version
-        welcome.you = id
-        welcome.seq = seq
-        welcome.title = model.name
-        welcome.entities = model.replica.entities.keys.sorted().compactMap { model.replica.entities[$0] }
-        welcome.peers = [me] + peers.values
-        socket.send(welcome.text)
-        joined[ObjectIdentifier(socket)] = id
-        peers[id] = peer
-        var joinedMessage = Message("joined")
-        joinedMessage.peer = peer
-        broadcast(joinedMessage, except: id)
-    }
-
-    /// Numbers a change and sends it to everyone, its author included, who learns from it that theirs went through.
-    private func publish(_ ops: [Replica.Op], author: String, cseq: Int? = nil) {
-        guard !ops.isEmpty else { return }
-        seq += 1
-        var message = Message("ops")
-        message.seq = seq
-        message.author = author
-        message.cseq = cseq
-        message.ops = ops
-        broadcast(message)
-    }
-
-    private func broadcast(_ message: Message, except excluded: String? = nil) {
-        let text = message.text
-        for (key, socket) in sockets {
-            guard let id = joined[key], id != excluded else { continue }
-            socket.send(text)
-        }
-    }
-
-    private func reject(_ socket: SocketPeer, _ reason: String) {
-        var rejection = Message("reject")
-        rejection.reason = reason
-        socket.send(rejection.text)
-    }
+extension OpenModel: SharedDocument {
+    var title: String { name }
 }

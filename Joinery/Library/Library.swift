@@ -443,38 +443,19 @@ final class OpenModel {
     /// part of it stay. What's left dangling (a key to a column gone, say) is tidied up, and that's undone with them.
     private func apply(_ ops: [Replica.Op]) {
         let undo = replica.apply(ops)
-        let (tidying, tidied) = tidyingUp()
-        model = tidied
+        let tidying = replica.tidying()
         registerUndo(replica.apply(tidying) + undo)
+        model = replica.model
         onChange?(ops + tidying)
         scheduleSave()
     }
 
-    /// Ops that tidy the replica up after ops made elsewhere, or undone after others' changes: what's left dangling (a
-    /// key to a column gone, say) repaired, and what can't be read, or whose table or group has gone, removed.
-    /// - Returns: The ops, and the model they leave.
-    private func tidyingUp() -> (ops: [Replica.Op], model: DataModel) {
-        let applied = replica.model
-        var repaired = applied
-        repaired.repair()
-        return (replica.ops(to: Replica(repaired, keeping: replica, was: applied)), repaired)
-    }
-
-    /// Another person's change, from a session this hosts: all its ops or, if any can't be made (on something since
-    /// deleted, say), none. Undo here is left alone: it undoes only changes made here.
+    /// Another person's change, from a session this hosts: all of it, tidied up after, or none (see
+    /// `Replica.receive`). Undo here is left alone: it undoes only changes made here.
     /// - Returns: The ops that tidied up after it, to send on too.
     func receive(_ ops: [Replica.Op]) throws -> [Replica.Op] {
-        var next = replica
-        for op in ops {
-            guard next.apply(op) != nil else { throw ModelTools.Failure("That's been deleted or changed since.") }
-        }
-        for id in Set(ops.map(\.id)) {
-            if let entity = next.entities[id], let problem = next.problem(with: entity) { throw ModelTools.Failure(problem) }
-        }
-        replica = next
-        let (tidying, tidied) = tidyingUp()
-        replica.apply(tidying)
-        model = tidied
+        let tidying = try replica.receive(ops)
+        model = replica.model
         scheduleSave()
         return tidying
     }
