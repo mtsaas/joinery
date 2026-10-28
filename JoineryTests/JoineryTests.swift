@@ -1554,7 +1554,7 @@ struct JoineryTests {
             ("not a link", nil, nil),
         ]
         for (link, url, token) in cases {
-            let address = SessionClient.address(of: link)
+            let address = SessionLink.address(of: link)
             #expect(address?.url.absoluteString == url && address?.token == token, "\(link)")
         }
         let model = try openStorefront()
@@ -1562,7 +1562,7 @@ struct JoineryTests {
         defer { host.close() }
         #expect(host.link(at: "https://t.example.com/") == "https://t.example.com/#token=abc")
         #expect(host.link(at: "localhost:8724") == "http://localhost:8724/#token=abc")
-        #expect(SessionClient.address(of: host.link(at: "https://t.example.com"))?.token == "abc")
+        #expect(SessionLink.address(of: host.link(at: "https://t.example.com"))?.token == "abc")
         #expect(SessionHost.newToken().count >= 20 && SessionHost.newToken() != SessionHost.newToken())
     }
 

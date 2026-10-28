@@ -48,7 +48,8 @@ final class ClientCore {
     /// ping, having read everything before it, must have taken it.
     private var sentThrough = 0
     private var pingCovers = 0
-    private var title: String?
+    /// Whether it's ever been let in: until it has, failing to connect is given up on soon.
+    private var wasWelcomed = false
 
     /// Pings this often, and reconnects if nothing's heard for `silence`.
     static let pingInterval: TimeInterval = 10
@@ -88,8 +89,8 @@ final class ClientCore {
         if state == .connected { attempts = 0 }
         attempts += 1
         // Never let in: the link's wrong, or its host has gone.
-        if title == nil, attempts > 3 { return end("Couldn't join: check the link, and that its host is still sharing.") }
-        state = title == nil ? .connecting : .reconnecting
+        if !wasWelcomed, attempts > 3 { return end("Couldn't join: check the link, and that its host is still sharing.") }
+        state = wasWelcomed ? .reconnecting : .connecting
         return [.reconnect(after: min(10, 0.25 * pow(2, Double(attempts - 1))))]
     }
 
@@ -188,9 +189,9 @@ final class ClientCore {
         state = .connected
         attempts = 0
         var effects: [Effect] = []
-        if title == nil {
-            title = message.title ?? "Shared Data Model"
-            effects.append(.welcomed(title!))
+        if !wasWelcomed {
+            wasWelcomed = true
+            effects.append(.welcomed(message.title ?? "Shared Data Model"))
         }
         effects.append(.show(shown))
         sentThrough = pending.last?.cseq ?? 0

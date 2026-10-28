@@ -8,9 +8,8 @@ import Foundation
 final class SessionClient: Session {
     private(set) var peers: [String: Peer] = [:]
     private(set) var status = "Connecting…"
-    var isHost: Bool { false }
 
-    @ObservationIgnored let core: ClientCore
+    @ObservationIgnored private let core: ClientCore
     @ObservationIgnored private let url: URL
     @ObservationIgnored private weak var model: OpenModel?
     @ObservationIgnored private var task: URLSessionWebSocketTask?
@@ -20,25 +19,12 @@ final class SessionClient: Session {
     @ObservationIgnored private var reconnecting: Task<Void, Never>?
     /// Heard once let in: the session's title and the host's copy, to open.
     @ObservationIgnored private var onWelcome: ((String, Replica) -> Void)?
-
-    /// Where a link points, as a socket address, and its token; nil if it isn't a session link.
-    static func address(of link: String) -> (url: URL, token: String)? {
-        guard var parts = URLComponents(string: link.trimmingCharacters(in: .whitespacesAndNewlines)),
-              let token = parts.fragment?.split(separator: "&").first(where: { $0.hasPrefix("token=") })?.dropFirst(6), !token.isEmpty
-        else { return nil }
-        switch parts.scheme {
-        case "https", "wss": parts.scheme = "wss"
-        case "http", "ws": parts.scheme = "ws"
-        default: return nil
-        }
-        parts.fragment = nil
-        if parts.path.isEmpty { parts.path = "/" }
-        return parts.url.map { ($0, String(token)) }
-    }
+    /// Told why, when the host turns down a change made here (which is then taken back).
+    @ObservationIgnored var onRefusal: ((String) -> Void)?
 
     /// Connects to the session at `link`, calling `welcomed` with its title and the host's copy once in.
     init?(link: String, welcomed: @escaping (String, Replica) -> Void) {
-        guard let (url, token) = Self.address(of: link) else { return nil }
+        guard let (url, token) = SessionLink.address(of: link) else { return nil }
         self.url = url
         core = ClientCore(token: token, name: Self.ownName)
         onWelcome = welcomed
@@ -124,7 +110,7 @@ final class SessionClient: Session {
                     self?.connect()
                 }
             case .refused(let reason):
-                Library.shared.failure = "A change couldn't be made, so it's been taken back: \(reason)"
+                onRefusal?(reason)
             case .ended(let reason):
                 generation += 1
                 task?.cancel(with: .normalClosure, reason: nil)

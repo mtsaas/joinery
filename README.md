@@ -150,17 +150,28 @@ Corrections are kept inside the library. Debug ▸ Export Routing Feedback… wr
 
 ```
 Joinery/
-  App/         App entry, menu commands, debug hooks
-  Library/     The library of files and collections, the sidebar, the editor for an open data model
-  Document/    The data model (Codable JSON, .joinery), its edits, reading and writing files
-  Examples/    The bundled example data models
-  Debug/       Routing feedback mode, frame-rate readout, made-up data models for the scale test (Debug builds only)
-  Collaboration/ Live sessions: the host, the Mac and web clients, and the WebSocket they speak
-  MCP/         The MCP server for AI assistants, and its data model tools
-  Canvas/      Canvas view, table drawing, routing, wire physics, zip tying
-JoineryTests/  Swift Testing: physics, zip ties and bend points, type parsing, data model repair, library file operations
-scripts/       build.sh (unsandboxed CLI build), make_icon.swift, make_examples.py, score-feedback.sh
+  Document/        The core: the data model, its edits, layout and geometry, files, and the replica its changes are ops on
+  Collaboration/
+    Protocol/      The core of live sessions: the host's and client's protocol as state machines, messages, digests
+    Transport/     Sessions on the network: the WebSocket, the host and client that connect the protocol to it and the app
+    UI/            Share and Join panels, people, and others' pointers on the canvas
+    Web/           The web client the host serves
+  Library/         The library of files and collections, the sidebar, the open data model and its editor
+  Canvas/          Canvas view, table drawing, routing, wire physics, zip tying
+  MCP/             The MCP server for AI assistants, and its data model tools
+  App/             App entry, menu commands, debug hooks
+  Debug/           Routing feedback mode, frame-rate readout, made-up data models for the scale test (Debug builds only)
+  Examples/        The bundled example data models
+JoineryTests/      Swift Testing: the data model, routing and physics, undo, sessions (with a simulation of the protocol)
+docs/              collaboration.md: the session protocol, and why it's correct
+scripts/           build.sh (unsandboxed CLI build), check_layers.sh, make_icon.swift, make_examples.py, score-feedback.sh
 ```
+
+**The core stands alone.** `Document/` and `Collaboration/Protocol/` are plain state and state machines:
+- They use only Foundation, CoreGraphics and UniformTypeIdentifiers.
+- They don't use the main actor, the network or the screen, or anything else in the app.
+
+Everything else is built on them: the canvas draws a `DataModel`, `OpenModel` turns edits into `Replica` ops for undo, and the session's transport carries `HostCore` and `ClientCore` messages over WebSockets. Because the core touches nothing outside itself, the protocol can be simulated across every CPU core with no network at all. `scripts/check_layers.sh` fails if anything in the core reaches outside it.
 
 The wires work in two steps. `Routing` computes each wire's rest curve: Bézier segments from socket to socket that pass through the wire's zip ties. `WireSimulation` then springs a chain of points toward that curve. The ends of each wire are stiff and the middle is loose, and neighboring points pull on each other, so a wobble travels along the wire. The simulation runs only while something is moving.
 

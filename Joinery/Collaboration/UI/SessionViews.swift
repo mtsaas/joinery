@@ -139,7 +139,7 @@ struct JoinPanel: View {
         .frame(width: 360)
         .onAppear {
             // A link just copied is very likely the one.
-            if let copied = NSPasteboard.general.string(forType: .string), SessionClient.address(of: copied) != nil { link = copied }
+            if let copied = NSPasteboard.general.string(forType: .string), SessionLink.address(of: copied) != nil { link = copied }
         }
     }
 

@@ -4,6 +4,9 @@ import SwiftUI
 /// saved; gestures write to the document only when they end, so each is a single undo step.
 @MainActor @Observable
 final class CanvasController {
+    /// The pasteboard's name for a copied part of a data model: a `DataModel` as JSON.
+    static let clipType = NSPasteboard.PasteboardType("com.clarkmccauley.joinery.clip")
+
     enum Item: Hashable {
         case table(Table.ID)
         case relationship(Relationship.ID)
@@ -59,7 +62,7 @@ final class CanvasController {
         let clip = model.clip(tables: ids)
         guard !clip.tables.isEmpty, let data = try? JSONEncoder().encode(clip) else { return false }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setData(data, forType: DataModel.pasteboardType)
+        NSPasteboard.general.setData(data, forType: Self.clipType)
         pastes = 0
         return true
     }
@@ -82,7 +85,7 @@ final class CanvasController {
     /// Adds what was copied, here or from another data model, and selects it. Over the original, if it's in view, it
     /// lands a little down and to the right, further each time; otherwise in the middle of the view.
     func paste(into model: inout DataModel) {
-        guard let data = NSPasteboard.general.data(forType: DataModel.pasteboardType),
+        guard let data = NSPasteboard.general.data(forType: Self.clipType),
               let clip = try? JSONDecoder().decode(DataModel.self, from: data), let bounds = clip.bounds else { return }
         let visible = CGRect(origin: CGPoint(x: -offset.x / zoom, y: -offset.y / zoom), size: viewSize * (1 / zoom))
         let columns = Set(model.tables.flatMap(\.columns).map(\.id))

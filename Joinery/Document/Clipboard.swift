@@ -1,11 +1,7 @@
-import AppKit
 import Foundation
 
 /// Copying part of a data model and pasting it into the same one or another, by way of the pasteboard.
 extension DataModel {
-    /// The pasteboard's name for a copied part of a data model: a `DataModel` as JSON.
-    static let pasteboardType = NSPasteboard.PasteboardType("com.clarkmccauley.joinery.clip")
-
     /// A data model of `tables` (and the tables of `groups`), with their foreign keys, whichever tables those reference,
     /// the zip ties all of whose wires come too, and their groups, with only the tables copied.
     func clip(tables ids: Set<Table.ID>, groups groupIDs: Set<TableGroup.ID> = []) -> DataModel {

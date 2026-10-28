@@ -14,7 +14,6 @@ final class SessionHost: Session {
     private(set) var status = "Starting…"
     /// The port it's listening on, once it is.
     private(set) var port: UInt16?
-    var isHost: Bool { true }
 
     @ObservationIgnored private let core: HostCore
     @ObservationIgnored private weak var model: OpenModel?
@@ -75,10 +74,7 @@ final class SessionHost: Session {
     /// The link that opens the session: in a browser, the web client; pasted into Join, the app. `address` is where
     /// others reach the port, such as a tunnel's `https://…` address.
     func link(at address: String) -> String {
-        var address = address.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !address.contains("://") { address = "http://" + address }
-        while address.hasSuffix("/") { address.removeLast() }
-        return "\(address)/#token=\(token)"
+        SessionLink.link(to: address, token: token)
     }
 
     func share(cursor: CGPoint?, selection: [UUID]) {

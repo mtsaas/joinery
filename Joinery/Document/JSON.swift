@@ -1,74 +1,44 @@
 import Foundation
 
-/// A checksum of a whole replica that's kept up to date op by op, so the host can send it with every change and each
-/// client can check its copy is the host's exactly. It's the sum of a hash of each entity, so it doesn't depend on
-/// order and an entity's change only swaps its hash.
-///
-/// Each entity is hashed as its canonical JSON (`JSON.canonical`: what JavaScript's `JSON.stringify` writes, with keys
-/// sorted), in UTF-8, by two 32-bit FNV-1a hashes with different starting values. Sums wrap at 2³². Written as 16 hex
-/// digits, the first hash's sum then the second's. See docs/collaboration.md.
-struct Digest: Equatable, CustomStringConvertible {
-    private(set) var first: UInt32 = 0
-    private(set) var second: UInt32 = 0
+/// Any JSON value, as entities' fields are.
+enum JSON: Codable, Equatable {
+    case null
+    case bool(Bool)
+    case number(Double)
+    case string(String)
+    case array([JSON])
+    case object([String: JSON])
 
-    init() {}
-
-    init(_ entities: some Sequence<Replica.Entity>) {
-        for entity in entities { add(entity) }
+    var string: String? {
+        if case .string(let string) = self { string } else { nil }
     }
 
-    mutating func add(_ entity: Replica.Entity) {
-        let (a, b) = Self.hash(entity)
-        first &+= a
-        second &+= b
-    }
-
-    mutating func remove(_ entity: Replica.Entity) {
-        let (a, b) = Self.hash(entity)
-        first &-= a
-        second &-= b
-    }
-
-    var description: String { String(format: "%08x%08x", first, second) }
-
-    static func hash(_ entity: Replica.Entity) -> (UInt32, UInt32) {
-        var a: UInt32 = 2_166_136_261, b: UInt32 = 3_735_928_559
-        for byte in JSON.object(entity).canonical.utf8 {
-            a = (a ^ UInt32(byte)) &* 16_777_619
-            b = (b ^ UInt32(byte)) &* 16_777_619
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() {
+            self = .null
+        } else if let bool = try? container.decode(Bool.self) {
+            self = .bool(bool)
+        } else if let number = try? container.decode(Double.self) {
+            self = .number(number)
+        } else if let string = try? container.decode(String.self) {
+            self = .string(string)
+        } else if let array = try? container.decode([JSON].self) {
+            self = .array(array)
+        } else {
+            self = .object(try container.decode([String: JSON].self))
         }
-        return (a, b)
-    }
-}
-
-/// A replica with its digest, kept up to date as ops are applied: the copy a session's host and clients each keep of
-/// what's been confirmed.
-struct CheckedReplica: Equatable {
-    private(set) var replica: Replica
-    private(set) var digest: Digest
-
-    init(_ replica: Replica = Replica()) {
-        self.replica = replica
-        digest = Digest(replica.entities.values)
     }
 
-    /// Takes another's change as `Replica.receive` does, all of it, tidied after, or none.
-    /// - Returns: The tidying ops it applied after the change's.
-    mutating func receive(_ ops: [Replica.Op]) throws -> [Replica.Op] {
-        var trial = replica
-        let tidying = try trial.receive(ops)
-        apply(ops)
-        apply(tidying)
-        return tidying
-    }
-
-    /// Applies `ops` as `Replica.apply` does, updating the digest by the entities each changes.
-    mutating func apply(_ ops: [Replica.Op]) {
-        for op in ops {
-            let id = op.id
-            if let old = replica.entities[id] { digest.remove(old) }
-            _ = replica.apply(op)
-            if let new = replica.entities[id] { digest.add(new) }
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .null: try container.encodeNil()
+        case .bool(let bool): try container.encode(bool)
+        case .number(let number): try container.encode(number)
+        case .string(let string): try container.encode(string)
+        case .array(let array): try container.encode(array)
+        case .object(let object): try container.encode(object)
         }
     }
 }
