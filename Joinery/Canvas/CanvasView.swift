@@ -1061,6 +1061,7 @@ struct CanvasView: View {
     private var surfaceGesture: some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .canvas)
             .onChanged { value in
+                canvas.dragPointer = canvas.canvasPoint(value.location)
                 // A new press, told by where it started: anything a cancelled one left behind goes. Its end never came, so
                 // what it was for, a port it was sliding, a wire it was drawing, would hang on, and the + stay hidden.
                 if value.startLocation != pressStart {
@@ -1113,6 +1114,7 @@ struct CanvasView: View {
                 }
             }
             .onEnded { value in
+                canvas.dragPointer = nil
                 let press = self.press ?? .background
                 self.press = nil
                 pressStart = nil
@@ -1262,8 +1264,13 @@ struct CanvasView: View {
     /// `click`, and a double-click `doubleClick`, with where, in canvas points.
     private func itemGesture(_ item: CanvasController.Item, doubleClick: @escaping (CGPoint) -> Void) -> some Gesture {
         DragGesture(minimumDistance: 0, coordinateSpace: .canvas)
-            .onChanged { dragItem(item, by: $0.translation) }
-            .onEnded { dropItem(item, at: $0.location, translation: $0.translation, click: nil, doubleClick: doubleClick) }
+            .onChanged {
+                canvas.dragPointer = canvas.canvasPoint($0.location)
+                dragItem(item, by: $0.translation)
+            }
+            .onEnded {
+                canvas.dragPointer = nil
+                dropItem(item, at: $0.location, translation: $0.translation, click: nil, doubleClick: doubleClick) }
     }
 
     /// Pressing selects the item; dragging moves the selection, held to one axis while Shift is down. Shift-pressing

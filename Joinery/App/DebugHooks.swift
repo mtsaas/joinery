@@ -402,8 +402,11 @@ enum DebugHooks {
                 print("sharing:", host.status, host.links?.edit ?? "", host.links?.view ?? "")
             case "join" where words.count == 2:
                 print("join:", Library.shared.join(words[1]) ? "connecting" : "not a link")
-            case "presence" where numbers.count == 2:
-                Library.shared.open?.session?.share(cursor: CGPoint(x: numbers[0], y: numbers[1]), selection: Array(canvas.selectedTables), drag: canvas.dragOffset)
+            case "presence" where numbers.count == 2 || numbers.count == 6:
+                // The pointer at a canvas point, and if four more are given, a selection rectangle from it.
+                let marquee = numbers.count == 6 ? CGRect(x: numbers[2], y: numbers[3], width: numbers[4], height: numbers[5]) : nil
+                Library.shared.open?.session?.share(Relay.Presence(cursor: CGPoint(x: numbers[0], y: numbers[1]), selection: canvas.selectedTables,
+                                                                   drag: canvas.dragOffset, marquee: marquee))
             case "peers":
                 let session = Library.shared.open?.session
                 print("peers:", session?.status ?? "no session", (session?.peers.values.map { "\($0.name) \($0.cursor ?? [])" } ?? []).sorted())

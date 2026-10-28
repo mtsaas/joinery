@@ -142,7 +142,7 @@ extension RelaySimulation {
         #expect(try Relay.Decision(decision.body) == decision)
         let snapshot = Relay.Snapshot(digest: Array(0..<8), taken: [2: 4, 3: 1], entities: [["id": .string("a"), "kind": .string("table")]])
         #expect(try Relay.Snapshot(snapshot.body) == snapshot)
-        for presence in [Relay.Presence(cursor: [1.5, -2], selection: ["A", "B"], drag: [3, 4]), Relay.Presence(), Relay.Presence(drag: [0, 1])] {
+        for presence in [Relay.Presence(cursor: [1.5, -2], selection: ["A", "B"], drag: [3, 4], marquee: [1, 2, 3, 4]), Relay.Presence(), Relay.Presence(drag: [0, 1]), Relay.Presence(marquee: [5, 6, 7, 8])] {
             #expect(try Relay.Presence(presence.body) == presence)
         }
         // From before drags were shared: not dragging.

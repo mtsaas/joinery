@@ -223,6 +223,8 @@ enum Relay {
         var selection: [String] = []
         /// While the selection's being dragged, how far, in canvas points: shown to others before it's a change.
         var drag: [Double]?
+        /// A selection rectangle being dragged out: x, y, width and height, in canvas points.
+        var marquee: [Double]?
 
         var body: [UInt8] {
             var body: [UInt8] = []
@@ -230,32 +232,37 @@ enum Relay {
             body.appendVarint(selection.count)
             for id in selection { body.appendString(id) }
             Self.append(drag, to: &body)
+            Self.append(marquee, to: &body)
             return body
         }
 
-        init(cursor: [Double]? = nil, selection: [String] = [], drag: [Double]? = nil) {
+        init(cursor: [Double]? = nil, selection: [String] = [], drag: [Double]? = nil, marquee: [Double]? = nil) {
             self.cursor = cursor
             self.selection = selection
             self.drag = drag
+            self.marquee = marquee
         }
 
         init(_ body: [UInt8]) throws(Wire.Malformed) {
             var reader = Wire.Reader(body)
             cursor = try Self.point(&reader)
             for _ in 0..<(try reader.count()) { selection.append(try reader.string()) }
-            // Added after the rest: a presence without it isn't dragging.
+            // Added later, at the end: a presence without them isn't dragging.
             drag = reader.isAtEnd ? nil : try Self.point(&reader)
+            marquee = reader.isAtEnd ? nil : try Self.point(&reader, count: 4)
         }
 
-        /// A point, or none: a flag, then two f64s.
-        private static func append(_ point: [Double]?, to body: inout [UInt8]) {
-            body.append(point == nil ? 0 : 1)
-            for value in point ?? [] { body.append(littleEndian: value.bitPattern) }
+        /// Numbers, or none: a flag, then each as an f64.
+        private static func append(_ values: [Double]?, to body: inout [UInt8]) {
+            body.append(values == nil ? 0 : 1)
+            for value in values ?? [] { body.append(littleEndian: value.bitPattern) }
         }
 
-        private static func point(_ reader: inout Wire.Reader) throws(Wire.Malformed) -> [Double]? {
+        private static func point(_ reader: inout Wire.Reader, count: Int = 2) throws(Wire.Malformed) -> [Double]? {
             guard try reader.byte() != 0 else { return nil }
-            return [Double(bitPattern: try reader.integer()), Double(bitPattern: try reader.integer())]
+            var values: [Double] = []
+            for _ in 0..<count { values.append(Double(bitPattern: try reader.integer())) }
+            return values
         }
     }
 

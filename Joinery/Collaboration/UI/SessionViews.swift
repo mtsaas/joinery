@@ -196,6 +196,14 @@ struct PresenceLayer: View {
                             .position(canvas.viewPoint(CGPoint(x: rect.midX, y: rect.midY)))
                     }
                 }
+                if let marquee = peer.marquee, marquee.count == 4 {
+                    let shape = Rectangle()
+                    shape
+                        .fill(peer.swiftUIColor.opacity(0.08))
+                        .stroke(peer.swiftUIColor.opacity(0.7), lineWidth: 1)
+                        .frame(width: marquee[2] * canvas.zoom, height: marquee[3] * canvas.zoom)
+                        .position(canvas.viewPoint(CGPoint(x: marquee[0] + marquee[2] / 2, y: marquee[1] + marquee[3] / 2)))
+                }
                 if let cursor = peer.cursor, cursor.count == 2 {
                     Pointer(peer: peer)
                         .offset(x: canvas.viewPoint(CGPoint(x: cursor[0], y: cursor[1])).x, y: canvas.viewPoint(CGPoint(x: cursor[0], y: cursor[1])).y)

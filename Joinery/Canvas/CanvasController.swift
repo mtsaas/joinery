@@ -368,6 +368,8 @@ final class CanvasController {
     var isStrokeFinished = false
     /// The selection rectangle being dragged out, in canvas points.
     var marquee: CGRect?
+    /// Where the pointer is while a button's down, in canvas points: hovering isn't heard then.
+    var dragPointer: CGPoint?
     /// What a drag that started on empty canvas (or on a wire) is doing.
     var backgroundDrag: BackgroundDrag?
 

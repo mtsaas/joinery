@@ -43,8 +43,8 @@ final class SessionHost: Session {
         connect()
     }
 
-    func share(cursor: CGPoint?, selection: [UUID], drag: CGPoint?) {
-        perform(core.share(Relay.Presence(cursor: cursor, selection: selection, drag: drag)))
+    func share(_ presence: Relay.Presence) {
+        perform(core.share(presence))
     }
 
     func close() {

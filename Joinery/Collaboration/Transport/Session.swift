@@ -7,8 +7,8 @@ protocol Session: AnyObject, Observable {
     var peers: [String: Peer] { get }
     /// What to show about it: hosting, connected, or why it ended.
     var status: String { get }
-    /// Shares where this person's pointer is on the canvas, what they have selected, and how far they're dragging it.
-    func share(cursor: CGPoint?, selection: [UUID], drag: CGPoint?)
+    /// Shares where this person's pointer is on the canvas, what they have selected, and what they're dragging.
+    func share(_ presence: Relay.Presence)
     /// Ends it: hosting stops for everyone; joined, this person leaves.
     func close()
 }
@@ -39,16 +39,20 @@ struct Peer: Identifiable, Equatable {
     var selection: [String]?
     /// How far they're dragging their selection, in canvas points, before letting go makes it a change.
     var drag: [Double]?
+    /// The selection rectangle they're dragging out, as x, y, width and height in canvas points.
+    var marquee: [Double]?
 
     mutating func show(_ presence: Relay.Presence) {
         cursor = presence.cursor
         selection = presence.selection
         drag = presence.drag
+        marquee = presence.marquee
     }
 }
 
 extension Relay.Presence {
-    init(cursor: CGPoint?, selection: [UUID], drag: CGPoint?) {
-        self.init(cursor: cursor.map { [$0.x, $0.y] }, selection: selection.map(\.uuidString), drag: drag.map { [$0.x, $0.y] })
+    init(cursor: CGPoint?, selection: some Collection<UUID>, drag: CGPoint? = nil, marquee: CGRect? = nil) {
+        self.init(cursor: cursor.map { [$0.x, $0.y] }, selection: selection.map(\.uuidString), drag: drag.map { [$0.x, $0.y] },
+                  marquee: marquee.map { [$0.minX, $0.minY, $0.width, $0.height] })
     }
 }

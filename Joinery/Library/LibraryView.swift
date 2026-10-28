@@ -57,13 +57,6 @@ struct ModelEditor: View {
     @State private var canvas = CanvasController()
     @State private var showsHistory = false
     @State private var showsSharing = false
-    /// When this person's pointer was last shared, to share it at most twenty times a second.
-    @State private var lastShared = Date.distantPast
-    /// Where this person's pointer is on the canvas, as last shared.
-    @State private var sharedCursor: CGPoint?
-    /// Where the pointer was when a drag began: the hover isn't heard while a button's down, so during a drag the pointer
-    /// is shared as here plus the drag.
-    @State private var dragStart: CGPoint?
     /// Where the canvas is in the window: it reaches up under the toolbar, so its views' origins aren't its own.
     @State private var canvasOrigin = CGPoint.zero
     /// An earlier version shown instead of the model, read-only, from the version history.
@@ -71,17 +64,6 @@ struct ModelEditor: View {
     /// With an earlier version shown: it, it and now together with the changes marked, or now.
     @State private var comparison = Comparison.changes
     @Environment(\.undoManager) private var undoManager
-
-    /// Where this person's pointer is, what they have selected and any drag of it, for others in a session: at most twenty
-    /// times a second if `throttled`.
-    private func sharePresence(throttled: Bool = false) {
-        guard let session = open.session else { return }
-        if throttled {
-            guard Date.now.timeIntervalSince(lastShared) > 0.05 else { return }
-            lastShared = .now
-        }
-        session.share(cursor: sharedCursor, selection: Array(canvas.selectedTables), drag: canvas.dragOffset)
-    }
 
     var body: some View {
         // Compared with an earlier version, or in a review with how it was before the change, it can't be changed:
@@ -174,22 +156,7 @@ struct ModelEditor: View {
                 PresenceLayer(open: open, tables: model.wrappedValue.tables, canvas: canvas)
                     .ignoresSafeArea(edges: .top)
             }
-            .onContinuousHover(coordinateSpace: .global) { phase in
-                if case .active(let location) = phase {
-                    sharedCursor = canvas.canvasPoint(location - canvasOrigin)
-                    sharePresence(throttled: true)
-                } else {
-                    sharedCursor = nil
-                    sharePresence()
-                }
-            }
-            .onChange(of: canvas.selectedTables) { sharePresence() }
-            .onChange(of: canvas.dragOffset) { old, new in
-                if old == nil { dragStart = sharedCursor }
-                if let new, let dragStart { sharedCursor = dragStart + new }
-                // Letting go is always sent, so the outline others see doesn't stay behind.
-                sharePresence(throttled: new != nil)
-            }
+            .modifier(PresenceSharing(open: open, canvas: canvas, canvasOrigin: canvasOrigin))
             // At the bottom, clear of the version history's popover.
             .overlay(alignment: .bottom) {
                 if let preview {
@@ -359,5 +326,49 @@ private enum Comparison: CaseIterable {
         case .changes: "Changes"
         case .now: isReview ? "After" : "Now"
         }
+    }
+}
+
+/// Shares this person's pointer, selection and what they're dragging with the session the model's in, if any.
+private struct PresenceSharing: ViewModifier {
+    let open: OpenModel
+    let canvas: CanvasController
+    /// Where the canvas is in the window: it reaches up under the toolbar, so its views' origins aren't its own.
+    let canvasOrigin: CGPoint
+    /// Where the pointer last hovered, in canvas points.
+    @State private var hovered: CGPoint?
+    /// When presence was last shared, to share it at most twenty times a second.
+    @State private var lastShared = Date.distantPast
+
+    func body(content: Content) -> some View {
+        content
+            .onContinuousHover(coordinateSpace: .global) { phase in
+                if case .active(let location) = phase {
+                    hovered = canvas.canvasPoint(location - canvasOrigin)
+                    share(throttled: true)
+                } else {
+                    hovered = nil
+                    share()
+                }
+            }
+            .onChange(of: canvas.selectedTables) { share() }
+            .onChange(of: canvas.dragPointer) { _, new in
+                // Hovering isn't heard while a button's down; afterwards it picks up from where the drag let go.
+                if let new { hovered = new }
+                share(throttled: true)
+            }
+            // Letting go is always sent, so what others see of a drag doesn't stay behind.
+            .onChange(of: canvas.dragOffset) { share(throttled: canvas.dragOffset != nil) }
+            .onChange(of: canvas.marquee) { share(throttled: canvas.marquee != nil) }
+    }
+
+    private func share(throttled: Bool = false) {
+        guard let session = open.session else { return }
+        if throttled {
+            guard Date.now.timeIntervalSince(lastShared) > 0.05 else { return }
+            lastShared = .now
+        }
+        session.share(Relay.Presence(cursor: canvas.dragPointer ?? hovered, selection: canvas.selectedTables,
+                                     drag: canvas.dragOffset, marquee: canvas.marquee))
     }
 }
