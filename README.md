@@ -63,6 +63,21 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
 Each wire takes the color of the table it references, and FK cells match it. Wires leave sockets and pass through
 ties and bend points square to them.
 
+## Live sessions
+
+Share a data model live and others can edit it with you, in Joinery or in a browser.
+
+- **Share:** the people button at the top right of the editor. Start Sharing serves the open data model on port 8724 of this Mac, for this Mac only.
+- **Exposing it:** expose the port with a tunnel, such as `cloudflared tunnel --url http://localhost:8724` or `ngrok http 8724`. Paste the tunnel's address into the panel, then copy the link it makes.
+- **The link in a browser** opens the data model in Joinery's web client. You can pan, zoom, move and rename tables there.
+- **The link in Joinery:** paste it into Join in the library's toolbar. The data model opens in a Shared collection and stays there, as it was, after the session.
+- **Seeing each other:** everyone's pointer shows with their name, and what they've selected is ringed in their color. The share button shows who's here.
+- **Undo:** ⌘Z undoes only your own changes, even when others have changed things since.
+- **Conflicts:** if your change refers to something that's just been deleted, it's taken back and you're told.
+- **The host's copy** is the one that's saved, with its version history. Stopping sharing, or closing the data model, ends the session.
+
+`docs/collaboration.md` describes the protocol, enough to write another client. The token in the link is the only thing between the internet and editing, so share it as you would a password.
+
 ## AI assistants (MCP)
 
 While Joinery is open it runs an MCP server at `http://127.0.0.1:8723/mcp`, reachable only from this Mac. An assistant connected to it can read and edit the data model open in the window. Changes show up as they're made, save themselves, and undo with ⌘Z. Before an assistant's first change in a while, a version is kept to go back to (see Version history).
@@ -138,6 +153,7 @@ Joinery/
   Document/    The data model (Codable JSON, .joinery), its edits, reading and writing files
   Examples/    The bundled example data models
   Debug/       Routing feedback mode, frame-rate readout, made-up data models for the scale test (Debug builds only)
+  Collaboration/ Live sessions: the host, the Mac and web clients, and the WebSocket they speak
   MCP/         The MCP server for AI assistants, and its data model tools
   Canvas/      Canvas view, table drawing, routing, wire physics, zip tying
 JoineryTests/  Swift Testing: physics, zip ties and bend points, type parsing, data model repair, library file operations

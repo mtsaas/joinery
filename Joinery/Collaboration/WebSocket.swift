@@ -44,7 +44,8 @@ final class SocketPeer {
 
     private func receive() {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 1 << 16) { [weak self] data, _, isComplete, error in
-            MainActor.assumeIsolated {
+            // On the main actor's own turn, not the network's callback, so what changes is drawn.
+            Task { @MainActor in
                 guard let self, !self.isClosed else { return }
                 if let data { self.buffer += data }
                 self.isUpgraded ? self.readFrames() : self.readRequest()

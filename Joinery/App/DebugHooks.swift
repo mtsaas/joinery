@@ -390,6 +390,30 @@ enum DebugHooks {
                 case "paste": canvas.paste(into: &document.wrappedValue)
                 default: break
                 }
+            case "share":
+                // Hosts a session on the open model, on JOINERY_SHARE_PORT with JOINERY_SHARE_TOKEN if given.
+                guard let open = Library.shared.open else { break }
+                do {
+                    let host = try SessionHost(model: open, port: environment["JOINERY_SHARE_PORT"].flatMap(UInt16.init) ?? SessionHost.defaultPort,
+                                               token: environment["JOINERY_SHARE_TOKEN"] ?? SessionHost.newToken())
+                    open.session = host
+                    try? await Task.sleep(for: .seconds(0.3))
+                    print("sharing:", host.status, host.link(at: "localhost:\(host.port ?? 0)"))
+                } catch { print("share failed:", error.localizedDescription) }
+            case "join" where words.count == 2:
+                print("join:", Library.shared.join(words[1]) ? "connecting" : "not a link")
+            case "presence" where numbers.count == 2:
+                Library.shared.open?.session?.share(cursor: CGPoint(x: numbers[0], y: numbers[1]), selection: Array(canvas.selectedTables))
+            case "peers":
+                let session = Library.shared.open?.session
+                print("peers:", session?.status ?? "no session", (session?.peers.values.map { "\($0.name) \($0.cursor ?? [])" } ?? []).sorted())
+            case "share-panel":
+                NotificationCenter.default.post(name: .showSharing, object: nil)
+            case "join-panel":
+                // Back to the library, with the Join popover open.
+                Library.shared.selection = nil
+                try? await Task.sleep(for: .seconds(0.5))
+                NotificationCenter.default.post(name: .showJoin, object: nil)
             case "undo", "redo":
                 // The window's own undo, as ⌘Z and ⇧⌘Z would.
                 let manager = Library.shared.open?.undoManager

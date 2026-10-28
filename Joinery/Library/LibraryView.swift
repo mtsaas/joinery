@@ -56,6 +56,11 @@ struct ModelEditor: View {
     let close: () -> Void
     @State private var canvas = CanvasController()
     @State private var showsHistory = false
+    @State private var showsSharing = false
+    /// When this person's pointer was last shared, to share it at most twenty times a second.
+    @State private var lastShared = Date.distantPast
+    /// Where this person's pointer is on the canvas, as last shared.
+    @State private var sharedCursor: CGPoint?
     /// An earlier version shown instead of the model, read-only, from the version history.
     @State private var preview: VersionHistory.Preview?
     /// With an earlier version shown: it, it and now together with the changes marked, or now.
@@ -126,6 +131,13 @@ struct ModelEditor: View {
                     .disabled(isComparing)
                 }
             }
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showsSharing.toggle() } label: { ShareLabel(open: open) }
+                    .help(open.session == nil ? "Share this data model live, for others to edit with you" : "Who's here, and how to invite others")
+                    .popover(isPresented: $showsSharing, arrowEdge: .bottom) { SharePanel(open: open) }
+                }
+            }
             .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
             // For the Window menu and Mission Control; shown by `ModelTitle` instead, to be renamed in place.
             .navigationTitle(open.name)
@@ -140,6 +152,22 @@ struct ModelEditor: View {
                         .padding(.top, 64)
                 }
             }
+            // Everyone else in a session: their pointers and selections.
+            .overlay {
+                PresenceLayer(open: open, tables: model.wrappedValue.tables, canvas: canvas)
+                    .ignoresSafeArea(edges: .top)
+            }
+            .onContinuousHover { phase in
+                if case .active(let location) = phase {
+                    sharedCursor = canvas.canvasPoint(location)
+                    guard Date.now.timeIntervalSince(lastShared) > 0.05 else { return }
+                    lastShared = .now
+                } else {
+                    sharedCursor = nil
+                }
+                open.session?.share(cursor: sharedCursor, selection: Array(canvas.selectedTables))
+            }
+            .onChange(of: canvas.selectedTables) { open.session?.share(cursor: sharedCursor, selection: Array(canvas.selectedTables)) }
             // At the bottom, clear of the version history's popover.
             .overlay(alignment: .bottom) {
                 if let preview {
@@ -172,6 +200,7 @@ struct ModelEditor: View {
             // Not cancelled if a step opens another model, closing this editor.
             .task { Task { await DebugHooks.script(model, canvas: canvas) } }
             .onReceive(NotificationCenter.default.publisher(for: .pickVersion)) { _ in showsHistory = true }
+            .onReceive(NotificationCenter.default.publisher(for: .showSharing)) { _ in showsSharing = true }
             #endif
     }
 }

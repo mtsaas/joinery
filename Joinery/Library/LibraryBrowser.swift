@@ -26,6 +26,7 @@ struct LibraryBrowser: View {
     @State private var collectionToTrash: Library.Collection?
     @State private var previews = ModelPreviews()
     @State private var layouts = TextLayouts()
+    @State private var showsJoin = false
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columns) {
@@ -218,9 +219,17 @@ struct LibraryBrowser: View {
             return .handled
         }
         .onDeleteCommand { if let highlighted { library.trash(highlighted) } }
+        #if DEBUG
+        .onReceive(NotificationCenter.default.publisher(for: .showJoin)) { _ in showsJoin = true }
+        #endif
         .toolbar {
             // At the trailing end, with the search, as in Freeform.
             ToolbarSpacer(.flexible)
+            ToolbarItem(placement: .primaryAction) {
+                Button("Join", systemImage: "person.2.badge.plus") { showsJoin.toggle() }
+                    .help("Join a data model someone is sharing, from their link")
+                    .popover(isPresented: $showsJoin, arrowEdge: .bottom) { JoinPanel() }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: selectedCollection) }
                     .help("New data model (⌘N)")

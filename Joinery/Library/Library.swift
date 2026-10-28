@@ -140,7 +140,7 @@ final class Library {
     // MARK: Sessions
 
     /// A session being joined, until it's let in and its model is open.
-    private var joining: SessionClient?
+    private(set) var joining: SessionClient?
 
     /// Joins the session a link points to: once let in, its model is kept in the Shared collection, opened, and
     /// changes to it are shared.

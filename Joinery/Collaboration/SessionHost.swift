@@ -40,7 +40,7 @@ final class SessionHost: Session {
             MainActor.assumeIsolated { self?.accept(SocketPeer(connection, page: page)) }
         }
         listener.stateUpdateHandler = { [weak self] state in
-            MainActor.assumeIsolated {
+            Task { @MainActor in
                 guard let self else { return }
                 switch state {
                 case .ready:

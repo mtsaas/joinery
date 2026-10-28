@@ -16,6 +16,7 @@
     }
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   html, body { margin: 0; height: 100%; background: var(--canvas); color: var(--text); overflow: hidden;
     font: 13px -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
   svg { display: block; width: 100vw; height: 100vh; touch-action: none; cursor: default; user-select: none; }
@@ -69,7 +70,8 @@ const svg = $("canvas"), world = $("world");
 const ns = "http://www.w3.org/2000/svg";
 
 let confirmed = new Map(), pending = [], shown = new Map(), you = null, cseq = 0;
-let peers = new Map(), view = { x: 0, y: 0, zoom: 1 }, fitted = false, drag = null;
+// Until someone pans or zooms, the view keeps the whole model in it.
+let peers = new Map(), view = { x: 0, y: 0, zoom: 1 }, moved = false, drag = null;
 
 // MARK: State
 
@@ -175,7 +177,7 @@ function render() {
       fill: "none", stroke: COLORS[peer.color] || "gray", "stroke-width": 2 }, g));
   }
   renderCursors();
-  if (!fitted && tables.length) fit(tables);
+  if (!moved && tables.length) fit(tables);
   place();
 }
 
@@ -202,12 +204,12 @@ function renderCursors() {
 }
 
 function fit(tables) {
+  if (innerWidth < 100 || innerHeight < 100) return;
   const xs = tables.map(t => t.position[0]), ys = tables.map(t => t.position[1]);
   const left = Math.min(...xs), top = Math.min(...ys), right = Math.max(...xs) + W, bottom = Math.max(...tables.map(t => t.position[1] + height(t)));
-  view.zoom = Math.min(1.5, Math.min((innerWidth - 80) / (right - left), (innerHeight - 140) / (bottom - top)));
+  view.zoom = Math.max(.1, Math.min(1.5, (innerWidth - 80) / (right - left), (innerHeight - 140) / (bottom - top)));
   view.x = (innerWidth - (right - left) * view.zoom) / 2 - left * view.zoom;
   view.y = 70 + (innerHeight - 110 - (bottom - top) * view.zoom) / 2 - top * view.zoom;
-  fitted = true;
 }
 function place() {
   world.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.zoom})`);
@@ -227,6 +229,7 @@ function sharePresence(cursor) {
 }
 svg.addEventListener("pointerdown", e => {
   const id = e.target.dataset && e.target.dataset.table;
+  moved = true;
   svg.setPointerCapture(e.pointerId);
   if (id) {
     selection = [id];
@@ -239,7 +242,7 @@ svg.addEventListener("pointerdown", e => {
 });
 svg.addEventListener("pointermove", e => {
   const cursor = toCanvas(e);
-  if (drag && drag.kind === "pan") { view.x = e.clientX - drag.start[0]; view.y = e.clientY - drag.start[1]; place(); renderCursors(); }
+  if (drag && drag.kind === "pan") { moved = true; view.x = e.clientX - drag.start[0]; view.y = e.clientY - drag.start[1]; place(); renderCursors(); }
   else if (drag) { drag.dx = Math.round(cursor[0] - drag.start[0]); drag.dy = Math.round(cursor[1] - drag.start[1]); render(); }
   sharePresence(cursor);
 });
@@ -260,6 +263,7 @@ svg.addEventListener("dblclick", e => {
 });
 svg.addEventListener("wheel", e => {
   e.preventDefault();
+  moved = true;
   if (e.ctrlKey || e.metaKey) {
     const zoom = Math.min(4, Math.max(.1, view.zoom * Math.exp(-e.deltaY * .01)));
     view.x = e.clientX - (e.clientX - view.x) * zoom / view.zoom; view.y = e.clientY - (e.clientY - view.y) * zoom / view.zoom;
@@ -279,7 +283,8 @@ function toast(message) {
 function connect() {
   const token = new URLSearchParams(location.hash.slice(1)).get("token");
   if (!token) { $("status").textContent = "This link has no token. Ask for the whole link."; return; }
-  let name = localStorage.getItem("joinery.name");
+  let name = new URLSearchParams(location.hash.slice(1)).get("name");
+  try { name = name || localStorage.getItem("joinery.name"); } catch {}
   if (!name) { name = (prompt("Your name, for others to see", "") || "").trim() || "Guest"; try { localStorage.setItem("joinery.name", name); } catch {} }
   socket = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/");
   socket.onopen = () => send({ type: "hello", protocol: 1, token, name });
@@ -302,7 +307,7 @@ function connect() {
   };
   socket.onclose = () => { if (you) $("status").textContent = "The session has ended."; else if (!$("status").textContent.startsWith("That")) $("status").textContent = "Couldn't connect."; you = null; };
 }
-addEventListener("resize", () => { place(); });
+addEventListener("resize", () => moved ? place() : render());
 connect();
 </script>
 </body>
