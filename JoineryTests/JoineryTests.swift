@@ -1340,7 +1340,7 @@ struct JoineryTests {
         #expect(guest.model.tables.contains { $0.name == "from_guest" } && guest.model.tables.count == hosted.model.tables.count)
 
         // Presence reaches the host.
-        client.share(cursor: CGPoint(x: 12, y: 34), selection: [hosted.model.tables[0].id])
+        client.share(cursor: CGPoint(x: 12, y: 34), selection: [hosted.model.tables[0].id], drag: nil)
         try await until { host.peers.values.first?.cursor == [12, 34] }
         client.close()
         try await until { host.peers.isEmpty }
@@ -1461,15 +1461,18 @@ struct JoineryTests {
         // Everyone's color is their own, and the same to everyone.
         #expect(Set(b.peers.values.map(\.color)).count == 2 && a.peers[hostID]?.color == "blue")
         let table = hosted.model.tables[0].id
-        a.share(cursor: CGPoint(x: 10, y: 20), selection: [table])
+        a.share(cursor: CGPoint(x: 10, y: 20), selection: [table], drag: nil)
         try await until { b.peers.values.contains { $0.cursor == [10, 20] && $0.selection == [table.uuidString] } }
         #expect(host.peers.values.contains { $0.cursor == [10, 20] })
         // The host's own pointer too.
-        host.share(cursor: CGPoint(x: 5, y: 6), selection: [])
+        host.share(cursor: CGPoint(x: 5, y: 6), selection: [], drag: nil)
         try await until { a.peers[hostID]?.cursor == [5, 6] && b.peers[hostID]?.cursor == [5, 6] }
+        // Dragging: how far, before it's a change.
+        a.share(cursor: CGPoint(x: 30, y: 40), selection: [table], drag: CGPoint(x: 20, y: 20))
+        try await until { b.peers.values.contains { $0.drag == [20, 20] } }
         // Off the canvas: no pointer.
-        a.share(cursor: nil, selection: [])
-        try await until { b.peers.values.contains { $0.id != hostID && $0.cursor == nil && $0.selection == [] } }
+        a.share(cursor: nil, selection: [], drag: nil)
+        try await until { b.peers.values.contains { $0.id != hostID && $0.cursor == nil && $0.selection == [] && $0.drag == nil } }
         // Leaving: gone for everyone.
         a.close()
         try await until { host.peers.count == 1 && b.peers.count == 1 }

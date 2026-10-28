@@ -142,6 +142,11 @@ extension RelaySimulation {
         #expect(try Relay.Decision(decision.body) == decision)
         let snapshot = Relay.Snapshot(digest: Array(0..<8), taken: [2: 4, 3: 1], entities: [["id": .string("a"), "kind": .string("table")]])
         #expect(try Relay.Snapshot(snapshot.body) == snapshot)
+        for presence in [Relay.Presence(cursor: [1.5, -2], selection: ["A", "B"], drag: [3, 4]), Relay.Presence(), Relay.Presence(drag: [0, 1])] {
+            #expect(try Relay.Presence(presence.body) == presence)
+        }
+        // From before drags were shared: not dragging.
+        #expect(try Relay.Presence(Array(Relay.Presence(cursor: [1, 2]).body.dropLast())).drag == nil)
         // A relay stamps the sender into the header and changes nothing else.
         let frame = Wire.Frame(.change, seq: 3, body: [7, 7]).bytes
         let stamped = Wire.stamp(frame, peer: 0x0102_0304)

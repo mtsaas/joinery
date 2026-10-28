@@ -7,8 +7,8 @@ protocol Session: AnyObject, Observable {
     var peers: [String: Peer] { get }
     /// What to show about it: hosting, connected, or why it ended.
     var status: String { get }
-    /// Shares where this person's pointer is on the canvas, and what they have selected.
-    func share(cursor: CGPoint?, selection: [UUID])
+    /// Shares where this person's pointer is on the canvas, what they have selected, and how far they're dragging it.
+    func share(cursor: CGPoint?, selection: [UUID], drag: CGPoint?)
     /// Ends it: hosting stops for everyone; joined, this person leaves.
     func close()
 }
@@ -37,9 +37,18 @@ struct Peer: Identifiable, Equatable {
     var cursor: [Double]?
     /// The IDs of what they have selected.
     var selection: [String]?
+    /// How far they're dragging their selection, in canvas points, before letting go makes it a change.
+    var drag: [Double]?
 
     mutating func show(_ presence: Relay.Presence) {
         cursor = presence.cursor
         selection = presence.selection
+        drag = presence.drag
+    }
+}
+
+extension Relay.Presence {
+    init(cursor: CGPoint?, selection: [UUID], drag: CGPoint?) {
+        self.init(cursor: cursor.map { [$0.x, $0.y] }, selection: selection.map(\.uuidString), drag: drag.map { [$0.x, $0.y] })
     }
 }

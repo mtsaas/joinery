@@ -403,7 +403,7 @@ enum DebugHooks {
             case "join" where words.count == 2:
                 print("join:", Library.shared.join(words[1]) ? "connecting" : "not a link")
             case "presence" where numbers.count == 2:
-                Library.shared.open?.session?.share(cursor: CGPoint(x: numbers[0], y: numbers[1]), selection: Array(canvas.selectedTables))
+                Library.shared.open?.session?.share(cursor: CGPoint(x: numbers[0], y: numbers[1]), selection: Array(canvas.selectedTables), drag: canvas.dragOffset)
             case "peers":
                 let session = Library.shared.open?.session
                 print("peers:", session?.status ?? "no session", (session?.peers.values.map { "\($0.name) \($0.cursor ?? [])" } ?? []).sorted())

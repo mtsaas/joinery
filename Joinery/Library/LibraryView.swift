@@ -61,6 +61,9 @@ struct ModelEditor: View {
     @State private var lastShared = Date.distantPast
     /// Where this person's pointer is on the canvas, as last shared.
     @State private var sharedCursor: CGPoint?
+    /// Where the pointer was when a drag began: the hover isn't heard while a button's down, so during a drag the pointer
+    /// is shared as here plus the drag.
+    @State private var dragStart: CGPoint?
     /// Where the canvas is in the window: it reaches up under the toolbar, so its views' origins aren't its own.
     @State private var canvasOrigin = CGPoint.zero
     /// An earlier version shown instead of the model, read-only, from the version history.
@@ -68,6 +71,17 @@ struct ModelEditor: View {
     /// With an earlier version shown: it, it and now together with the changes marked, or now.
     @State private var comparison = Comparison.changes
     @Environment(\.undoManager) private var undoManager
+
+    /// Where this person's pointer is, what they have selected and any drag of it, for others in a session: at most twenty
+    /// times a second if `throttled`.
+    private func sharePresence(throttled: Bool = false) {
+        guard let session = open.session else { return }
+        if throttled {
+            guard Date.now.timeIntervalSince(lastShared) > 0.05 else { return }
+            lastShared = .now
+        }
+        session.share(cursor: sharedCursor, selection: Array(canvas.selectedTables), drag: canvas.dragOffset)
+    }
 
     var body: some View {
         // Compared with an earlier version, or in a review with how it was before the change, it can't be changed:
@@ -163,14 +177,19 @@ struct ModelEditor: View {
             .onContinuousHover(coordinateSpace: .global) { phase in
                 if case .active(let location) = phase {
                     sharedCursor = canvas.canvasPoint(location - canvasOrigin)
-                    guard Date.now.timeIntervalSince(lastShared) > 0.05 else { return }
-                    lastShared = .now
+                    sharePresence(throttled: true)
                 } else {
                     sharedCursor = nil
+                    sharePresence()
                 }
-                open.session?.share(cursor: sharedCursor, selection: Array(canvas.selectedTables))
             }
-            .onChange(of: canvas.selectedTables) { open.session?.share(cursor: sharedCursor, selection: Array(canvas.selectedTables)) }
+            .onChange(of: canvas.selectedTables) { sharePresence() }
+            .onChange(of: canvas.dragOffset) { old, new in
+                if old == nil { dragStart = sharedCursor }
+                if let new, let dragStart { sharedCursor = dragStart + new }
+                // Letting go is always sent, so the outline others see doesn't stay behind.
+                sharePresence(throttled: new != nil)
+            }
             // At the bottom, clear of the version history's popover.
             .overlay(alignment: .bottom) {
                 if let preview {

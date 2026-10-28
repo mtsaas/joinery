@@ -221,26 +221,41 @@ enum Relay {
         var cursor: [Double]?
         /// The IDs of what's selected.
         var selection: [String] = []
+        /// While the selection's being dragged, how far, in canvas points: shown to others before it's a change.
+        var drag: [Double]?
 
         var body: [UInt8] {
-            var body: [UInt8] = [cursor == nil ? 0 : 1]
-            for value in cursor ?? [] { body.append(littleEndian: value.bitPattern) }
+            var body: [UInt8] = []
+            Self.append(cursor, to: &body)
             body.appendVarint(selection.count)
             for id in selection { body.appendString(id) }
+            Self.append(drag, to: &body)
             return body
         }
 
-        init(cursor: [Double]? = nil, selection: [String] = []) {
+        init(cursor: [Double]? = nil, selection: [String] = [], drag: [Double]? = nil) {
             self.cursor = cursor
             self.selection = selection
+            self.drag = drag
         }
 
         init(_ body: [UInt8]) throws(Wire.Malformed) {
             var reader = Wire.Reader(body)
-            if try reader.byte() != 0 {
-                cursor = [Double(bitPattern: try reader.integer()), Double(bitPattern: try reader.integer())]
-            }
+            cursor = try Self.point(&reader)
             for _ in 0..<(try reader.count()) { selection.append(try reader.string()) }
+            // Added after the rest: a presence without it isn't dragging.
+            drag = reader.isAtEnd ? nil : try Self.point(&reader)
+        }
+
+        /// A point, or none: a flag, then two f64s.
+        private static func append(_ point: [Double]?, to body: inout [UInt8]) {
+            body.append(point == nil ? 0 : 1)
+            for value in point ?? [] { body.append(littleEndian: value.bitPattern) }
+        }
+
+        private static func point(_ reader: inout Wire.Reader) throws(Wire.Malformed) -> [Double]? {
+            guard try reader.byte() != 0 else { return nil }
+            return [Double(bitPattern: try reader.integer()), Double(bitPattern: try reader.integer())]
         }
     }
 
