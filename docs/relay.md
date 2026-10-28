@@ -172,7 +172,38 @@ buffer for its `hello`, freed once it joins.
 When the inbox can't fit a guest's next frame, the relay stops reading from that guest until the host catches up. TCP
 then slows the guest down, and nothing grows.
 
-## Links and secrets
+## Versions
+
+There are two version numbers, because there are two readers.
+
+**The wire version** is the header's first byte, and it's the only one the relay reads. It covers the header's layout
+and the kinds of message. The relay accepts every wire version it knows and treats bodies the same in all of them, so
+a relay doesn't change when the app does. If the relay doesn't know a client's wire version, its `hello` reply says
+which ones it speaks, and the app says that relay needs updating.
+
+**The room version** covers everything inside the encryption: the ops encoding, the model's fields and what they
+mean. A room's version is its host's, because the host is the authority. The host puts it in the room's info, which
+the relay stores without reading and hands to each guest with its limits. Then:
+
+- **A guest that knows the room's version joins,** and reads and writes that version's bytes, even if it knows newer
+  ones. Each app speaks its own version and the ones before it, back to a floor we raise rarely.
+- **A guest older than the room** can't join, and says "This session needs a newer Joinery". Sparkle makes updating one
+  click, and released copies usually update before it matters.
+- **A guest newer than the room but past its floor** can't join either, and says the host needs a newer Joinery.
+
+Most changes don't need a new room version:
+
+- **A new field** is written by name (field code 0), which every version already reads and keeps, until the room
+  version that gives it a code. An old client keeps a field it doesn't understand, and since edits are per field, it
+  doesn't drop the field when it changes another one. This is why each room version has its own field table: an
+  encoder uses only the codes its room's version knows, because an older reader can't turn a code it's never seen
+  back into a name.
+- **A new kind of entity, a changed meaning, or a changed encoding** needs a new room version.
+
+The web client comes from the relay, so it has to speak every room version that hosts still use. In practice that's
+the newest few, and it follows the same rules as the app.
+
+
 
 Sharing starts with the host's `hello` asking for a room. The relay makes one and replies with its ID, its limits, and
 the host, guest and view secrets, keeping only their hashes. The host makes the room key itself and never sends it to
