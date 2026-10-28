@@ -390,6 +390,11 @@ enum DebugHooks {
                 case "paste": canvas.paste(into: &document.wrappedValue)
                 default: break
                 }
+            case "undo", "redo":
+                // The window's own undo, as ⌘Z and ⇧⌘Z would.
+                let manager = Library.shared.open?.undoManager
+                words[0] == "undo" ? manager?.undo() : manager?.redo()
+                print("\(words[0]): can undo \(manager?.canUndo ?? false), can redo \(manager?.canRedo ?? false)")
             case "menu" where words.count > 1:
                 // Chooses a menu item by its title, as a click would.
                 let title = words.dropFirst().joined(separator: " ")

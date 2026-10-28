@@ -298,6 +298,8 @@ final class OpenModel {
     /// Where it is; it can be renamed while open.
     private(set) var url: URL
     private(set) var model: DataModel
+    /// The model as entities, which changes are made to, as ops, so each can be undone on its own.
+    @ObservationIgnored private var replica: Replica
     /// The window's, set by the editor, for registering changes.
     @ObservationIgnored weak var undoManager: UndoManager?
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
@@ -308,7 +310,9 @@ final class OpenModel {
     init(url: URL) throws {
         self.url = url
         history = History(of: url)
-        model = try DataModel(contentsOf: url)
+        let model = try DataModel(contentsOf: url)
+        self.model = model
+        replica = Replica(model)
         // A file from before packages becomes one, to keep versions in.
         if !url.isPackage { try model.write(to: url) }
         baseline = try? DataModel(contentsOf: baselineURL)
@@ -393,11 +397,34 @@ final class OpenModel {
         } else if history.versions.first.map({ Date.now.timeIntervalSince($0.date) > 3600 }) ?? true {
             saveVersion("While editing")
         }
-        let old = model
+        let next = Replica(new, keeping: replica, was: model)
+        registerUndo(replica.apply(replica.ops(to: next)))
         model = new
+        scheduleSave()
+    }
+
+    /// Applies `ops`, as undoing or redoing does: only those fields and entities change, so changes since that aren't
+    /// part of it stay. What's left dangling (a key to a column gone, say) is tidied up, and that's undone with them.
+    private func apply(_ ops: [Replica.Op]) {
+        var undo = replica.apply(ops)
+        let applied = replica.model
+        var repaired = applied
+        repaired.repair()
+        if repaired != applied { undo = replica.apply(replica.ops(to: Replica(repaired, keeping: replica, was: applied))) + undo }
+        model = repaired
+        registerUndo(undo)
+        scheduleSave()
+    }
+
+    /// Registers `undo` to be applied: as the undo while changing or redoing, as the redo while undoing.
+    private func registerUndo(_ undo: [Replica.Op]) {
+        guard !undo.isEmpty else { return }
         undoManager?.registerUndo(withTarget: self) { target in
-            MainActor.assumeIsolated { target.change(to: old) }
+            MainActor.assumeIsolated { target.apply(undo) }
         }
+    }
+
+    private func scheduleSave() {
         pendingSave?.cancel()
         pendingSave = Task {
             try? await Task.sleep(for: .milliseconds(500))

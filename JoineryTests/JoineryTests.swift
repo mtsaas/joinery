@@ -1096,4 +1096,148 @@ struct JoineryTests {
         #expect(report.contains("- refunds.order_id → orders.id"))
         #expect(SchemaDiff(from: before, to: before).report == "No changes since the baseline.")
     }
+
+    // MARK: Replication and undo
+
+    private func exampleModels() throws -> [DataModel] {
+        let urls = Bundle.main.urls(forResourcesWithExtension: "joinery", subdirectory: nil) ?? []
+        #expect(urls.count >= 5)
+        return try urls.map { try DataModel(contentsOf: $0) }
+    }
+
+    @Test func everyExampleSurvivesBeingMadeEntitiesAndBack() throws {
+        for model in try exampleModels() {
+            #expect(Replica(model).model == model)
+            // Its ops, as sent: through JSON and back.
+            let ops = Replica().ops(to: Replica(model))
+            let decoded = try JSONDecoder().decode([Replica.Op].self, from: JSONEncoder().encode(ops))
+            var copy = Replica()
+            _ = copy.apply(decoded)
+            #expect(copy.model == model)
+        }
+    }
+
+    @Test func orderKeysAlwaysFitBetween() {
+        var keys = ["", "a", "a1", "az", "b", "zz", "zzz"]
+        for (low, high) in zip(keys, keys.dropFirst()) {
+            let key = OrderKey.between(low, high)
+            #expect(low < key && key < high && OrderKey.isValid(key))
+        }
+        #expect(OrderKey.between("zzz", nil) > "zzz")
+        // Inserting at the same place over and over stays in order.
+        keys = ["a", "b"]
+        for _ in 0..<200 { keys.insert(OrderKey.between(keys[0], keys[1]), at: 1) }
+        #expect(keys == keys.sorted() && Set(keys).count == keys.count)
+        let spread = OrderKey.spread(1000, after: "", before: nil)
+        #expect(spread == spread.sorted() && Set(spread).count == 1000 && spread.allSatisfy { $0.count <= 3 })
+    }
+
+    @Test func reorderingMovesOnlyWhatMoved() throws {
+        var model = try #require(try exampleModels().first { $0.tables.count > 5 })
+        let before = Replica(model)
+        let moved = model.tables.remove(at: 0)
+        model.tables.insert(moved, at: 3)
+        let ops = before.ops(to: Replica(model, keeping: before))
+        #expect(ops == [.set(id: moved.id.uuidString, field: "order", value: Replica(model, keeping: before).entities[moved.id.uuidString]!["order"]!)])
+    }
+
+    @Test func undoingOneChangeLeavesSomeoneElsesAlone() throws {
+        var model = try #require(try exampleModels().first)
+        var replica = Replica(model)
+        let table = model.tables[0].id
+        // Mine: renamed.
+        model.tables[0].name = "renamed"
+        let mine = replica.apply(replica.ops(to: Replica(model, keeping: replica)))
+        // Theirs, after: moved, and a column added.
+        model.tables[0].position.x += 100
+        _ = model.addColumn(to: table, after: nil)
+        _ = replica.apply(replica.ops(to: Replica(model, keeping: replica)))
+        // Undoing mine puts the name back and nothing else.
+        _ = replica.apply(mine)
+        let table0 = try #require(replica.model.table(table))
+        let original = try #require(try exampleModels().first?.table(table))
+        #expect(table0.name == original.name && table0.position.x == original.position.x + 100 && table0.columns.count == original.columns.count + 1)
+    }
+
+    /// Repeatable random numbers, so a failure can be replayed.
+    private struct Seeded: RandomNumberGenerator {
+        var state: UInt64
+        mutating func next() -> UInt64 {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return state ^ (state >> 33)
+        }
+    }
+
+    /// A random edit, of the kinds the canvas, designer and assistants make.
+    private func randomEdit(_ model: inout DataModel, _ random: inout Seeded) {
+        guard let table = model.tables.randomElement(using: &random) else { _ = model.addTable(at: .zero); return }
+        let column = table.columns.randomElement(using: &random)
+        let other = model.tables.randomElement(using: &random)!
+        switch Int.random(in: 0..<15, using: &random) {
+        case 0: model.tables[model.tables.firstIndex { $0.id == table.id }!].name += "_x"
+        case 1: _ = model.addColumn(to: table.id, after: column?.id)
+        case 2: if let column { model.removeColumn(column.id) }
+        case 3: model.removeTable(table.id)
+        case 4: model.move(tables: [table.id, other.id], ties: [], by: CGPoint(x: 40, y: -12))
+        case 5: if let column, let target = other.columns.first { _ = model.connect(column.id, to: target.id) }
+        case 6: if let wire = model.relationships.randomElement(using: &random) { model.removeRelationships { $0.id == wire.id } }
+        case 7: if let column { model.moveColumn(column.id, in: table.id, to: 0) }
+        case 8: _ = model.group([table.id, other.id])
+        case 9: model.recolor(tables: [table.id], groups: [], .allCases.randomElement(using: &random)!)
+        case 10: _ = model.addTable(at: CGPoint(x: 900, y: 900))
+        case 11:
+            if let column, let index = model.tables.firstIndex(where: { $0.id == table.id }), let row = model.tables[index].columns.firstIndex(where: { $0.id == column.id }) {
+                model.tables[index].columns[row].type = .allCases.randomElement(using: &random)!
+                model.tables[index].columns[row].isNullable.toggle()
+            }
+        case 12: model.arrange(.hierarchical)
+        case 13:
+            if let wire = model.relationships.randomElement(using: &random) {
+                _ = model.addBendPoint(on: wire.id, at: CGPoint(x: 300, y: 300), direction: CGPoint(x: 1, y: 0), segment: 0)
+            }
+        default:
+            let index = model.tables.firstIndex { $0.id == table.id }!
+            model.tables[index].notes += "note "
+            if let column { model.tables[index].setSample(0, column.id, to: "v") }
+        }
+    }
+
+    @Test(arguments: [1, 2, 3, 4, 5] as [UInt64])
+    func undoAndRedoGoBackExactly(seed: UInt64) throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let example = try #require(Bundle.main.urls(forResourcesWithExtension: "joinery", subdirectory: nil)?.first { $0.lastPathComponent == "Storefront.joinery" })
+        let url = folder.appending(path: "Storefront.joinery")
+        try FileManager.default.copyItem(at: example, to: url)
+        let open = try OpenModel(url: url)
+        let undo = UndoManager()
+        undo.groupsByEvent = false
+        open.undoManager = undo
+
+        var random = Seeded(state: seed)
+        var states = [open.model]
+        for _ in 0..<150 {
+            var model = open.model
+            randomEdit(&model, &random)
+            // An edit that changes nothing leaves nothing to undo, as in the app.
+            guard model != open.model else { continue }
+            undo.beginUndoGrouping()
+            open.change(to: model)
+            undo.endUndoGrouping()
+            #expect(open.model == model)
+            states.append(open.model)
+        }
+        // Back through every state, then forward through them all again.
+        for state in states.reversed().dropFirst() {
+            undo.undo()
+            #expect(open.model == state)
+        }
+        #expect(!undo.canUndo)
+        for state in states.dropFirst() {
+            undo.redo()
+            #expect(open.model == state)
+        }
+        #expect(!undo.canRedo)
+    }
 }
