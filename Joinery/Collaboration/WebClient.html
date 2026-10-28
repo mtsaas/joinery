@@ -366,7 +366,10 @@ function receive(text) {
     if (!pending.length || pending[0].cseq !== m.cseq) return resync();
     pending.shift(); relay(); toast("A change was taken back: " + (m.reason || ""));
   } else if (m.type === "pong") {
-    if (m.seq !== seq || (m.acked || 0) < pingCovers || (checksDigests && m.hash !== hex(digest))) return resync();
+    // As well: no change still waiting here has been taken, as its answer would have come first, unless it went to a
+    // connection since let go of.
+    const taken = m.acked || 0;
+    if (m.seq !== seq || taken < pingCovers || (pending.length && pending[0].cseq <= taken) || (checksDigests && m.hash !== hex(digest))) return resync();
   } else if (m.type === "joined" || m.type === "presence") {
     if (m.peer.id !== you) { peers.set(m.peer.id, m.peer); render(); }
   } else if (m.type === "left") { peers.delete(m.peer.id); render(); }

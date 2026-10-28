@@ -30,6 +30,37 @@ struct SessionSimulation {
 }
 
 extension SessionSimulation {
+    /// Found by the simulation: a change turned down, with the answer lost on its way, was waited for forever, as
+    /// nothing else that comes after it says it's missing. The next ping finds it taken, and the client starts afresh.
+    @Test func aChangeWhoseAnswerIsLostIsntWaitedForForever() throws {
+        let example = try #require(Bundle.main.urls(forResourcesWithExtension: "joinery", subdirectory: nil)?.first { $0.lastPathComponent == "Storefront.joinery" })
+        let document = Simulation.Document(Replica(try DataModel(contentsOf: example)))
+        let host = HostCore(document: document, token: "t", name: "Host")
+        let client = ClientCore(token: "t", name: "Guest")
+        var now = Date(timeIntervalSinceReferenceDate: 0)
+        func sent(_ effects: [ClientCore.Effect]) -> [String] { effects.compactMap { if case .send(let m) = $0 { m.text } else { nil } } }
+        func sent(_ effects: [HostCore.Effect]) -> [String] { effects.compactMap { if case .send(_, let m) = $0 { m.text } else { nil } } }
+        func join(on link: Int) {
+            host.opened(link, at: now)
+            for text in sent(host.received(sent(client.connected(at: now))[0], on: link, at: now)) {
+                for resent in sent(client.received(text, at: now)) { _ = host.received(resent, on: link, at: now) }
+            }
+        }
+        join(on: 1)
+        #expect(client.state == .connected)
+        // A change the host turns down; its answer never arrives.
+        let doomed = sent(client.changedHere([.set(id: UUID().uuidString, field: "name", value: .string("x"))]))
+        #expect(sent(host.received(doomed[0], on: 1, at: now)).first.flatMap(Message.init(text:))?.type == "reject")
+        #expect(client.pending.count == 1)
+        // The next ping finds it taken, with no answer still to come: start afresh, and it's gone.
+        now += ClientCore.pingInterval
+        let pong = sent(host.received(sent(client.tick(at: now))[0], on: 1, at: now))
+        guard case .reconnect? = client.received(pong[0], at: now).first else { Issue.record("waited forever"); return }
+        _ = host.closed(1)
+        join(on: 2)
+        #expect(client.pending.isEmpty && client.state == .connected && client.confirmed.replica == document.replica)
+    }
+
     /// Joining a host that can't be reached gives up, saying so, after a few tries, sooner at first.
     @Test func joiningGivesUpOnAHostThatIsntThere() {
         let client = ClientCore(token: "t", name: "Guest")

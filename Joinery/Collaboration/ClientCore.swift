@@ -153,8 +153,12 @@ final class ClientCore {
             pending.removeFirst()
             return [.show(shown), .refused(message.reason ?? "")]
         case "pong":
-            // Everything the host sent before it has come, and it had read every change sent before the ping.
-            guard message.seq == seq, (message.acked ?? 0) >= pingCovers, digestMatches(message.hash) else { return resync() }
+            // Everything the host sent before it has come; it had read every change sent before the ping; and no change
+            // still waiting here has been taken, as its answer would have come first, unless it went to a connection
+            // since let go of (turned down after being sent again on this one).
+            let taken = message.acked ?? 0
+            guard message.seq == seq, taken >= pingCovers, pending.first.map({ $0.cseq > taken }) ?? true,
+                  digestMatches(message.hash) else { return resync() }
             return []
         case "joined", "presence":
             if let peer = message.peer, peer.id != you { peers[peer.id] = peer }
