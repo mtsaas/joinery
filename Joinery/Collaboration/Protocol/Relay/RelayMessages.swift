@@ -256,7 +256,7 @@ enum Relay {
     }
 
     /// A share link, `https://<relay>/r/<room>#key=…&token=…` (or `&view=…`, to only watch). The key and secret are
-    /// after the `#`, so a browser never sends them, and the relay never learns the key.
+    /// after the `#`, so they never travel in a request, and the relay never learns the key.
     struct Link: Equatable {
         /// The relay's address, as `https://…` or `http://…`.
         var relay: URL

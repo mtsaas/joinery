@@ -65,17 +65,16 @@ ties and bend points square to them.
 
 ## Live sessions
 
-Share a data model live and others can edit it with you, in Joinery or in a browser.
+Share a data model live and others can edit it with you, each in their own Joinery.
 
 - **Share:** the people button at the top right of the editor. Start Sharing connects to a relay and gives two links: one to edit, one only to watch.
 - **The relay** passes changes between everyone and can't read them: everything is encrypted end to end, with a key only the links carry. Settings ▸ Sharing picks which relay: Joinery's, or one you run (`relay/`, `zig build run`). Links name their relay, so people joining needn't set anything.
 - **From an AI assistant:** the `start_sharing` MCP tool starts sharing and returns both links.
-- **The link in a browser** opens the data model in Joinery's web client, served by the relay. You can pan, zoom, move and rename tables there.
-- **The link in Joinery:** paste it into Join in the library's toolbar. Like remote access, the data model is open only while the session is: it isn't added to the library, and it closes when you leave or the host stops sharing.
+- **Joining:** paste the link into Join in the library's toolbar. Like remote access, the data model is open only while the session is: it isn't added to the library, and it closes when you leave or the host stops sharing.
 - **Seeing each other:** everyone's pointer shows with their name, and what they've selected is ringed in their color. The share button shows who's here.
 - **Undo:** ⌘Z undoes only your own changes, even when others have changed things since.
 - **Conflicts:** if your change refers to something that's just been deleted, it's taken back and you're told.
-- **Dropped connections:** Joinery and the web client reconnect on their own, sooner at first. Edits made meanwhile are sent then, each made once, and the copy catches up to the host's. The host reconnects too; if it's gone more than 30 seconds, the session ends.
+- **Dropped connections:** Joinery reconnects on its own, sooner at first. Edits made meanwhile are sent then, each made once, and the copy catches up to the host's. The host reconnects too; if it's gone more than 30 seconds, the session ends.
 - **Checking copies:** each change carries a checksum of the host's copy. If a copy ever differs, it fetches the host's copy afresh.
 - **The host's copy** is the one that's saved, with its version history. Stopping sharing, or closing the data model, ends the session.
 
@@ -173,7 +172,6 @@ Joinery/
     Protocol/      The core of live sessions: the host's and client's protocol as state machines, messages, digests
     Transport/     Sessions on the network: the WebSocket, the host and client that connect the protocol to it and the app
     UI/            Share and Join panels, people, and others' pointers on the canvas
-    Web/           The web client the host serves
   Library/         The library of files and collections, the sidebar, the open data model and its editor
   Canvas/          Canvas view, table drawing, routing, wire physics, zip tying
   MCP/             The MCP server for AI assistants, and its data model tools

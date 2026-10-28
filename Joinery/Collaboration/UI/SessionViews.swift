@@ -24,7 +24,7 @@ struct SharePanel: View {
                     .help("Close the data model and leave the session")
             } else {
                 Text("Share Live").font(.headline)
-                Text("Others can join through a link and edit with you as you go, in Joinery or a browser. Everything is encrypted end to end, and this Mac keeps the data model.")
+                Text("Others can join through a link and edit with you as you go, in Joinery. Everything is encrypted end to end, and this Mac keeps the data model.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 Button("Start Sharing") { open.session = SessionHost(model: open) }
@@ -43,7 +43,7 @@ struct SharePanel: View {
                 VStack(alignment: .leading, spacing: 8) {
                     CopyLink(title: "Edit link", link: links.edit)
                     CopyLink(title: "View link", link: links.view)
-                    Text("Send a link as you would a password: anyone with it can join while you share. It opens in a browser, or in Joinery with Join.")
+                    Text("Send a link as you would a password: anyone with it can join while you share. Paste it into Join in Joinery's library.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)

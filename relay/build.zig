@@ -12,11 +12,6 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    // The web client the relay serves to browsers opening a link: the app's, so the two never differ.
-    const web_client: std.Build.Module.Import = .{ .name = "WebClient.html", .module = b.createModule(.{
-        .root_source_file = b.path("../Joinery/Collaboration/Web/WebClient.html"),
-    }) };
-    exe.root_module.addImport(web_client.name, web_client.module);
     b.installArtifact(exe);
 
     const run = b.addRunArtifact(exe);
@@ -28,7 +23,6 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tests.zig"),
             .target = target,
             .optimize = optimize,
-            .imports = &.{web_client},
         }),
     });
     b.step("test", "Run the tests, the replay of the Swift relay's traces among them").dependOn(&b.addRunArtifact(tests).step);

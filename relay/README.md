@@ -18,8 +18,8 @@ zig build -Doptimize=ReleaseSafe      # zig-out/bin/joinery-relay
 - **`src/Log.zig`** is a room's log: a ring of whole frames, allocated once.
 - **`src/wire.zig`** is the header, the `hello` the relay reads, and the frames it writes.
 - **`src/Server.zig`** puts it on the network: WebSockets, a reader and a writer task per connection, one lock around
-  the relay. Sends only append to a connection's outbox, so a slow connection holds up no one. A browser opening a
-  link (`/r/<room>`) gets the web client, embedded at build time from the app's `WebClient.html`.
+  the relay. Sends only append to a connection's outbox, so a slow connection holds up no one. A link opened in a
+  browser (`/r/<room>`) is told to paste it into Join in Joinery.
 - **`bench/results.txt`** is the last benchmark run, with its commit.
 
 Each room's memory is allocated when it's made and freed when it ends; nothing allocates in between, which the replay

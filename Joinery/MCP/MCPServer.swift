@@ -299,7 +299,7 @@ final class MCPServer {
         [
             "name": "start_sharing",
             "description": """
-                Shares the open data model live, so others can edit it with you: in a browser, or in Joinery with Join. \
+                Shares the open data model live, so others can edit it with you in Joinery, by pasting a link into Join. \
                 Shares it through the relay set in Joinery's Settings, end-to-end encrypted, and returns two links: one \
                 to edit, one only to watch. Calling it while already sharing gives the same links. Anyone with a link \
                 can join while sharing lasts, so treat links as passwords.
@@ -401,7 +401,7 @@ final class MCPServer {
                 throw ModelTools.Failure("Couldn't start sharing: \(host.status). The relay is \(SessionHost.relay.absoluteString), set in Joinery's Settings.")
             }
             let others = host.peers.isEmpty ? "No one else has joined yet." : "\(host.peers.count) others have joined."
-            return "Sharing \(open.name). Edit link: \(links.edit) View link: \(links.view) Send them as you would a password; each opens in a browser, or in Joinery with Join. \(others)"
+            return "Sharing \(open.name). Edit link: \(links.edit) View link: \(links.view) Send them as you would a password; each is pasted into Join in Joinery's library. \(others)"
         default:
             guard ModelTools.names.contains(name) else { throw ModelTools.Failure("There's no tool called \(name).") }
             guard let open = library.open else {

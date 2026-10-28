@@ -106,15 +106,13 @@ gap or a stale `pong`, as they do now.
 
 Sealed bodies are those only clients read: `ops`, `reject`, `change`, `snapshot` and `presence`. `hello`, `ping`,
 `pong`, `joined`, `left` and `bye` stay plain, as the relay reads or writes them. Nonces are random, which is safe far
-past any room's life. `Joinery/Collaboration/Protocol/Seal.swift` and the web client's `Wire.seal` and `Wire.open` both
-implement it, and a test has each open the other's frames in a real WebKit page. A frame that doesn't open is treated
+past any room's life. `Joinery/Collaboration/Protocol/Seal.swift` implements it. A frame that doesn't open is treated
 like one that doesn't parse: the host turns the change down, and a guest reconnects. A snapshot that doesn't open
 means the link's key is wrong, so the guest stops and says to check the link, instead of retrying forever.
 
 Inside the encryption, a change is a list of ops in a compact binary form: entity IDs as 16 raw bytes, field names as
 one-byte codes, values tagged by type, strings length-prefixed. The appendix has the exact encoding;
-`Joinery/Collaboration/Protocol/Wire.swift` and the web client's `wire` script both implement it, and tests check that
-each reads the other's bytes and writes identical ones. Measured on the examples, a whole model is 34–35% of its JSON
+`Joinery/Collaboration/Protocol/Wire.swift` implements it. Measured on the examples, a whole model is 34–35% of its JSON
 size (Sakila: 26,719 bytes as JSON, 9,475 binary), and renaming a table is 28 bytes against 90. Encryption adds 28
 bytes, the header 24 and WebSocket framing 2 to 4, so on small frames the framing outweighs the ops.
 
@@ -257,8 +255,8 @@ Most changes don't need a new room version:
   back into a name.
 - **A new kind of entity, a changed meaning, or a changed encoding** needs a new room version.
 
-The web client comes from the relay, so it has to speak every room version that hosts still use. In practice that's
-the newest few, and it follows the same rules as the app.
+(There was a web client, served by the relay, which would have had to speak every room version hosts still use. It's
+gone: every guest is a Joinery.)
 
 
 
@@ -291,7 +289,7 @@ TLS ends at Cloudflare; Zig's standard library has no TLS server. Cloudflare see
 ## What happens to local sharing
 
 It goes. The relay replaces the Mac's listening port, the tunnel and the share panel's address field: Share connects
-out to a relay and gets links back. The app keeps one session protocol, and the web client is served by the relay.
+out to a relay and gets links back. The app keeps one session protocol.
 
 `RelayCore`, a Swift version of the relay that's pure like `HostCore` and `ClientCore`, still gets written. It's what
 the simulation runs and what the Zig relay is checked against byte for byte, but it doesn't ship.
@@ -304,7 +302,7 @@ so the app's sessions are tested end to end without the Zig binary.
 
 Settings has a Relay field: our hosted relay by default, or the address of one you run. Share, and the MCP
 `start_sharing` tool, use whichever is set. Links name their relay, so guests reach the right one without setting
-anything, and the web client comes from that relay too.
+anything.
 
 The relay ships as one static binary with no configuration it can't start without. Running your own isn't about
 privacy, since no relay can read a model, but about control: keeping sessions on your own network, sharing between Macs
@@ -392,9 +390,9 @@ Each step ends with tests passing, and nothing goes in front of the Zig work tha
      never sent.
    - **Limits** are checked before sending: a host whose snapshot is over the relay's limit stops sharing and says so;
      a guest's change over the frame limit is taken back.
-   - **The web client** is served by the relay at `/r/<room>`, embedded from the app's `WebClient.html` at build time,
-     and is a port of `RelayGuestCore` with WebCrypto. Frames are opened and sealed asynchronously, so each way goes
-     through a queue, in order.
+   - **The web client** was ported to the relay (a port of `RelayGuestCore`, with WebCrypto) and then removed: every
+     guest is a Joinery. A link opened in a browser is told to paste it into Join. It's in git at `dc52670`, if it comes
+     back.
    - **The default relay** is `https://relay.joinery.clarkmccauley.com`, which step 6 deploys. Until then, Settings ▸
      Sharing points the app at another, such as `http://localhost:8787`.
 6. **Deployment** behind Cloudflare.

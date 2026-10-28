@@ -3,7 +3,7 @@ import Foundation
 /// The binary form of session messages (see `docs/relay.md`): a fixed 24-byte header a relay reads in place, then a
 /// body only clients read. The body of a change is its ops, written compactly: known field names as one byte, IDs as 16
 /// bytes, lengths as varints. The same ops always give the same bytes, so two implementations can be compared byte for
-/// byte. The web client reads and writes the same bytes (`WebClient.html`, the `wire` script).
+/// byte.
 enum Wire {
     static let version: UInt8 = 1
 
