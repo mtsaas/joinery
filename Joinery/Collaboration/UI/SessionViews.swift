@@ -20,7 +20,7 @@ struct SharePanel: View {
                 Label(session.status, systemImage: "person.2.fill").font(.headline)
                 people(session.peers.values.sorted { $0.name < $1.name })
                 Button("Leave Session", role: .destructive) { session.close() }
-                    .help("Stop sharing changes; this copy stays in the Shared collection")
+                    .help("Close the data model and leave the session")
             } else {
                 Text("Share Live").font(.headline)
                 Text("Others can join through a link and edit with you as you go. Their pointers and changes show here, and this Mac keeps the data model.")
@@ -122,7 +122,7 @@ struct JoinPanel: View {
             } else if let status = library.joining?.status {
                 Text(status).font(.caption).foregroundStyle(.secondary)
             } else {
-                Text("Paste the link someone sent you. The data model opens here, kept in the Shared collection.")
+                Text("Paste the link someone sent you. The data model opens here while the session lasts; nothing is kept after.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

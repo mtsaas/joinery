@@ -142,8 +142,9 @@ final class Library {
     /// A session being joined, until it's let in and its model is open.
     private(set) var joining: SessionClient?
 
-    /// Joins the session a link points to: once let in, its model is kept in the Shared collection, opened, and
-    /// changes to it are shared.
+    /// Joins the session a link points to: once let in, its model opens, and changes to it are shared. Like remote
+    /// access, it's open only while the session is: kept in a temporary folder, not the library, and closed and
+    /// deleted when the session ends.
     /// - Returns: Whether the link is a session's.
     @discardableResult
     func join(_ link: String) -> Bool {
@@ -152,15 +153,24 @@ final class Library {
             guard let self, let client = self.joining else { return }
             self.joining = nil
             self.attempt("join the session") {
-                let folder = self.root.appending(path: "Shared", directoryHint: .isDirectory)
+                let folder = self.files.temporaryDirectory.appending(path: "Sessions/\(UUID())", directoryHint: .isDirectory)
                 try self.files.createDirectory(at: folder, withIntermediateDirectories: true)
                 let url = self.unique(title.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: " –"),
                                       extension: "joinery", in: folder)
                 try replica.model.write(to: url)
-                self.reload()
                 self.selection = url
-                guard let open = self.open, open.url == url else { return client.close() }
+                guard let open = self.open, open.url == url else {
+                    client.close()
+                    return try? self.files.removeItem(at: folder)
+                }
                 client.attach(to: open)
+                client.onEnd = { [weak self] reason in
+                    guard let self else { return }
+                    if self.open?.url == url { self.selection = nil }
+                    try? self.files.removeItem(at: folder)
+                    // Leaving needs no telling.
+                    if reason != ClientCore.leftReason { self.failure = reason }
+                }
             }
         }
         joining?.onRefusal = { [weak self] reason in

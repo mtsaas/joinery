@@ -132,14 +132,18 @@ final class MCPServer {
     }
 
     private static func respond(to request: Request, on connection: NWConnection) {
-        let (status, body) = response(to: request)
+        Task { await respond(to: request, on: connection) }
+    }
+
+    private static func respond(to request: Request, on connection: NWConnection) async {
+        let (status, body) = await response(to: request)
         var head = "HTTP/1.1 \(status)\r\nContent-Length: \(body.count)\r\nConnection: close\r\n"
         if !body.isEmpty { head += "Content-Type: application/json\r\n" }
         if status.hasPrefix("405") { head += "Allow: POST\r\n" }
         connection.send(content: Data((head + "\r\n").utf8) + body, completion: .contentProcessed { _ in connection.cancel() })
     }
 
-    private static func response(to request: Request) -> (status: String, body: Data) {
+    private static func response(to request: Request) async -> (status: String, body: Data) {
         guard request.path == "/mcp" else { return ("404 Not Found", Data()) }
         // A web page could otherwise reach it through the browser (DNS rebinding); only local origins may.
         if let origin = request.headers["origin"],
@@ -151,7 +155,10 @@ final class MCPServer {
         guard let message = try? JSONSerialization.jsonObject(with: request.body) else {
             return ("400 Bad Request", encode(error(id: NSNull(), code: -32700, "That isn't JSON.")))
         }
-        let replies = (message as? [Any] ?? [message]).compactMap { reply(to: $0) }
+        var replies: [[String: Any]] = []
+        for message in message as? [Any] ?? [message] {
+            if let reply = await reply(to: message) { replies.append(reply) }
+        }
         // Notifications and responses to us get nothing back.
         guard !replies.isEmpty else { return ("202 Accepted", Data()) }
         return ("200 OK", encode(message is [Any] ? replies : replies[0]))
@@ -164,7 +171,7 @@ final class MCPServer {
     // MARK: JSON-RPC
 
     /// The answer to one JSON-RPC message, or nil for a notification.
-    static func reply(to message: Any) -> [String: Any]? {
+    static func reply(to message: Any) async -> [String: Any]? {
         guard let message = message as? [String: Any], let method = message["method"] as? String else { return nil }
         guard let id = message["id"] else { return nil }
         let params = message["params"] as? [String: Any] ?? [:]
@@ -183,6 +190,10 @@ final class MCPServer {
                     start_review, draw the schema as it was before with create_tables, mark_baseline, apply the change \
                     with the editing tools, then get_changes. Joinery shows the result as a diff. The \
                     review_schema_changes prompt has the steps in full.
+
+                    To let others edit the open data model live, start_sharing: it serves it on a port of this Mac. \
+                    Expose that port publicly with a tunnel, then call start_sharing again with the tunnel's address \
+                    for the link to send.
                     """,
             ])
         case "ping":
@@ -204,7 +215,7 @@ final class MCPServer {
             let name = params["name"] as? String ?? ""
             let arguments = params["arguments"] as? [String: Any] ?? [:]
             do {
-                return result(id: id, ["content": [["type": "text", "text": try call(name, arguments)]]])
+                return result(id: id, ["content": [["type": "text", "text": try await call(name, arguments)]]])
             } catch {
                 return result(id: id, ["content": [["type": "text", "text": error.localizedDescription]], "isError": true])
             }
@@ -286,6 +297,24 @@ final class MCPServer {
             "inputSchema": ["type": "object", "properties": [String: Any]()],
             "annotations": ["readOnlyHint": true],
         ],
+        [
+            "name": "start_sharing",
+            "description": """
+                Shares the open data model live, so others can edit it with you: in a browser, or in Joinery with Join. \
+                Serves it on a port of this Mac, for this Mac only, and returns the port and the link. To share beyond \
+                this Mac, expose the port with a tunnel (such as `cloudflared tunnel --url http://localhost:<port>` or \
+                `ngrok http <port>`), then call start_sharing again with the tunnel's public address to get the link to \
+                send. Calling it while already sharing keeps the session and its link's token, only giving the link at \
+                the new address. The link's token gives full editing, so treat it as a password.
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "address": ["type": "string", "description": "Where others reach the port, such as the tunnel's https://… address. This Mac's own address if left out."],
+                    "port": ["type": "integer", "description": "The port to serve on, when first starting; 8724 if left out."],
+                ],
+            ],
+        ],
     ]
 
     // MARK: Prompts
@@ -326,7 +355,7 @@ final class MCPServer {
     }
 
     /// Runs a tool, as an assistant's call would.
-    static func call(_ name: String, _ arguments: [String: Any]) throws -> String {
+    static func call(_ name: String, _ arguments: [String: Any]) async throws -> String {
         let library = Library.shared
         let all = library.models + library.collections.flatMap(\.models)
         switch name {
@@ -367,6 +396,24 @@ final class MCPServer {
             }
             guard let baseline = open.baseline else { throw ModelTools.Failure("There's no baseline to compare with: call mark_baseline first.") }
             return SchemaDiff(from: baseline, to: open.model).report
+        case "start_sharing":
+            guard let open = library.open else { throw ModelTools.Failure("No data model is open in Joinery. Use open_model or new_model first.") }
+            if open.session != nil, !(open.session is SessionHost) {
+                throw ModelTools.Failure("\(open.name) is a session joined from someone else; only its host can share it.")
+            }
+            let host = try open.session as? SessionHost ?? SessionHost(model: open, port: (arguments["port"] as? Int).flatMap(UInt16.init(exactly:)) ?? SessionHost.defaultPort)
+            open.session = host
+            // The port is taken, or isn't, a moment after starting.
+            for _ in 0..<100 where host.port == nil && open.session === host { try? await Task.sleep(for: .milliseconds(20)) }
+            guard let port = host.port, open.session === host else { throw ModelTools.Failure("Couldn't start sharing: \(host.status)") }
+            let address = (arguments["address"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            // The share panel shows the same link.
+            if let address { UserDefaults.standard.set(address, forKey: "sessionAddress") }
+            let link = host.link(at: address ?? "localhost:\(port)")
+            let others = host.peers.isEmpty ? "No one else has joined yet." : "\(host.peers.count) others have joined."
+            return address == nil
+                ? "Sharing \(open.name) on port \(port), on this Mac only, at \(link). To share beyond this Mac, expose port \(port) with a tunnel, then call start_sharing again with its public address. \(others)"
+                : "Sharing \(open.name) at \(link): send that link to whoever should edit it, as you would a password. It opens in a browser, or in Joinery with Join. Make sure the tunnel forwards to port \(port). \(others)"
         default:
             guard ModelTools.names.contains(name) else { throw ModelTools.Failure("There's no tool called \(name).") }
             guard let open = library.open else {

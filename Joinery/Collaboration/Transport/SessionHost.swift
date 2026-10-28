@@ -84,7 +84,7 @@ final class SessionHost: Session {
 
     func close() {
         guard listener != nil else { return }
-        perform(core.stop("The host stopped sharing. This copy is yours to keep."))
+        perform(core.stop("The host stopped sharing."))
         listener?.cancel()
         listener = nil
         ticker?.cancel()

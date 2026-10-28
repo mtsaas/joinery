@@ -3,7 +3,7 @@ import Foundation
 /// A session joined from a host's link. Connects `ClientCore`, which keeps the protocol, to a WebSocket: reconnecting
 /// when it drops, with what's shown here caught up on reconnecting and nothing made here lost or made twice.
 ///
-/// The model is kept as a file in the library's Shared collection, so it's there, as it was, after the session ends.
+/// Like remote access: the model is open here only while the session is, and nothing's kept after.
 @MainActor @Observable
 final class SessionClient: Session {
     private(set) var peers: [String: Peer] = [:]
@@ -21,6 +21,8 @@ final class SessionClient: Session {
     @ObservationIgnored private var onWelcome: ((String, Replica) -> Void)?
     /// Told why, when the host turns down a change made here (which is then taken back).
     @ObservationIgnored var onRefusal: ((String) -> Void)?
+    /// Told why, when the session ends: left, or the host stopped.
+    @ObservationIgnored var onEnd: ((String) -> Void)?
 
     /// Connects to the session at `link`, calling `welcomed` with its title and the host's copy once in.
     init?(link: String, welcomed: @escaping (String, Replica) -> Void) {
@@ -121,6 +123,7 @@ final class SessionClient: Session {
                 status = reason
                 model?.onChange = nil
                 if model?.session === self { model?.session = nil }
+                onEnd?(reason)
             }
         }
         status = switch core.state {

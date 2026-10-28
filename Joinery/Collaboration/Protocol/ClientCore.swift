@@ -121,8 +121,10 @@ final class ClientCore {
         return [.send(Message("ping"))]
     }
 
+    static let leftReason = "Left the session."
+
     func leave() -> [Effect] {
-        end("Left the session. This copy is yours to keep.")
+        end(Self.leftReason)
     }
 
     func received(_ text: String, at now: Date) -> [Effect] {

@@ -1056,22 +1056,22 @@ struct JoineryTests {
         #expect(SchemaDiff(from: before, to: after) == diff)
     }
 
-    @Test func assistantsAreToldHowToReviewSchemaChanges() throws {
-        func result(_ method: String, _ params: [String: Any] = [:]) throws -> [String: Any] {
-            let reply = try #require(MCPServer.reply(to: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params]))
+    @Test func assistantsAreToldHowToReviewSchemaChanges() async throws {
+        func result(_ method: String, _ params: [String: Any] = [:]) async throws -> [String: Any] {
+            let reply = try #require(await MCPServer.reply(to: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params]))
             return try #require(reply["result"] as? [String: Any])
         }
-        let initialized = try result("initialize")
+        let initialized = try await result("initialize")
         #expect((initialized["capabilities"] as? [String: Any])?["prompts"] != nil)
         #expect((initialized["instructions"] as? String)?.contains("mark_baseline") == true)
-        let tools = try #require(try result("tools/list")["tools"] as? [[String: Any]])
+        let tools = try #require(try await result("tools/list")["tools"] as? [[String: Any]])
         for name in ["start_review", "mark_baseline", "get_changes"] {
             let description = try #require(tools.first { $0["name"] as? String == name }?["description"] as? String)
             #expect(description.contains("Step"))
         }
-        let prompts = try #require(try result("prompts/list")["prompts"] as? [[String: Any]])
+        let prompts = try #require(try await result("prompts/list")["prompts"] as? [[String: Any]])
         #expect(prompts.map { $0["name"] as? String } == ["review_schema_changes"])
-        let prompt = try result("prompts/get", ["name": "review_schema_changes", "arguments": ["change": "PR 482"]])
+        let prompt = try await result("prompts/get", ["name": "review_schema_changes", "arguments": ["change": "PR 482"]])
         let messages = try #require(prompt["messages"] as? [[String: Any]])
         let text = try #require((messages.first?["content"] as? [String: Any])?["text"] as? String)
         // Every step, in order.
@@ -1458,11 +1458,11 @@ struct JoineryTests {
         edit(a) { $0.tables[1].name = "from_a" }
         edit(b) { $0.tables[1].name = "from_b" }
         edit(hosted) { $0.tables[2].position.y += 50 }
-        try await until { a.model == hosted.model && b.model == hosted.model }
+        // The entities, not only the model drawn from them: order keys too.
+        try await until { a.replica == hosted.replica && b.replica == hosted.replica }
         let columns = try #require(hosted.model.table(table)).columns.count
         #expect(columns == (try openStorefront().model.table(table)?.columns.count ?? 0) + 2)
         #expect(["from_a", "from_b"].contains(hosted.model.tables[1].name))
-        #expect(a.replica == hosted.replica && b.replica == hosted.replica)
     }
 
     @Test func aTurnedDownChangeIsTakenBackAndLaterOnesStay() async throws {

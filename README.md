@@ -69,8 +69,9 @@ Share a data model live and others can edit it with you, in Joinery or in a brow
 
 - **Share:** the people button at the top right of the editor. Start Sharing serves the open data model on port 8724 of this Mac, for this Mac only.
 - **Exposing it:** expose the port with a tunnel, such as `cloudflared tunnel --url http://localhost:8724` or `ngrok http 8724`. Paste the tunnel's address into the panel, then copy the link it makes.
+- **From an AI assistant:** the `start_sharing` MCP tool starts sharing and gives the port. Once you've exposed it, the assistant calls it again with the tunnel's address for the link to send.
 - **The link in a browser** opens the data model in Joinery's web client. You can pan, zoom, move and rename tables there.
-- **The link in Joinery:** paste it into Join in the library's toolbar. The data model opens in a Shared collection and stays there, as it was, after the session.
+- **The link in Joinery:** paste it into Join in the library's toolbar. Like remote access, the data model is open only while the session is: it isn't added to the library, and it closes when you leave or the host stops sharing.
 - **Seeing each other:** everyone's pointer shows with their name, and what they've selected is ringed in their color. The share button shows who's here.
 - **Undo:** ⌘Z undoes only your own changes, even when others have changed things since.
 - **Conflicts:** if your change refers to something that's just been deleted, it's taken back and you're told.
