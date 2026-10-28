@@ -6,6 +6,8 @@ enum Relay {
     static let hostPeer: UInt32 = 1
     /// The room version this copy speaks: what's inside the encryption, the ops and the model's fields.
     static let roomVersion: UInt64 = 1
+    /// The longest a `hello`'s client, name and title can be, in bytes, so a relay can keep them in fixed space.
+    static let maxClient = 64, maxName = 64, maxTitle = 256
 
     /// What a relay holds each room to. Clients check against them before sending.
     struct Limits: Equatable {
@@ -211,5 +213,6 @@ enum Relay {
     }
 
     /// Why a relay or host ended a session, or turned a connection away.
-    static func bye(_ reason: String) -> Wire.Frame { Wire.Frame(.bye, body: Array(reason.utf8)) }
+    static func bye(_ reason: String) -> Wire.Frame { bye(Array(reason.utf8)) }
+    static func bye(_ reason: [UInt8]) -> Wire.Frame { Wire.Frame(.bye, body: reason) }
 }

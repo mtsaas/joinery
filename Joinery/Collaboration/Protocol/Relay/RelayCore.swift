@@ -18,6 +18,8 @@ final class RelayCore {
     let limits: Relay.Limits
     /// Connections are let go if nothing's heard on them in this long, as everyone pings every ten seconds.
     static let timeout: TimeInterval = 30
+    /// How many clients a room remembers, each keeping its peer for the room's life.
+    static let maxClients = 1024
     /// A room whose host has been gone this long ends.
     let hostGrace: TimeInterval
     /// Makes room IDs and secrets; random, unless a test wants them predictable.
@@ -130,7 +132,7 @@ final class RelayCore {
         }
         for room in rooms.values.sorted(by: { $0.id < $1.id }) {
             if let gone = room.hostGone, now.timeIntervalSince(gone) > hostGrace {
-                effects += end(room, "The host stopped sharing.")
+                effects += end(room, Relay.bye("The host stopped sharing.").bytes)
             }
         }
         return effects
@@ -142,6 +144,9 @@ final class RelayCore {
         guard frame.header.kind == .hello, let hello = try? Relay.Hello(frame.body) else { return drop(connection) }
         switch hello.role {
         case .host:
+            guard hello.name.count <= Relay.maxName, hello.title.count <= Relay.maxTitle else {
+                return refuse(connection, "That name or title is too long.")
+            }
             let room = Room(id: makeSecret(), hostSecret: makeSecret(), guestSecret: makeSecret(), viewSecret: makeSecret(),
                             version: hello.version, title: hello.title, hostName: hello.name)
             rooms[room.id] = room
@@ -158,7 +163,8 @@ final class RelayCore {
                   hello.secret == (hello.role == .guest ? room.guestSecret : room.viewSecret) else {
                 return refuse(connection, "That link isn't valid, or the session has ended.")
             }
-            guard !hello.client.isEmpty, hello.client.utf8.count <= 100 else { return refuse(connection, "Say which client this is.") }
+            guard !hello.client.isEmpty, hello.client.utf8.count <= Relay.maxClient else { return refuse(connection, "Say which client this is.") }
+            guard hello.name.count <= Relay.maxName else { return refuse(connection, "That name is too long.") }
             return join(connection, hello, to: room)
         }
     }
@@ -185,8 +191,7 @@ final class RelayCore {
             links[other] = nil
             effects.append(.close(other))
         }
-        let isBack = known != nil && room.guests.values.contains { $0.peer == known }
-        if !isBack && Set(room.guests.values.map(\.peer)).count >= limits.maxPeers - 1 {
+        if room.guests.count >= limits.maxPeers - 1 || (known == nil && room.peers.count >= Self.maxClients) {
             return effects + refuse(connection, "This session is full.")
         }
         let peer = known ?? room.nextPeer
@@ -213,11 +218,8 @@ final class RelayCore {
         }
         guest.sent = room.latest
         room.guests[connection] = guest
-        if !isBack {
-            let joined = Wire.Frame(.joined, peer: peer, body: hello.name).bytes
-            effects += everyone(in: room, except: connection).map { .send($0, joined) }
-        }
-        return effects
+        let joined = Wire.Frame(.joined, peer: peer, body: hello.name).bytes
+        return effects + everyone(in: room, except: connection).map { .send($0, joined) }
     }
 
     // MARK: Frames
@@ -288,7 +290,8 @@ final class RelayCore {
         case .ping:
             return [.send(host, Wire.Frame(.pong, seq: room.latest).bytes)]
         case .bye:
-            return end(room, String(decoding: frame.body, as: UTF8.self))
+            // Passed on as is, the relay's own.
+            return end(room, Relay.bye(frame.body).bytes)
         default:
             return []
         }
@@ -339,15 +342,12 @@ final class RelayCore {
         }
         guard let guest = room.guests.removeValue(forKey: connection) else { return [] }
         room.trim()
-        // Reconnected already, on another connection.
-        guard !room.guests.values.contains(where: { $0.peer == guest.peer }) else { return [] }
         let left = Wire.Frame(.left, peer: guest.peer).bytes
         return everyone(in: room).map { .send($0, left) }
     }
 
-    private func end(_ room: Room, _ reason: String) -> [Effect] {
+    private func end(_ room: Room, _ bye: [UInt8]) -> [Effect] {
         rooms[room.id] = nil
-        let bye = Relay.bye(reason).bytes
         return everyone(in: room).flatMap { connection -> [Effect] in
             links[connection] = nil
             return [.send(connection, bye), .close(connection)]

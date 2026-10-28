@@ -131,6 +131,15 @@ over a body.
 On Linux the relay sends with io_uring and zero-copy sends. Each room's block is registered with io_uring when the
 room is made, so every send is a pointer into memory that's already registered.
 
+**As built in step 4, the relay is one step short of this.** Each connection has an outbox, and the relay's sends append
+to it, a copy per guest, which the connection's writer task then sends. That keeps the relay simple and a slow
+connection from holding up anyone else: the relay never waits on a socket, and a connection whose outbox fills is too
+far behind and is closed, to come back by the snapshot route. The outbox holds a joiner's whole catch-up (snapshot and
+log, twice over for WebSocket headers); its memory is only touched as it's used. Per-guest cursors into the log, as
+above, would remove the copy and the outbox, and are the next step if the copy shows up in measurements. Guest frames
+go straight to the host's outbox, so there's no inbox. The std library's WebSocket unmasks each frame in place as it's
+read, the one pass over a body.
+
 ## The log and compaction
 
 Each room's log is a ring buffer of frames, ready to send, plus a snapshot: the whole model as of some change N,
@@ -169,6 +178,13 @@ cap in configuration.
 
 Every room's block is the same size, so a freed block is reused for the next room as is, and memory doesn't fragment
 however rooms come and go.
+
+As built, a room is a few allocations made together, not one block: the log ring, which is the log limit plus the
+largest frame (3 MiB) so a frame always fits whole without splitting at the ring's end (`relay/src/Log.zig` has the
+proof); one snapshot slot (1 MiB), since sends copy the snapshot out at once and no guest is ever partway through
+reading it; 31 guest slots; and 1,024 remembered clients (72 KiB), each keeping its peer for the room's life, after
+which new clients are turned away as if the room were full. A room's ID and secrets are kept as they are, not hashed,
+because the host gets its secrets back when it resumes. They're compared in constant time.
 
 Per room, with the defaults we'd start from:
 
@@ -247,7 +263,7 @@ the newest few, and it follows the same rules as the app.
 
 
 Sharing starts with the host's `hello` asking for a room. The relay makes one and replies with its ID, its limits, and
-the host, guest and view secrets, keeping only their hashes. The host makes the room key itself and never sends it to
+the host, guest and view secrets. The host makes the room key itself and never sends it to
 the relay. The links it hands out look like this:
 
 ```
@@ -257,7 +273,7 @@ https://<relay>/r/<room>#key=<room key>&token=<guest secret>
 - **The room key** (256 bits) encrypts bodies. It's after the `#`, so browsers never send it, and the relay never
   learns it.
 - **The guest secret** (128 bits) lets the relay admit a connection. It's also after the `#`, and the client sends it in
-  `hello` over the WebSocket, so it never appears in a URL the server logs. The relay stores only a hash of it.
+  `hello` over the WebSocket, so it never appears in a URL the server logs.
 - **The host secret** never leaves the host. Neither does the room key, except in the links the host hands out.
 - **A view link** carries a view secret instead of the guest secret. The relay accepts its connections but refuses
   their `change` frames.
@@ -316,6 +332,14 @@ copies, system calls) are compared everywhere.
 We don't have targets yet beyond the counts: zero allocations and one pass over each body (the unmask) per frame. The
 first load runs set the timing baseline, and we'll write targets down then rather than guess them now.
 
+As of step 4, two of the three exist. `zig build bench` times reading a header, appending to the log, a host's change
+going to 31 guests and a guest's change going to the host, and fails if any of them allocates; `relay/bench/results.txt`
+has the numbers with the commit they're from (the relay handles a host's change for 31 guests in about 44 ns on an
+M-series Mac, before the copies into their outboxes). The no-allocation check is in the replay test: the relay
+allocates on an event only when the event makes a room.
+The load generator, and comparing against the last results automatically, come with step 5, when there's an app to
+generate load from.
+
 ## Downsides
 
 - **The host must stay online.** That's the design, but it rules out sharing a model and closing the laptop.
@@ -349,7 +373,11 @@ Each step ends with tests passing, and nothing goes in front of the Zig work tha
 3. **Encryption,** in Swift (CryptoKit) and the web client (WebCrypto), with each side decrypting the other's frames.
 4. **The Zig relay,** checked by replaying frames recorded from the Swift simulation and comparing what it sends,
    byte for byte, with what `RelayCore` sent. Benchmarks and the no-allocation check land with the first code, and
-   every later step runs them.
+   every later step runs them. Done: `relay/`, with its own README. `scripts/record-relay-traces.sh` records the traces
+   again after a protocol change. Comparing is connection by connection: on each, the same bytes in the same order.
+   Across connections, order can't matter to anyone. Porting it changed the Swift reference in three small ways, so
+   that fixed space can hold what it keeps: clients, names and titles have length limits, a room remembers at most
+   1,024 clients, and a host's goodbye is passed on as its bytes rather than re-read as text.
 5. **The app on the relay:** Share connects out to the relay set in Settings, the local port and the tunnel
    instructions go, and two copies of the app plus a browser share through a locally run relay.
 6. **Deployment** behind Cloudflare.

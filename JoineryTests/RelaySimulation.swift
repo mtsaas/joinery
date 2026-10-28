@@ -25,6 +25,23 @@ struct RelaySimulation {
         if !simulation.isSettled { Attachment.record(simulation.trace.suffix(80).joined(separator: "\n"), named: "trace-\(seed).txt") }
     }
 
+    /// Everything the relay heard and did in a few runs, one for each log size, one with a viewer and a host that
+    /// doesn't come back: the Zig relay replays them and must send the same bytes (`scripts/record-relay-traces.sh`).
+    @Test func recordsTracesForTheZigRelay() throws {
+        for seed in 1...4 as ClosedRange<UInt64> {
+            let simulation = try RelayNetwork(seed: seed, guests: 3, recording: true)
+            for _ in 0..<300 { simulation.step() }
+            simulation.settle()
+            Attachment.record(Data(simulation.recording!), named: "seed-\(seed).trace")
+        }
+        let ending = try RelayNetwork(seed: 5, guests: 2, viewers: 1, hostGrace: 30, recording: true)
+        for _ in 0..<300 { ending.step() }
+        ending.cutHost()
+        ending.advanceTime(by: 31)
+        ending.deliverAll()
+        Attachment.record(Data(ending.recording!), named: "host-gone.trace")
+    }
+
     /// The paths the protocol's correctness rests on actually happen in the runs above, often.
     @Test func theRunsCoverEveryWayOfCatchingUp() throws {
         var totals = RelayNetwork.Counts()
@@ -221,7 +238,10 @@ final class RelayNetwork {
     /// Guests' links that are catching up, and whether a snapshot's come on them.
     private var catchingUp: [Int: Bool] = [:]
 
-    init(seed: UInt64, guests: Int, faults: Bool = true, viewers: Int = 0, hostGrace: TimeInterval = 1e9) throws {
+    /// Everything the relay heard and did, when recording, in the form `relay/src/replay_test.zig` reads.
+    private(set) var recording: [UInt8]?
+
+    init(seed: UInt64, guests: Int, faults: Bool = true, viewers: Int = 0, hostGrace: TimeInterval = 1e9, recording: Bool = false) throws {
         random = Seeded(state: seed)
         self.faults = faults
         guestCount = guests
@@ -229,9 +249,20 @@ final class RelayNetwork {
         var secrets = 0
         // Small logs most of the time, so snapshots, drops and catching up happen; a roomy one sometimes.
         let logBytes = faults ? [1_500, 3_000, 6_000, 1 << 20][Int(seed % 4)] : 1 << 20
-        relay = RelayCore(limits: Relay.Limits(logBytes: logBytes, maxPeers: 8), hostGrace: hostGrace) {
+        let limits = Relay.Limits(logBytes: logBytes, maxPeers: 8)
+        // As the Zig relay makes them, from 16 random bytes; here the bytes count up, as its replay's do.
+        relay = RelayCore(limits: limits, hostGrace: hostGrace) {
             secrets += 1
-            return "s\(secrets)"
+            var bytes: [UInt8] = []
+            bytes.append(littleEndian: UInt64(secrets))
+            bytes.append(littleEndian: UInt64(0))
+            return bytes.map { String(format: "%02x", $0) }.joined()
+        }
+        if recording {
+            var header = Array("JRT1".utf8)
+            for limit in [limits.maxFrame, limits.maxSnapshot, limits.logBytes, limits.maxPeers] { header.append(littleEndian: UInt32(limit)) }
+            header.append(littleEndian: UInt64(hostGrace * 1000))
+            self.recording = header
         }
         let example = try #require(Bundle.main.urls(forResourcesWithExtension: "joinery", subdirectory: nil)?.first { $0.lastPathComponent == "Storefront.joinery" })
         let start = Replica(try DataModel(contentsOf: example))
@@ -252,6 +283,36 @@ final class RelayNetwork {
 
     var orderedLinks: [Link] { links.keys.sorted().map { links[$0]! } }
 
+    // MARK: Recording
+
+    enum Event: UInt8 { case opened = 1, closed, received, tick }
+
+    private func relayReceived(_ bytes: [UInt8], on connection: Int) -> [RelayCore.Effect] {
+        record(.received, connection, bytes: bytes, relay.received(bytes, on: connection, at: now))
+    }
+
+    /// Writes down an event and what the relay did: tag, time in ms, connection, bytes, then each effect.
+    @discardableResult
+    private func record(_ event: Event, _ connection: Int, bytes: [UInt8] = [], _ effects: [RelayCore.Effect]) -> [RelayCore.Effect] {
+        guard recording != nil else { return effects }
+        func append(_ tag: UInt8, _ connection: Int, _ bytes: [UInt8]) {
+            recording!.append(tag)
+            recording!.append(littleEndian: UInt32(connection))
+            recording!.append(littleEndian: UInt32(bytes.count))
+            recording!.append(contentsOf: bytes)
+        }
+        append(event.rawValue, connection, bytes)
+        recording!.append(littleEndian: UInt64(now.timeIntervalSinceReferenceDate * 1000))
+        recording!.append(littleEndian: UInt32(effects.count))
+        for effect in effects {
+            switch effect {
+            case .send(let to, let bytes): append(1, to, bytes)
+            case .close(let to): append(2, to, [])
+            }
+        }
+        return effects
+    }
+
     // MARK: Steps
 
     func step() {
@@ -269,7 +330,7 @@ final class RelayNetwork {
 
     private func deliverToRelay() {
         guard let link = orderedLinks.filter({ !$0.toRelay.isEmpty && !$0.relayKnows }).randomElement(using: &random) else { return }
-        route(relay.received(link.toRelay.removeFirst(), on: link.id, at: now))
+        route(relayReceived(link.toRelay.removeFirst(), on: link.id))
     }
 
     private func deliverToPeer() {
@@ -345,6 +406,7 @@ final class RelayNetwork {
         nextLink += 1
         links[link.id] = link
         relay.opened(link.id, at: now)
+        record(.opened, link.id, [])
         return link
     }
 
@@ -372,7 +434,7 @@ final class RelayNetwork {
 
     func advanceTime(by seconds: TimeInterval) {
         now += seconds
-        route(relay.tick(at: now))
+        route(record(.tick, 0, relay.tick(at: now)))
         route(host.tick(at: now))
         for index in guests.indices { route(guests[index].tick(at: now), from: index) }
         finishClosing()
@@ -383,7 +445,7 @@ final class RelayNetwork {
         for link in orderedLinks where !link.isOpen {
             if !link.relayKnows && link.toRelay.isEmpty {
                 link.relayKnows = true
-                route(relay.closed(link.id, at: now))
+                route(record(.closed, link.id, relay.closed(link.id, at: now)))
             }
             if !link.peerKnows && link.toPeer.isEmpty {
                 link.peerKnows = true
@@ -501,7 +563,7 @@ final class RelayNetwork {
     func deliverAll() {
         while let link = orderedLinks.first(where: { (!$0.toRelay.isEmpty && !$0.relayKnows) || (!$0.toPeer.isEmpty && !$0.peerKnows) }) {
             if !link.toRelay.isEmpty && !link.relayKnows {
-                route(relay.received(link.toRelay.removeFirst(), on: link.id, at: now))
+                route(relayReceived(link.toRelay.removeFirst(), on: link.id))
             } else {
                 deliver(link)
             }

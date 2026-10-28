@@ -81,6 +81,8 @@ Share a data model live and others can edit it with you, in Joinery or in a brow
 
 `docs/collaboration.md` describes the protocol, enough to write another client. The token in the link is the only thing between the internet and editing, so share it as you would a password.
 
+Sessions are moving to a relay, so sharing will need no tunnel and links will be end-to-end encrypted (`docs/relay.md`). The relay is in `relay/`, written in Zig and checked byte for byte against the Swift reference; the app doesn't use it yet.
+
 ## AI assistants (MCP)
 
 While Joinery is open it runs an MCP server at `http://127.0.0.1:8723/mcp`, reachable only from this Mac. An assistant connected to it can read and edit the data model open in the window. Changes show up as they're made, save themselves, and undo with ⌘Z. Before an assistant's first change in a while, a version is kept to go back to (see Version history).
