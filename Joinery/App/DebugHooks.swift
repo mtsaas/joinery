@@ -54,16 +54,19 @@ enum DebugHooks {
             unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0)?.takeRetainedValue()
         }
         let windows = NSApp.windows.filter(\.isVisible).sorted { $0.orderedIndex > $1.orderedIndex }
-        guard let main = windows.max(by: { $0.frame.width < $1.frame.width }), let base = image(main),
-              let context = CGContext(data: nil, width: base.width, height: base.height, bitsPerComponent: 8, bytesPerRow: 0,
-                                      space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return print("snapshot failed") }
+        guard let main = windows.max(by: { $0.frame.width < $1.frame.width }), let base = image(main) else { return print("snapshot failed") }
+        // Wide enough for what hangs over its edges, as a popover by the toolbar can.
+        let over = windows.filter { $0 !== main && $0.frame.intersects(main.frame) }
+        let bounds = over.reduce(main.frame) { $0.union($1.frame) }
         let scale = CGFloat(base.width) / main.frame.width
-        context.draw(base, in: CGRect(x: 0, y: 0, width: base.width, height: base.height))
-        for window in windows where window !== main && window.frame.intersects(main.frame) {
-            guard let over = image(window) else { continue }
-            context.draw(over, in: CGRect(x: (window.frame.minX - main.frame.minX) * scale, y: (window.frame.minY - main.frame.minY) * scale,
-                                          width: window.frame.width * scale, height: window.frame.height * scale))
+        guard let context = CGContext(data: nil, width: Int(bounds.width * scale), height: Int(bounds.height * scale), bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return print("snapshot failed") }
+        for window in [main] + over {
+            guard let picture = window === main ? base : image(window) else { continue }
+            context.draw(picture, in: CGRect(x: (window.frame.minX - bounds.minX) * scale, y: (window.frame.minY - bounds.minY) * scale,
+                                             width: window.frame.width * scale, height: window.frame.height * scale))
         }
         guard let composite = context.makeImage() else { return print("snapshot failed") }
         try? NSBitmapImageRep(cgImage: composite).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))

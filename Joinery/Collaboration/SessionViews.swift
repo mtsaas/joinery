@@ -40,7 +40,7 @@ struct SharePanel: View {
             Label(host.status, systemImage: "dot.radiowaves.left.and.right").font(.headline)
             VStack(alignment: .leading, spacing: 6) {
                 Text("Public address").font(.subheadline).foregroundStyle(.secondary)
-                TextField("https://example.trycloudflare.com", text: $address)
+                TextField("Public address", text: $address, prompt: Text("Paste your tunnel's address"))
                     .textFieldStyle(.roundedBorder)
                 Text("Expose port \(String(host.port ?? SessionHost.defaultPort)) with a tunnel, and paste its address. Without one, the link works on this Mac only.")
                     .font(.caption)
