@@ -120,6 +120,23 @@ Ask an assistant to show how a pull request, branch or uncommitted change alters
 
 From the baseline on, the canvas shows the comparison bar: Before, Changes and After, as Version history compares, read-only. The view follows the assistant's changes until you pan or zoom. End Review forgets the baseline and leaves the data model as it is after the change, to edit.
 
+## Releases and updates
+
+`scripts/release.sh <version>` makes a release:
+1. Builds Joinery signed with the NexToner Developer ID, and has Apple notarize it.
+2. Puts it in a disk image whose window shows Joinery, an arrow and Applications.
+3. Publishes the disk image to a Cloudflare R2 bucket, at `Joinery-<version>.dmg` and at `Joinery.dmg` for a link that always gets the newest.
+4. Adds it to the update feed, `appcast.xml`, beside them.
+
+Released copies check the feed through [Sparkle](https://sparkle-project.org) and offer each new version; Joinery ▸ Check for Updates… checks at once. Copies built in Xcode don't check. Each update is signed with a key kept in your login keychain, and Joinery installs only updates signed with it, so back the key up (`generate_keys -x <file>`, in Sparkle's tools, and keep it somewhere safe). Lose it and released copies can't be updated again.
+
+`scripts/release.sh <version> --dry-run` builds the disk image at `build/release` without notarizing or publishing it.
+
+Once, before the first release:
+- **The bucket:** `infra/main.tf`. Copy `infra/terraform.tfvars.example` to `terraform.tfvars`, fill it in, then `CLOUDFLARE_API_TOKEN=… terraform -chdir=infra init && terraform -chdir=infra apply`. Releases are served at the bucket's r2.dev address, or at `domain` if set.
+- **Notarizing:** `xcrun notarytool store-credentials joinery-notary --apple-id <you> --team-id 7WF9W3CBZ3`, with an app-specific password.
+- **Uploading:** `npx wrangler login`.
+
 ## Frame rate (Debug builds)
 
 The bottom-left corner shows frames per second while anything moves, and what the last frame cost: routing the wires and drawing them. `JOINERY_SCRIPT="shake <table> <seconds>"` drags a table about and prints the frame rate and how long each whole update took.

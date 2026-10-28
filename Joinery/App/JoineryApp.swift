@@ -1,3 +1,4 @@
+import Sparkle
 import SwiftUI
 
 @main
@@ -12,12 +13,25 @@ struct JoineryApp: App {
         .commands {
             LibraryCommands(library: .shared)
             CanvasCommands()
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") { Updates.controller?.checkForUpdates(nil) }
+                    .disabled(Updates.controller == nil)
+            }
         }
 
         Settings {
             SettingsView()
         }
     }
+}
+
+/// Updates through Sparkle, from the feed `scripts/release.sh` builds in. A build without one, such as Xcode's,
+/// doesn't check.
+enum Updates {
+    @MainActor static let controller: SPUStandardUpdaterController? = {
+        guard let feed = Bundle.main.object(forInfoDictionaryKey: "SUFeedURL") as? String, !feed.isEmpty else { return nil }
+        return SPUStandardUpdaterController(startingUpdater: true, updaterDelegate: nil, userDriverDelegate: nil)
+    }()
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -28,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if MCPServer.isEnabled { MCPServer.shared.start() }
+        _ = Updates.controller
         #if DEBUG
         DebugHooks.launched()
         #endif

@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		AA00000000000000000000A1 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA00000000000000000000A3 /* Sparkle */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		AA0000000000000000000090 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -26,6 +30,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
+				Joinery.entitlements,
 			);
 			target = AA0000000000000000000040 /* Joinery */;
 		};
@@ -52,6 +57,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				AA00000000000000000000A1 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -102,6 +108,9 @@
 				AA0000000000000000000010 /* Joinery */,
 			);
 			name = Joinery;
+			packageProductDependencies = (
+				AA00000000000000000000A3 /* Sparkle */,
+			);
 			productName = Joinery;
 			productReference = AA0000000000000000000001 /* Joinery.app */;
 			productType = "com.apple.product-type.application";
@@ -155,6 +164,9 @@
 			);
 			mainGroup = AA0000000000000000000030;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				AA00000000000000000000A2 /* XCRemoteSwiftPackageReference "Sparkle" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = AA0000000000000000000031 /* Products */;
 			projectDirPath = "";
@@ -218,6 +230,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 52VNNZ4G6R;
+				CODE_SIGN_ENTITLEMENTS = Joinery/Joinery.entitlements;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
@@ -226,6 +239,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Joinery/Info.plist;
+				SPARKLE_FEED_URL = "";
 				INFOPLIST_KEY_CFBundleDisplayName = Joinery;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -251,6 +265,7 @@
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 52VNNZ4G6R;
+				CODE_SIGN_ENTITLEMENTS = Joinery/Joinery.entitlements;
 				ENABLE_APP_SANDBOX = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
@@ -259,6 +274,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Joinery/Info.plist;
+				SPARKLE_FEED_URL = "";
 				INFOPLIST_KEY_CFBundleDisplayName = Joinery;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
@@ -375,6 +391,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		AA00000000000000000000A2 /* XCRemoteSwiftPackageReference "Sparkle" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/sparkle-project/Sparkle";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.10.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		AA00000000000000000000A3 /* Sparkle */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = AA00000000000000000000A2 /* XCRemoteSwiftPackageReference "Sparkle" */;
+			productName = Sparkle;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = AA0000000000000000000050 /* Project object */;
 }
