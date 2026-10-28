@@ -93,10 +93,11 @@ noticing, and can't forge a change from the host. It can still withhold or delay
 gap or a stale `pong`, as they do now.
 
 Inside the encryption, a change is a list of ops in a compact binary form: entity IDs as 16 raw bytes, field names as
-one-byte codes, values tagged by type, strings length-prefixed. Clients read strings where they lie in the buffer. The
-exact encoding goes in an appendix once the Swift side settles it. To give a sense of size: renaming a table is about
-75 bytes of JSON today and about 30 bytes of ops in binary, plus 28 bytes of nonce and tag, 24 of header and 2 to 4 of
-WebSocket framing. On small frames the framing outweighs the ops.
+one-byte codes, values tagged by type, strings length-prefixed. The appendix has the exact encoding;
+`Joinery/Collaboration/Protocol/Wire.swift` and the web client's `wire` script both implement it, and tests check that
+each reads the other's bytes and writes identical ones. Measured on the examples, a whole model is 34–35% of its JSON
+size (Sakila: 26,719 bytes as JSON, 9,475 binary), and renaming a table is 28 bytes against 90. Encryption adds 28
+bytes, the header 24 and WebSocket framing 2 to 4, so on small frames the framing outweighs the ops.
 
 ### Zero copy on the relay
 
@@ -289,3 +290,37 @@ Each step ends with tests passing, and nothing goes in front of the Zig work tha
   lid closing. We'll revisit this after using it.
 - **Is a 2 MiB ring the right default?** It's sized by guessing at heavy editing. Step 2's simulation should tell us how
   often guests get dropped at that size.
+
+## Appendix: the ops encoding
+
+All integers are little-endian. A *varint* is unsigned LEB128, at most 10 bytes. A *string* is a varint byte count
+then UTF-8.
+
+```
+ops     = varint count, then count × op
+op      = 1 (put)    varint field-count, then field-count × (field, value)
+        | 2 (set)    value (the ID), field, value
+        | 3 (delete) value (the ID)
+field   = a byte 1–23, a code from the table below
+        | 0, then the name as a string
+value   = 0 null | 1 false | 2 true
+        | 3, then 8 bytes: an IEEE 754 double
+        | 4, then a string
+        | 5, then 16 bytes: a UUID, read back as uppercase text
+        | 6, then varint count, then count × value          (an array)
+        | 7, then varint count, then count × (string, value) (an object)
+```
+
+Field codes, never reused or renumbered: 1 id, 2 kind, 3 order, 4 name, 5 position, 6 color, 7 group, 8 notes,
+9 samples, 10 table, 11 type, 12 isPrimaryKey, 13 isNullable, 14 isUnique, 15 from, 16 to, 17 zipTies, 18 direction,
+19 heldDirection, 20 relationships, 21 column, 22 side, 23 along.
+
+To make the same ops give the same bytes everywhere:
+- A string is written as tag 5 only if it's exactly an uppercase UUID, `XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX` in
+  `0-9A-F`, so it reads back as the same text. Anything else, a lowercase UUID included, is tag 4.
+- A put's fields and an object's keys are written sorted by UTF-16 code units, as JavaScript's `sort` orders them.
+- Numbers are always 8-byte doubles, so they read back exactly.
+
+Readers check every count against the bytes left, limit nesting to 32 levels, and reject bytes after the last op, so
+damaged input is refused rather than read past its end.
+

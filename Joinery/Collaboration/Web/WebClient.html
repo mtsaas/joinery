@@ -58,6 +58,157 @@
 </div>
 <div class="status" id="status">Connecting…</div>
 <div class="pill toast" id="toast" hidden></div>
+<script id="wire">
+"use strict";
+// The binary form of session messages, byte for byte as Wire.swift writes it: see docs/relay.md. A 24-byte header,
+// then a body; a change's body is its ops, with known field names as one byte, IDs as 16 bytes and lengths as varints.
+const Wire = (() => {
+  const VERSION = 1, HEADER_SIZE = 24;
+  const KINDS = ["hello", "ops", "reject", "change", "snapshot", "snapshotRequest", "presence", "ping", "pong", "joined", "left", "bye"];
+  // Never reused or renumbered: code n is FIELDS[n - 1], and 0 means the name follows in full.
+  const FIELDS = ["id", "kind", "order", "name", "position", "color", "group", "notes", "samples", "table", "type",
+    "isPrimaryKey", "isNullable", "isUnique", "from", "to", "zipTies", "direction", "heldDirection",
+    "relationships", "column", "side", "along"];
+  const CODES = new Map(FIELDS.map((name, i) => [name, i + 1]));
+  const NULL = 0, FALSE = 1, TRUE = 2, NUMBER = 3, STRING = 4, UUID = 5, ARRAY = 6, OBJECT = 7;
+  const PUT = 1, SET = 2, DELETE = 3;
+  const UUID_TEXT = /^[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/;
+  const utf8 = new TextEncoder(), text = new TextDecoder("utf-8", { fatal: true });
+  const malformed = what => new Error("Malformed message: " + what);
+
+  class Writer {
+    constructor() { this.bytes = new Uint8Array(256); this.length = 0; }
+    room(n) {
+      if (this.length + n <= this.bytes.length) return;
+      const bigger = new Uint8Array(Math.max(this.bytes.length * 2, this.length + n));
+      bigger.set(this.bytes.subarray(0, this.length));
+      this.bytes = bigger;
+    }
+    byte(b) { this.room(1); this.bytes[this.length++] = b; }
+    raw(bytes) { this.room(bytes.length); this.bytes.set(bytes, this.length); this.length += bytes.length; }
+    varint(n) { while (n >= 0x80) { this.byte((n % 0x80) | 0x80); n = Math.floor(n / 0x80); } this.byte(n); }
+    string(s) { const b = utf8.encode(s); this.varint(b.length); this.raw(b); }
+    number(n) { const b = new Uint8Array(8); new DataView(b.buffer).setFloat64(0, n, true); this.raw(b); }
+    field(name) { const code = CODES.get(name); if (code) this.byte(code); else { this.byte(0); this.string(name); } }
+    value(v) {
+      if (v === null || v === undefined) this.byte(NULL);
+      else if (v === false) this.byte(FALSE);
+      else if (v === true) this.byte(TRUE);
+      else if (typeof v === "number") { this.byte(NUMBER); this.number(v); }
+      else if (typeof v === "string") {
+        if (UUID_TEXT.test(v)) { this.byte(UUID); this.raw(Uint8Array.from(v.replace(/-/g, "").match(/../g), h => parseInt(h, 16))); }
+        else { this.byte(STRING); this.string(v); }
+      } else if (Array.isArray(v)) { this.byte(ARRAY); this.varint(v.length); v.forEach(e => this.value(e)); }
+      else { const keys = Object.keys(v).sort(); this.byte(OBJECT); this.varint(keys.length); for (const k of keys) { this.string(k); this.value(v[k]); } }
+    }
+    done() { return this.bytes.slice(0, this.length); }
+  }
+
+  // Checks every length against what's left, so bad bytes throw instead of reading past the end.
+  class Reader {
+    constructor(bytes) { this.bytes = bytes; this.index = 0; this.depth = 0; }
+    get atEnd() { return this.index === this.bytes.length; }
+    byte() { if (this.index >= this.bytes.length) throw malformed("too few bytes"); return this.bytes[this.index++]; }
+    take(n) {
+      if (n > this.bytes.length - this.index) throw malformed("too few bytes");
+      const out = this.bytes.subarray(this.index, this.index + n); this.index += n; return out;
+    }
+    varint() {
+      let value = 0;
+      for (let scale = 1; scale <= 2 ** 63; scale *= 0x80) {
+        const b = this.byte(); value += (b & 0x7f) * scale;
+        if (!(b & 0x80)) return value;
+      }
+      throw malformed("a number too long");
+    }
+    count() { const n = this.varint(); if (n > this.bytes.length - this.index) throw malformed("a count past the end"); return n; }
+    string() {
+      const bytes = this.take(this.count());
+      try { return text.decode(bytes); } catch { throw malformed("text that isn't UTF-8"); }
+    }
+    field() {
+      const code = this.byte();
+      if (code === 0) return this.string();
+      if (code > FIELDS.length) throw malformed("an unknown field");
+      return FIELDS[code - 1];
+    }
+    nested(read) {
+      if (++this.depth > 32) throw malformed("values nested too deeply");
+      try { return read(); } finally { this.depth--; }
+    }
+    value() {
+      switch (this.byte()) {
+        case NULL: return null;
+        case FALSE: return false;
+        case TRUE: return true;
+        case NUMBER: { const b = this.take(8); return new DataView(b.buffer, b.byteOffset, 8).getFloat64(0, true); }
+        case STRING: return this.string();
+        case UUID: {
+          const h = Array.from(this.take(16), b => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+          return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+        }
+        case ARRAY: return this.nested(() => Array.from({ length: this.count() }, () => this.value()));
+        case OBJECT: return this.nested(() => {
+          const object = {}, n = this.count();
+          for (let i = 0; i < n; i++) { const k = this.string(); object[k] = this.value(); }
+          return object;
+        });
+        default: throw malformed("an unknown kind of value");
+      }
+    }
+    id() { const id = this.value(); if (typeof id !== "string") throw malformed("an ID that isn't a string"); return id; }
+  }
+
+  return {
+    HEADER_SIZE, KINDS,
+    // Ops as the JSON protocol has them: {op: "put", entity}, {op: "set", id, field, value}, {op: "delete", id}.
+    encodeOps(ops) {
+      const w = new Writer();
+      w.varint(ops.length);
+      for (const op of ops) {
+        if (op.op === "put") {
+          const keys = Object.keys(op.entity).sort();
+          w.byte(PUT); w.varint(keys.length);
+          for (const k of keys) { w.field(k); w.value(op.entity[k]); }
+        } else if (op.op === "set") { w.byte(SET); w.value(op.id); w.field(op.field); w.value(op.value); }
+        else if (op.op === "delete") { w.byte(DELETE); w.value(op.id); }
+        else throw new Error("Unknown op " + op.op);
+      }
+      return w.done();
+    },
+    decodeOps(bytes) {
+      const r = new Reader(bytes), ops = [], n = r.count();
+      for (let i = 0; i < n; i++) {
+        switch (r.byte()) {
+          case PUT: { const entity = {}, fields = r.count(); for (let f = 0; f < fields; f++) { const k = r.field(); entity[k] = r.value(); } ops.push({ op: "put", entity }); break; }
+          case SET: { const id = r.id(), field = r.field(); ops.push({ op: "set", id, field, value: r.value() }); break; }
+          case DELETE: ops.push({ op: "delete", id: r.id() }); break;
+          default: throw malformed("an unknown op");
+        }
+      }
+      if (!r.atEnd) throw malformed("bytes after the last op");
+      return ops;
+    },
+    // {kind, flags, length, seq, peer}, in 24 bytes.
+    encodeHeader({ kind, flags = 0, length, seq = 0, peer = 0 }) {
+      const b = new Uint8Array(HEADER_SIZE), d = new DataView(b.buffer);
+      const code = KINDS.indexOf(kind) + 1;
+      if (!code) throw new Error("Unknown kind " + kind);
+      d.setUint8(0, VERSION); d.setUint8(1, code); d.setUint16(2, flags, true); d.setUint32(4, length, true);
+      d.setBigUint64(8, BigInt(seq), true); d.setUint32(16, peer, true);
+      return b;
+    },
+    decodeHeader(bytes) {
+      if (bytes.length < HEADER_SIZE) throw malformed("too few bytes");
+      const d = new DataView(bytes.buffer, bytes.byteOffset, HEADER_SIZE);
+      if (d.getUint8(0) !== VERSION) throw malformed("an unknown version");
+      const kind = KINDS[d.getUint8(1) - 1];
+      if (!kind) throw malformed("an unknown kind of message");
+      return { kind, flags: d.getUint16(2, true), length: d.getUint32(4, true), seq: Number(d.getBigUint64(8, true)), peer: d.getUint32(16, true) };
+    },
+  };
+})();
+</script>
 <script>
 "use strict";
 // Joinery's session protocol, version 1: see docs/collaboration.md. The host's copy is the true one; changes made here
