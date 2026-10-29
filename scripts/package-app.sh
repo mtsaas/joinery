@@ -32,6 +32,16 @@ xcodebuild -project Joinery.xcodeproj -scheme Joinery -configuration Release -de
 app="$out/Joinery.app"
 rm -rf "$app"
 ditto "$out/Joinery.xcarchive/Products/Applications/Joinery.app" "$app"
+# Sparkle's helpers come signed by Sparkle, and the archive doesn't re-sign them; notarization needs every one signed
+# with the Developer ID, the hardened runtime and a timestamp. Inside out, as Sparkle's documentation does it, then the
+# app again, keeping its entitlements.
+sign() { codesign --force --sign "Developer ID Application" --options runtime --timestamp "$@"; }
+sparkle="$app/Contents/Frameworks/Sparkle.framework"
+for xpc in "$sparkle"/Versions/B/XPCServices/*.xpc; do [ -e "$xpc" ] && sign --preserve-metadata=entitlements "$xpc"; done
+sign "$sparkle/Versions/B/Autoupdate"
+sign "$sparkle/Versions/B/Updater.app"
+sign "$sparkle"
+sign --preserve-metadata=entitlements "$app"
 codesign --verify --deep --strict "$app"
 
 # Notarizes and staples; if Apple turns it down, prints why.
