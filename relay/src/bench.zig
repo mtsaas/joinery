@@ -3,10 +3,10 @@
 
 const std = @import("std");
 const Io = std.Io;
-const Relay = @import("Relay.zig");
-const Log = @import("Log.zig");
-const Server = @import("Server.zig");
-const wire = @import("wire.zig");
+const Relay = @import("relay/Relay.zig");
+const Log = @import("relay/Log.zig");
+const websocket = @import("server/websocket.zig");
+const wire = @import("relay/wire.zig");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -29,12 +29,12 @@ pub fn main(init: std.process.Init) !void {
     @memset(snapshot, 7);
     try bench(io, &counting, "unmask a 124-byte change", 10_000_000, struct {
         fn run(bytes: []u8, i: usize) void {
-            Server.unmask(bytes[0..124], .{ 1, 2, 3, @truncate(i) });
+            websocket.unmask(bytes[0..124], .{ 1, 2, 3, @truncate(i) });
         }
     }.run, .{snapshot});
     try bench(io, &counting, "unmask a 1 MiB snapshot", 200, struct {
         fn run(bytes: []u8, i: usize) void {
-            Server.unmask(bytes, .{ 1, 2, 3, @truncate(i) });
+            websocket.unmask(bytes, .{ 1, 2, 3, @truncate(i) });
         }
     }.run, .{snapshot});
 

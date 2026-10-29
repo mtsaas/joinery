@@ -177,7 +177,7 @@ Every room's block is the same size, so a freed block is reused for the next roo
 however rooms come and go.
 
 As built, a room is a few allocations made together, not one block: the log ring, which is the log limit plus the
-largest frame (3 MiB) so a frame always fits whole without splitting at the ring's end (`relay/src/Log.zig` has the
+largest frame (3 MiB) so a frame always fits whole without splitting at the ring's end (`relay/src/relay/Log.zig` has the
 proof); one snapshot slot (1 MiB), since sends copy the snapshot out at once and no guest is ever partway through
 reading it; 31 guest slots; and 1,024 remembered clients (72 KiB), each keeping its peer for the room's life, after
 which new clients are turned away as if the room were full. The large buffers (a room's log and snapshot, a connection's read

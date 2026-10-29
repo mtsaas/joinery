@@ -13,8 +13,9 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Io = std.Io;
 const c = std.c;
-const wire = @import("wire.zig");
-const Server = @import("Server.zig");
+const wire = @import("relay/wire.zig");
+const poller = @import("server/poller.zig");
+const socket = @import("server/socket.zig");
 
 /// Where the relay is.
 var relay_address: [4]u8 = .{ 127, 0, 0, 1 };
@@ -123,7 +124,7 @@ pub fn main(init: std.process.Init) !void {
             .config = config,
             .rooms = try init.gpa.alloc(Room, rooms),
             .conns = try init.gpa.alloc(Conn, rooms * (1 + config.guests)),
-            .poller = try Server.Poller.init(),
+            .poller = try poller.Poller.init(),
         };
         thread.* = try std.Thread.spawn(.{}, Loop.run, .{loop});
     }
@@ -179,7 +180,7 @@ const Loop = struct {
     config: Config,
     rooms: []Room,
     conns: []Conn,
-    poller: Server.Poller,
+    poller: poller.Poller,
     /// Whether it's past the start: only then does what's sent and delivered count.
     counting: bool = false,
     stats: Stats = .{},
@@ -197,7 +198,7 @@ const Loop = struct {
             };
         }
         _ = opened.fetchAdd(1, .release);
-        var events: [256]Server.Event = undefined;
+        var events: [256]poller.Event = undefined;
         var end: i64 = std.math.maxInt(i64);
         while (true) {
             for (loop.poller.wait(&events, 1) catch return) |event| loop.receive(@ptrFromInt(event.tag));
@@ -258,7 +259,7 @@ const Loop = struct {
             try guest.flushAll();
         }
         for (conns) |*conn| {
-            try Server.setNonblocking(conn.fd);
+            try socket.setNonblocking(conn.fd);
             // A slow guest reads on a timer, not when there's something to.
             if (conn.role != .slow) try loop.poller.add(conn.fd, @intFromPtr(conn));
         }

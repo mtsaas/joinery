@@ -1,5 +1,5 @@
 #!/bin/bash
-# Records what the Swift relay (RelayCore) hears and does in the simulation, into relay/src/testdata, for the Zig relay's
+# Records what the Swift relay (RelayCore) hears and does in the simulation, into relay/src/relay/testdata, for the Zig relay's
 # replay test. Run from the repository root after changing the protocol, then commit the traces.
 set -euo pipefail
 out=/tmp/joinery-traces
@@ -9,7 +9,7 @@ xcodebuild test -project Joinery.xcodeproj -scheme Joinery -derivedDataPath /tmp
   '-only-testing:JoineryTests/RelaySimulation/recordsTracesForTheZigRelay()' -quiet
 xcrun xcresulttool export attachments --path "$out/result.xcresult" --output-path "$out/attachments"
 # The export names files by UUID; its manifest maps them back.
-python3 - "$out/attachments" relay/src/testdata <<'PY'
+python3 - "$out/attachments" relay/src/relay/testdata <<'PY'
 import json, os, re, shutil, sys
 src, dst = sys.argv[1:]
 for test in json.load(open(os.path.join(src, "manifest.json"))):

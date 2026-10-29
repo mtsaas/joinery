@@ -9,7 +9,8 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
-const Server = @import("Server.zig");
+const Server = @import("server/Server.zig");
+const socket = @import("server/socket.zig");
 
 pub const std_options: std.Options = .{ .logFn = log };
 
@@ -63,13 +64,13 @@ pub fn main(init: std.process.Init) !void {
     // On Linux each loop has its own listener on the port, and the kernel spreads connections across them evenly. One
     // shared, it woke the same few loops first: they took most of the rooms, the busiest 20 times the quietest's work.
     const own_listeners = builtin.os.tag == .linux;
-    const shared_listener = try listen(address, own_listeners);
-    const metrics_listener = try listen(metrics_address, false);
+    const shared_listener = try socket.listen(address, own_listeners);
+    const metrics_listener = try socket.listen(metrics_address, false);
     // A loop per thread, each with its own rooms; this thread runs the first.
     const loops = try init.gpa.alloc(*Server, threads);
     for (loops, 0..) |*loop, i| {
         loop.* = try init.gpa.create(Server);
-        const listener = if (own_listeners and i > 0) try listen(address, true) else shared_listener;
+        const listener = if (own_listeners and i > 0) try socket.listen(address, true) else shared_listener;
         try loop.*.init(io, init.gpa, .{}, @intCast(i), listener, metrics_listener);
     }
     for (loops) |loop| loop.loops = loops;
@@ -90,24 +91,6 @@ fn runLoop(loop: *Server, pin: ?usize) void {
         std.os.linux.sched_setaffinity(0, &set) catch |err| std.debug.panic("couldn't pin loop {d} to CPU {d}: {t}", .{ loop.index, cpu, err });
     }
     loop.run() catch |err| std.debug.panic("loop {d} stopped: {t}", .{ loop.index, err });
-}
-
-/// A non-blocking TCP listener on `address`, with room for a burst of connections, as after a network blip.
-fn listen(address: std.Io.net.Ip4Address, reuse_port: bool) !std.c.fd_t {
-    const c = std.c;
-    const fd = c.socket(c.AF.INET, c.SOCK.STREAM, 0);
-    if (fd < 0) return error.SystemResources;
-    const one: c_int = 1;
-    _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.REUSEADDR, &one, @sizeOf(c_int));
-    if (reuse_port) _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.REUSEPORT, &one, @sizeOf(c_int));
-    var sockaddr: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, address.port), .addr = @bitCast(address.bytes) };
-    if (c.bind(fd, @ptrCast(&sockaddr), @sizeOf(c.sockaddr.in)) < 0) return error.AddressInUse;
-    if (c.listen(fd, 4096) < 0) return error.SystemResources;
-    const flags = c.fcntl(fd, c.F.GETFL);
-    var o: c.O = @bitCast(@as(u32, @intCast(flags)));
-    o.NONBLOCK = true;
-    _ = c.fcntl(fd, c.F.SETFL, @as(c_int, @bitCast(@as(u32, @bitCast(o)))));
-    return fd;
 }
 
 fn usage() error{Usage} {
