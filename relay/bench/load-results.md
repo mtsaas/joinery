@@ -479,3 +479,13 @@ Above 20,000 rooms the runs don't agree with each other, and both sides show str
 further behind than the second every time. The third VM made the other two worse when it joined, at 20,000 rooms
 as well, so the measurements above leave it out. The ceiling is somewhere between 20,000 and 40,000 rooms per
 16-core relay; the rig doesn't yet say where.
+
+## Hold-back, removed
+
+Holding a behind loop's hosts back is gone. It was meant to make hosts wait rather than the relay's memory grow, but
+with real traffic it held back the wrong people: nearly all the load is guests' pointer updates, so holding hosts
+back shed almost none of it and only delayed their changes, the messages that matter most. It went by how long a
+turn took, and a single busy turn of 25–36 ms set it off on loops 40% idle. And a held-back host, not being read,
+looked silent and was dropped. What bounds memory is what was there before it: each connection's outbox is a fixed
+size, a connection that fills it is closed and caught up from the snapshot when it's back, and a connection that's
+behind is held only the newest pointer update from each person.

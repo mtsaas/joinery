@@ -44,8 +44,6 @@ inbox: std.atomic.Value(?*Conn) = .init(null),
 wake: [2]c.fd_t,
 /// Connections to hand to another loop at the end of this turn.
 leaving: std.ArrayList(*Conn) = .empty,
-/// Hosts not being read while this loop catches up, so they send no faster than it can pass their changes on.
-held_back: std.ArrayList(*Conn) = .empty,
 /// This loop's metrics as of its last tick, for the loop answering scrapes to add up.
 published: metrics.Published = .{},
 published_lock: Io.Mutex = .init,
@@ -75,11 +73,6 @@ started: i64,
 const tick_ms = 1000;
 /// A connection the relay has closed gets this long to take what's queued for it, its goodbye say.
 const closing_grace_ms = 5000;
-/// A turn this long means the loop's behind: it holds its rooms' hosts back, not reading what they send, until a
-/// turn's this short again. Their TCP windows close, so they send no faster than the loop can pass changes on, rather
-/// than the loop's queues, memory and latency growing without bound.
-const behind_ns = 20 * std.time.ns_per_ms;
-const caught_up_ns = 5 * std.time.ns_per_ms;
 /// A connection gets this long to finish its HTTP request.
 const request_ms = 10_000;
 
@@ -116,7 +109,6 @@ pub fn deinit(server: *Server) void {
     server.dirty.deinit(server.gpa);
     server.done.deinit(server.gpa);
     server.leaving.deinit(server.gpa);
-    server.held_back.deinit(server.gpa);
 }
 
 /// What the poller hands back for the listeners and the wake pipe; connections are their own addresses.
@@ -130,8 +122,7 @@ pub fn run(server: *Server) !void {
     var next_tick = server.now() + tick_ms;
     while (true) {
         const ready = try server.poller.wait(&events, @intCast(@max(next_tick - server.now(), 0)));
-        const turn_start = Io.Clock.boot.now(server.io).nanoseconds;
-        server.time = @intCast(@divFloor(turn_start, std.time.ns_per_ms));
+        server.time = server.now();
         for (ready) |event| switch (event.tag) {
             listener_tag => server.accept(server.listener, .http),
             metrics_tag => server.accept(server.metrics_listener, .metrics),
@@ -146,42 +137,11 @@ pub fn run(server: *Server) !void {
         const time = server.time;
         if (time >= next_tick) {
             next_tick = time + tick_ms;
-            // A host held back isn't silent: it's this loop that isn't listening.
-            for (server.held_back.items) |conn| conn.link.heard = time;
             server.relay.tick(time);
             server.expire(time);
             server.publish();
         }
         server.finishTurn();
-        server.regulate(@intCast(Io.Clock.boot.now(server.io).nanoseconds - turn_start));
-    }
-}
-
-/// Holds this loop's hosts back if that turn showed it's behind, or lets them go if it's caught up.
-fn regulate(server: *Server, turn_ns: i64) void {
-    if (server.held_back.items.len == 0 and turn_ns > behind_ns) {
-        var next = server.conns.first;
-        while (next) |node| : (next = node.next) {
-            const conn: *Conn = @fieldParentPtr("node", node);
-            const room = conn.link.room orelse continue;
-            if (room.host != &conn.link or conn.hot.state != .open) continue;
-            server.poller.wantRead(conn.fd, @intFromPtr(conn), false, conn.hot.wants_write) catch continue;
-            conn.held_back = true;
-            server.held_back.appendAssumeCapacity(conn);
-        }
-        // A loop busy with guests alone has no hosts to hold back.
-        if (server.held_back.items.len == 0) return;
-        server.counts.hold_backs += 1;
-        server.counts.hosts_held_back = server.held_back.items.len;
-        log.info("loop {d} is behind ({d} ms a turn): holding {d} hosts back", .{ server.index, @divFloor(turn_ns, std.time.ns_per_ms), server.held_back.items.len });
-    } else if (server.held_back.items.len > 0 and turn_ns < caught_up_ns) {
-        for (server.held_back.items) |conn| {
-            conn.held_back = false;
-            server.poller.wantRead(conn.fd, @intFromPtr(conn), true, conn.hot.wants_write) catch server.lose(conn, null);
-        }
-        server.held_back.clearRetainingCapacity();
-        server.counts.hosts_held_back = 0;
-        log.info("loop {d} has caught up: reading its hosts again", .{server.index});
     }
 }
 
@@ -225,7 +185,6 @@ fn watch(server: *Server, conn: *Conn) !void {
     try server.dirty.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.done.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.leaving.ensureTotalCapacity(server.gpa, server.conn_count + 1);
-    try server.held_back.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.poller.add(conn.fd, @intFromPtr(conn));
     server.conn_count += 1;
     server.conns.append(&conn.node);
@@ -346,12 +305,6 @@ fn shut(server: *Server, conn: *Conn) void {
     if (conn.in_relay) server.counts.connections_open -= 1;
     conn.in_relay = false;
     conn.hot.state = .gone;
-    if (conn.held_back) {
-        conn.held_back = false;
-        const i = std.mem.indexOfScalar(*Conn, server.held_back.items, conn).?;
-        _ = server.held_back.swapRemove(i);
-        server.counts.hosts_held_back = server.held_back.items.len;
-    }
     _ = c.close(conn.fd);
     server.conns.remove(&conn.node);
     server.conn_count -= 1;
@@ -446,7 +399,7 @@ fn flush(server: *Server, conn: *Conn) void {
         pointers.count = 0;
     }
     if (conn.hot.wants_write) {
-        server.poller.wantWrite(conn.fd, @intFromPtr(conn), false, !conn.held_back) catch {};
+        server.poller.wantWrite(conn.fd, @intFromPtr(conn), false) catch {};
         conn.hot.wants_write = false;
     }
     if (conn.hot.state == .closing) server.shut(conn);
@@ -460,7 +413,7 @@ fn send(server: *Server, conn: *Conn) ?void {
         if (n < 0) {
             if (c.errno(n) == .AGAIN) {
                 // Told when it can take more.
-                if (!conn.hot.wants_write) server.poller.wantWrite(conn.fd, @intFromPtr(conn), true, !conn.held_back) catch {
+                if (!conn.hot.wants_write) server.poller.wantWrite(conn.fd, @intFromPtr(conn), true) catch {
                     server.lose(conn, null);
                     return null;
                 };

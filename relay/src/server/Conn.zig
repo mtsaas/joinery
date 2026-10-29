@@ -14,8 +14,6 @@ hot: Hot,
 link: Relay.Link,
 fd: c.fd_t,
 kind: Kind,
-/// A host not being read while its loop catches up.
-held_back: bool = false,
 /// While it's being handed to another loop, the next in that loop's inbox, and which loop.
 next_handed: ?*Conn = null,
 owner: u8 = 0,

@@ -41,15 +41,8 @@ const Kqueue = struct {
         if (writing) k.change(fd, c.EVFILT.WRITE, c.EV.DELETE, 0) catch {};
     }
 
-    /// Whether the socket's reported readable; writable stays as it is.
-    pub fn wantRead(k: *Kqueue, fd: c.fd_t, tag: usize, on: bool, writing: bool) !void {
-        _ = writing;
-        try k.change(fd, c.EVFILT.READ, if (on) c.EV.ENABLE else c.EV.DISABLE, tag);
-    }
-
-    /// Whether the socket's reported writable; readable stays as it is.
-    pub fn wantWrite(k: *Kqueue, fd: c.fd_t, tag: usize, on: bool, reading: bool) !void {
-        _ = reading;
+    /// Whether the socket's reported writable, as well as readable.
+    pub fn wantWrite(k: *Kqueue, fd: c.fd_t, tag: usize, on: bool) !void {
         try k.change(fd, c.EVFILT.WRITE, if (on) c.EV.ADD | c.EV.ENABLE else c.EV.DELETE, tag);
     }
 
@@ -95,20 +88,11 @@ const Epoll = struct {
         e.control(std.os.linux.EPOLL.CTL_DEL, fd, 0, 0) catch {};
     }
 
-    /// What the socket's reported for: epoll sets both at once.
-    fn watchFor(e: *Epoll, fd: c.fd_t, tag: usize, reading: bool, writing: bool) !void {
+    /// Whether the socket's reported writable, as well as readable.
+    pub fn wantWrite(e: *Epoll, fd: c.fd_t, tag: usize, on: bool) !void {
         const linux = std.os.linux;
-        const in: u32 = if (reading) linux.EPOLL.IN else 0;
-        const out: u32 = if (writing) linux.EPOLL.OUT else 0;
-        try e.control(linux.EPOLL.CTL_MOD, fd, in | out, tag);
-    }
-
-    pub fn wantRead(e: *Epoll, fd: c.fd_t, tag: usize, on: bool, writing: bool) !void {
-        try e.watchFor(fd, tag, on, writing);
-    }
-
-    pub fn wantWrite(e: *Epoll, fd: c.fd_t, tag: usize, on: bool, reading: bool) !void {
-        try e.watchFor(fd, tag, reading, on);
+        const out: u32 = if (on) linux.EPOLL.OUT else 0;
+        try e.control(linux.EPOLL.CTL_MOD, fd, linux.EPOLL.IN | out, tag);
     }
 
     pub fn wait(e: *Epoll, events: []Event, timeout_ms: u64) ![]Event {
