@@ -60,8 +60,11 @@ time: i64 = 0,
 /// Every connection, for the tick to visit.
 conns: std.DoublyLinkedList = .{},
 conn_count: usize = 0,
-/// Connections with something to send this turn, each once.
+/// Connections with something to send, each once; and those of them still waiting out the batch window.
 dirty: std.ArrayList(*Conn) = .empty,
+waiting: std.ArrayList(*Conn) = .empty,
+/// How long a connection's queue waits for more before it's sent, so a `send` carries more: 0 sends every turn.
+batch_ms: i64 = 0,
 /// Connections to let go of at the end of this turn, once nothing more can mention them.
 done: std.ArrayList(*Conn) = .empty,
 /// The network's side of the metrics.
@@ -107,6 +110,7 @@ pub fn init(server: *Server, io: Io, gpa: Allocator, config: Relay.Config, index
 pub fn deinit(server: *Server) void {
     server.relay.deinit();
     server.dirty.deinit(server.gpa);
+    server.waiting.deinit(server.gpa);
     server.done.deinit(server.gpa);
     server.leaving.deinit(server.gpa);
 }
@@ -121,7 +125,10 @@ pub fn run(server: *Server) !void {
     var events: [256]Event = undefined;
     var next_tick = server.now() + tick_ms;
     while (true) {
-        const ready = try server.poller.wait(&events, @intCast(@max(next_tick - server.now(), 0)));
+        // Woken for the tick, or for queues waiting out the batch window.
+        var timeout = next_tick - server.now();
+        if (server.dirty.items.len > 0) timeout = @min(timeout, server.batch_ms);
+        const ready = try server.poller.wait(&events, @intCast(@max(timeout, 0)));
         server.time = server.now();
         for (ready) |event| switch (event.tag) {
             listener_tag => server.accept(server.listener, .http),
@@ -183,6 +190,7 @@ fn adopt(server: *Server, fd: c.fd_t, kind: Conn.Kind) !void {
 fn watch(server: *Server, conn: *Conn) !void {
     // Room for every connection in a turn's lists, so adding to them in a turn never allocates or fails.
     try server.dirty.ensureTotalCapacity(server.gpa, server.conn_count + 1);
+    try server.waiting.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.done.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.leaving.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.poller.add(conn.fd, @intFromPtr(conn));
@@ -338,6 +346,7 @@ fn expire(server: *Server, now_ms: i64) void {
 fn markDirty(server: *Server, conn: *Conn) void {
     if (conn.hot.is_dirty or conn.hot.state == .gone or conn.hot.state == .leaving) return;
     conn.hot.is_dirty = true;
+    conn.hot.dirty_since = server.time;
     server.dirty.appendAssumeCapacity(conn);
 }
 
@@ -378,11 +387,17 @@ fn finishTurn(server: *Server) void {
         if (conn.hot.state == .lagging) server.lose(conn, null);
     }
     for (server.dirty.items) |conn| {
+        // Not yet waited the window: more may come for it to carry.
+        if (conn.hot.state == .open and server.time - conn.hot.dirty_since < server.batch_ms) {
+            server.waiting.appendAssumeCapacity(conn);
+            continue;
+        }
         if (conn.hot.state == .open or conn.hot.state == .closing) server.flush(conn);
         // After: sending queues what was held, which would list it again.
         conn.hot.is_dirty = false;
     }
     server.dirty.clearRetainingCapacity();
+    std.mem.swap(std.ArrayList(*Conn), &server.dirty, &server.waiting);
     for (server.leaving.items) |conn| server.handOver(conn);
     server.leaving.clearRetainingCapacity();
     for (server.done.items) |conn| server.free(conn);

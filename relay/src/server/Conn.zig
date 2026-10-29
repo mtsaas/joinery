@@ -50,6 +50,8 @@ pub const Hot = struct {
     } = .open,
     is_dirty: bool = false,
     wants_write: bool = false,
+    /// When its queue was last empty and got something: with a batch window, it's sent once it's waited that long.
+    dirty_since: i64 = 0,
 
     comptime {
         assert(@sizeOf(Hot) <= std.atomic.cache_line);
