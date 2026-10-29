@@ -246,7 +246,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.clarkmccauley.joinery;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mtsaas.joinery;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SPARKLE_FEED_URL = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -281,7 +281,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.clarkmccauley.joinery;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mtsaas.joinery;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SPARKLE_FEED_URL = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -298,7 +298,7 @@
 				DEVELOPMENT_TEAM = 52VNNZ4G6R;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.clarkmccauley.joineryTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mtsaas.joineryTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;
@@ -315,7 +315,7 @@
 				DEVELOPMENT_TEAM = 52VNNZ4G6R;
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.clarkmccauley.joineryTests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mtsaas.joineryTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 6.0;

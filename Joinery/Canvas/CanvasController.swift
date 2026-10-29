@@ -5,7 +5,7 @@ import SwiftUI
 @MainActor @Observable
 final class CanvasController {
     /// The pasteboard's name for a copied part of a data model: a `DataModel` as JSON.
-    static let clipType = NSPasteboard.PasteboardType("com.clarkmccauley.joinery.clip")
+    static let clipType = NSPasteboard.PasteboardType("com.mtsaas.joinery.clip")
 
     enum Item: Hashable {
         case table(Table.ID)

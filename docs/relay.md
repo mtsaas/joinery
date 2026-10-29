@@ -396,9 +396,10 @@ Each step ends with tests passing, and nothing goes in front of the Zig work tha
    - **The web client** was ported to the relay (a port of `RelayGuestCore`, with WebCrypto) and then removed: every
      guest is a Joinery. A link opened in a browser is told to paste it into Join. It's in git at `dc52670`, if it comes
      back.
-   - **The default relay** is `https://relay.joinery.clarkmccauley.com`, which step 6 deploys. Until then, Settings ▸
-     Sharing points the app at another, such as `http://localhost:8787`.
-6. **Deployment** behind Cloudflare.
+   - **The default relay** is one on the same Mac, `http://localhost:8787`, until there's a public one. Settings ▸
+     Sharing points the app at another.
+6. **Deployment:** the image `ghcr.io/mtsaas/joinery-relay` and the Helm chart
+   `oci://ghcr.io/mtsaas/charts/joinery-relay`, behind something that ends TLS.
 
 ## Open questions
 

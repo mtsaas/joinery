@@ -5,8 +5,8 @@ import Foundation
 /// `joined`, `left`, `pong` and `bye`; everything else it passes on as bytes. Peer 1 is always the host.
 enum Relay {
     static let hostPeer: UInt32 = 1
-    /// The relay sessions go through unless Settings names another.
-    static let ours = URL(string: "https://relay.joinery.clarkmccauley.com")!
+    /// The relay sessions go through unless Settings names another: one on this Mac, until there's a public one.
+    static let ours = URL(string: "http://localhost:8787")!
     /// The room version this copy speaks: what's inside the encryption, the ops and the model's fields.
     static let roomVersion: UInt64 = 1
     /// The longest a `hello`'s client, name and title can be, in bytes, so a relay can keep them in fixed space.

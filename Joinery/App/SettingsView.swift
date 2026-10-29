@@ -25,9 +25,9 @@ private struct SharingSettings: View {
             } footer: {
                 Text("""
                     Sharing goes through a relay, which passes changes between this Mac and everyone who's joined. \
-                    It can't read them: everything is encrypted end to end, with a key only the links carry. Leave \
-                    this empty for Joinery's relay, or give the address of one you run, such as http://localhost:8787. \
-                    Links name their relay, so people joining needn't set anything.
+                    It can't read them: everything is encrypted end to end, with a key only the links carry. Give the \
+                    address of one you run, such as wss://relay.example.com; left empty, it's one on this Mac. Links \
+                    name their relay, so people joining needn't set anything.
                     """)
                     .foregroundStyle(.secondary)
             }

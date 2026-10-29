@@ -2,7 +2,7 @@ import Foundation
 import UniformTypeIdentifiers
 
 extension UTType {
-    static let joineryDataModel = UTType(exportedAs: "com.clarkmccauley.joinery.schema")
+    static let joineryDataModel = UTType(exportedAs: "com.mtsaas.joinery.schema")
 }
 
 /// A `.joinery` data model is a package, a folder Finder shows as one file: the model, as `model.json`, and its earlier
@@ -51,7 +51,7 @@ extension DataModel {
 
 extension URL {
     /// Extended attributes the app keeps on files start with this.
-    static let attributePrefix = "com.clarkmccauley.joinery."
+    static let attributePrefix = "com.mtsaas.joinery."
 
     /// Whether it's a folder, as a `.joinery` package is (as it is now, on disk, not as the URL was spelled).
     var isPackage: Bool {
