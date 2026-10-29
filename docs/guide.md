@@ -121,20 +121,29 @@ From the baseline on, the canvas shows the comparison bar: Before, Changes and A
 
 ## Releases and updates
 
-`scripts/release.sh <version>` makes a release:
-1. Builds Joinery signed with the NexToner Developer ID, and has Apple notarize it.
-2. Puts it in a disk image whose window shows Joinery, an arrow and Applications.
-3. Publishes the disk image to a Cloudflare R2 bucket, at `Joinery-<version>.dmg` and at `Joinery.dmg` for a link that always gets the newest.
-4. Adds it to the update feed, `appcast.xml`, beside them.
+Releases are made by [release-please](https://github.com/googleapis/release-please) from commit messages in the
+[Conventional Commits](https://www.conventionalcommits.org) style: `fix:` for a fix, `feat:` for a feature, with
+`(relay)` or a change under `relay/` for the relay. It keeps a release pull request open for each of Joinery and the
+relay; merging one makes the release.
 
-Released copies check the feed through [Sparkle](https://sparkle-project.org) and offer each new version; Joinery ▸ Check for Updates… checks at once. Copies built in Xcode don't check. Each update is signed with a key kept in your login keychain, and Joinery installs only updates signed with it, so back the key up (`generate_keys -x <file>`, in Sparkle's tools, and keep it somewhere safe). Lose it and released copies can't be updated again.
+- **Joinery** (`joinery-v…`): the release workflow builds it signed with a Developer ID, has Apple notarize it, and
+  attaches the disk image to the release. It adds it to Sparkle's update feed, `appcast.xml`, on the `updates` release,
+  where `Joinery.dmg` is always the newest. Released copies check that feed and offer each new version; Joinery ▸
+  Check for Updates… checks at once. Copies built in Xcode don't check.
+- **The relay** (`relay-v…`): the image `ghcr.io/mtsaas/joinery-relay` and the Helm chart
+  `oci://ghcr.io/mtsaas/charts/joinery-relay`, both at the release's version. Every push to `main` also publishes the
+  image as `:main`.
 
-`scripts/release.sh <version> --dry-run` builds the disk image at `build/release` without notarizing or publishing it. `--skip-notarization` publishes without notarizing; macOS then blocks the first download from opening until it's allowed in System Settings ▸ Privacy & Security ▸ Open Anyway.
+Signing Joinery needs these repository secrets:
 
-Once, before the first release:
-- **The bucket:** `infra/main.tf`. Copy `infra/terraform.tfvars.example` to `terraform.tfvars`, fill it in, then `CLOUDFLARE_API_TOKEN=… terraform -chdir=infra init && terraform -chdir=infra apply`. Releases are served at the bucket's r2.dev address, or at `domain` if set.
-- **Notarizing:** `xcrun notarytool store-credentials joinery-notary --apple-id <you> --team-id 7WF9W3CBZ3`, with an app-specific password.
-- **Uploading:** `npx wrangler login`.
+| Secret | What |
+| --- | --- |
+| `DEVELOPER_ID_CERT_P12`, `DEVELOPER_ID_CERT_PASSWORD` | The Developer ID Application certificate and its key, exported from Keychain Access as a .p12, base64-encoded, and its password |
+| `APPLE_TEAM_ID` | The team it belongs to |
+| `NOTARY_API_KEY`, `NOTARY_API_KEY_ID`, `NOTARY_API_ISSUER` | An App Store Connect API key (the .p8's contents), its ID and its issuer, to notarize |
+| `SPARKLE_PRIVATE_KEY` | Sparkle's private key, from `generate_keys -x <file>` in Sparkle's tools. Joinery installs only updates signed with it: lose it and released copies can't be updated again |
+
+`scripts/package-app.sh` is what the workflow runs, with these in its environment.
 
 ## Frame rate (Debug builds)
 

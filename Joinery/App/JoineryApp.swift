@@ -25,7 +25,7 @@ struct JoineryApp: App {
     }
 }
 
-/// Updates through Sparkle, from the feed `scripts/release.sh` builds in. A build without one, such as Xcode's,
+/// Updates through Sparkle, from the feed the release workflow builds in. A build without one, such as Xcode's,
 /// doesn't check.
 enum Updates {
     @MainActor static let controller: SPUStandardUpdaterController? = {
