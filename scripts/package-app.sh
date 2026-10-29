@@ -34,8 +34,16 @@ rm -rf "$app"
 ditto "$out/Joinery.xcarchive/Products/Applications/Joinery.app" "$app"
 codesign --verify --deep --strict "$app"
 
+# Notarizes and staples; if Apple turns it down, prints why.
 notarize() {
-  xcrun notarytool submit "$1" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER" --wait
+  set -- "$1" "$2" --key "$NOTARY_KEY_PATH" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER"
+  result=$(xcrun notarytool submit "$1" "$3" "$4" "$5" "$6" "$7" "$8" --wait --output-format json)
+  echo "$result"
+  field() { echo "$result" | python3 -c "import json, sys; print(json.load(sys.stdin)['$1'])"; }
+  if [ "$(field status)" != Accepted ]; then
+    xcrun notarytool log "$(field id)" "$3" "$4" "$5" "$6" "$7" "$8"
+    exit 1
+  fi
   xcrun stapler staple "$2"
 }
 ditto -c -k --keepParent "$app" "$out/Joinery.zip"
