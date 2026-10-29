@@ -45,20 +45,32 @@ pub fn main(init: std.process.Init) !void {
         } else return usage();
     }
 
-    const address = try std.Io.net.IpAddress.parse(address_text, port);
-    // Room for a burst of connections, as after a network blip, up to what the system allows.
-    var listener = try address.listen(io, .{ .reuse_address = true, .kernel_backlog = 4096 });
-    defer listener.deinit(io);
-    const metrics_address = try std.Io.net.IpAddress.parse(metrics_address_text, metrics_port);
-    var metrics_listener = try metrics_address.listen(io, .{ .reuse_address = true });
-    defer metrics_listener.deinit(io);
+    const address = try std.Io.net.Ip4Address.parse(address_text, port);
+    const metrics_address = try std.Io.net.Ip4Address.parse(metrics_address_text, metrics_port);
+    const listener = try listen(address);
+    const metrics_listener = try listen(metrics_address);
     var server: Server = undefined;
-    try server.init(io, init.gpa, .{});
+    try server.init(io, init.gpa, .{}, listener, metrics_listener);
     defer server.deinit();
     std.log.info("relaying on {f}, metrics at http://{f}/metrics", .{ address, metrics_address });
-    var metrics = try io.concurrent(Server.serveMetrics, .{ &server, &metrics_listener });
-    defer metrics.cancel(io) catch {};
-    try server.serve(&listener);
+    try server.run();
+}
+
+/// A non-blocking TCP listener on `address`, with room for a burst of connections, as after a network blip.
+fn listen(address: std.Io.net.Ip4Address) !std.c.fd_t {
+    const c = std.c;
+    const fd = c.socket(c.AF.INET, c.SOCK.STREAM, 0);
+    if (fd < 0) return error.SystemResources;
+    const one: c_int = 1;
+    _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.REUSEADDR, &one, @sizeOf(c_int));
+    var sockaddr: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, address.port), .addr = @bitCast(address.bytes) };
+    if (c.bind(fd, @ptrCast(&sockaddr), @sizeOf(c.sockaddr.in)) < 0) return error.AddressInUse;
+    if (c.listen(fd, 4096) < 0) return error.SystemResources;
+    const flags = c.fcntl(fd, c.F.GETFL);
+    var o: c.O = @bitCast(@as(u32, @intCast(flags)));
+    o.NONBLOCK = true;
+    _ = c.fcntl(fd, c.F.SETFL, @as(c_int, @bitCast(@as(u32, @bitCast(o)))));
+    return fd;
 }
 
 fn usage() error{Usage} {

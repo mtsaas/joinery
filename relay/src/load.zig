@@ -1,6 +1,7 @@
-//! `zig build load -- [--port 8787] [--rooms 10] [--guests 3] [--rate 20] [--seconds 10]`: a load generator for a
-//! relay already running. Each room has a host publishing changes at `rate` a second, each carrying when it was sent,
-//! and `guests` guests that read them, pinging now and then so the log can be trimmed. At the end it prints changes
+//! `zig build load -- [--port 8787] [--rooms 10] [--guests 3] [--rate 20] [--presence 0] [--seconds 10]`: a load
+//! generator for a relay already running. Each room has a host publishing changes at `rate` a second, each carrying
+//! when it was sent, and `guests` guests that read them, pinging now and then so the log can be trimmed, and each
+//! sending `presence` pointer updates a second, as a moving pointer does. At the end it prints changes
 //! delivered a second and the time from the host's send to a guest's receive. Everything's on this machine, so the
 //! times are the relay's, the kernel's and this program's, with no network.
 
@@ -14,12 +15,17 @@ const Config = struct {
     guests: usize = 3,
     /// Changes a second, per room.
     rate: u64 = 20,
+    /// Pointer updates a second, per guest.
+    presence: u64 = 0,
     seconds: u64 = 10,
 };
 
 /// What every guest saw, added up: changes delivered, and their latencies in 10 µs buckets.
 const Stats = struct {
     delivered: std.atomic.Value(u64) = .init(0),
+    presence: std.atomic.Value(u64) = .init(0),
+    /// Pointer updates sent, each due to everyone else in the room.
+    presence_sent: std.atomic.Value(u64) = .init(0),
     buckets: [bucket_count]std.atomic.Value(u64) = @splat(.init(0)),
     const bucket_us = 10;
     const bucket_count = 10_000;
@@ -49,7 +55,14 @@ pub fn main(init: std.process.Init) !void {
     _ = args.skip();
     while (args.next()) |arg| {
         const value = std.fmt.parseInt(u64, args.next() orelse return error.Usage, 10) catch return error.Usage;
-        if (std.mem.eql(u8, arg, "--port")) config.port = @intCast(value) else if (std.mem.eql(u8, arg, "--rooms")) config.rooms = value else if (std.mem.eql(u8, arg, "--guests")) config.guests = value else if (std.mem.eql(u8, arg, "--rate")) config.rate = value else if (std.mem.eql(u8, arg, "--seconds")) config.seconds = value else return error.Usage;
+        // Each flag sets the field it names: --rooms 10 sets rooms.
+        const name = if (std.mem.startsWith(u8, arg, "--")) arg[2..] else return error.Usage;
+        inline for (@typeInfo(Config).@"struct".field_names) |field| {
+            if (std.mem.eql(u8, name, field)) {
+                @field(config, field) = @intCast(value);
+                break;
+            }
+        } else return error.Usage;
     }
 
     var stats: Stats = .{};
@@ -66,9 +79,13 @@ pub fn main(init: std.process.Init) !void {
     // Counted from when every room's had time to start.
     for (&stats.buckets) |*b| b.store(0, .monotonic);
     stats.delivered.store(0, .monotonic);
+    stats.presence.store(0, .monotonic);
+    stats.presence_sent.store(0, .monotonic);
     const published_at_start = published.load(.monotonic);
     try io.sleep(.fromSeconds(@intCast(config.seconds)), .awake);
     const delivered = stats.delivered.load(.monotonic);
+    const presence = stats.presence.load(.monotonic);
+    const presence_due = stats.presence_sent.load(.monotonic) * config.guests;
     const sent = published.load(.monotonic) - published_at_start;
     tasks.cancel(io);
 
@@ -77,6 +94,7 @@ pub fn main(init: std.process.Init) !void {
         \\rooms {d}, guests each {d}, {d} changes/s each: {d} connections
         \\published {d:.0} changes/s, delivered {d:.0}/s ({d:.0}% of {d})
         \\latency, send to receive: p50 {d:.0} µs, p99 {d:.0} µs, p99.9 {d:.0} µs
+        \\pointer updates delivered {d:.0}/s ({d:.0}% of {d} due)
         \\
     , .{
         config.rooms,                                                                                      config.guests,
@@ -84,7 +102,8 @@ pub fn main(init: std.process.Init) !void {
         @as(f64, @floatFromInt(sent)) / seconds,                                                           @as(f64, @floatFromInt(delivered)) / seconds,
         100 * @as(f64, @floatFromInt(delivered)) / @as(f64, @floatFromInt(@max(sent * config.guests, 1))), sent * config.guests,
         stats.percentile(0.5),                                                                             stats.percentile(0.99),
-        stats.percentile(0.999),
+        stats.percentile(0.999),                                                                           @as(f64, @floatFromInt(presence)) / seconds,
+        100 * @as(f64, @floatFromInt(presence)) / @as(f64, @floatFromInt(@max(presence_due, 1))),          presence_due,
     });
 }
 
@@ -118,7 +137,7 @@ fn room(io: Io, config: Config, stats: *Stats, published: *std.atomic.Value(u64)
     var guests: Io.Group = .init;
     defer guests.cancel(io);
     for (0..config.guests) |i| {
-        guests.concurrent(io, guest, .{ io, config.port, id_buffer[0..room_id.len], secret_buffer[0..guest_secret.len], i, stats }) catch return;
+        guests.concurrent(io, guest, .{ io, config, id_buffer[0..room_id.len], secret_buffer[0..guest_secret.len], i, stats }) catch return;
     }
     // Snapshot requests, answered by the host's reader, which shares its writer with publishing.
     var writing: Io.Mutex = .init;
@@ -158,9 +177,9 @@ fn hostReader(io: Io, host: *Socket, writing: *Io.Mutex, seq: *u64) Io.Cancelabl
     }
 }
 
-fn guest(io: Io, port: u16, room_id: []const u8, secret: []const u8, index: usize, stats: *Stats) Io.Cancelable!void {
+fn guest(io: Io, config: Config, room_id: []const u8, secret: []const u8, index: usize, stats: *Stats) Io.Cancelable!void {
     var socket: Socket = undefined;
-    socket.open(io, port) catch return;
+    socket.open(io, config.port) catch return;
     defer socket.close();
     var client: [16]u8 = undefined;
     var w = frameWriter();
@@ -173,11 +192,19 @@ fn guest(io: Io, port: u16, room_id: []const u8, secret: []const u8, index: usiz
     w.blob("Guest");
     w.blob("");
     socket.send(w.finish(.hello, 0, 0)) catch return;
+    // Pointer updates, from a task of their own, sharing the socket's writing with pings.
+    var writing: Io.Mutex = .init;
+    var pointer: ?Io.Future(Io.Cancelable!void) = if (config.presence > 0)
+        io.concurrent(movePointer, .{ io, &socket, &writing, config.presence, stats }) catch return
+    else
+        null;
+    defer if (pointer) |*f| f.cancel(io) catch {};
     var seq: u64 = 0;
     var unpinged: usize = 0;
     while (true) {
         try io.checkCancel();
         const frame = socket.receive() catch return;
+        if (frame[1] == @backingInt(wire.Kind.presence)) _ = stats.presence.fetchAdd(1, .monotonic);
         if (frame[1] != @backingInt(wire.Kind.ops)) continue;
         seq = wire.seqOf(frame);
         const sent = std.mem.readInt(i96, frame[wire.header_size..][0..12], .little);
@@ -188,8 +215,23 @@ fn guest(io: Io, port: u16, room_id: []const u8, secret: []const u8, index: usiz
             unpinged = 0;
             var ping: [wire.header_size]u8 = undefined;
             var pw: wire.FrameWriter = .{ .buffer = &ping };
+            try writing.lock(io);
+            defer writing.unlock(io);
             socket.send(pw.finish(.ping, seq, 0)) catch return;
         }
+    }
+}
+
+/// A pointer moving across the canvas: `rate` updates a second, each about the size of a sealed one.
+fn movePointer(io: Io, socket: *Socket, writing: *Io.Mutex, rate: u64, stats: *Stats) Io.Cancelable!void {
+    var buffer: [wire.header_size + 64]u8 = @splat(0);
+    while (true) {
+        try io.sleep(.fromNanoseconds(@divFloor(std.time.ns_per_s, rate)), .awake);
+        try writing.lock(io);
+        defer writing.unlock(io);
+        var w: wire.FrameWriter = .{ .buffer = &buffer, .len = buffer.len };
+        socket.send(w.finish(.presence, 0, 0)) catch return;
+        _ = stats.presence_sent.fetchAdd(1, .monotonic);
     }
 }
 

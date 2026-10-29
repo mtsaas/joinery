@@ -10,6 +10,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     b.installArtifact(exe);
@@ -23,6 +24,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tests.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     b.step("test", "Run the tests, the replay of the Swift relay's traces among them").dependOn(&b.addRunArtifact(tests).step);
