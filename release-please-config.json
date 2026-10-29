@@ -7,15 +7,26 @@
     ".": {
       "release-type": "simple",
       "component": "joinery",
-      "exclude-paths": ["relay"]
+      "exclude-paths": [
+        "relay"
+      ]
     },
     "relay": {
       "release-type": "simple",
       "component": "relay",
       "extra-files": [
-        { "type": "yaml", "path": "chart/Chart.yaml", "jsonpath": "$.version" },
-        { "type": "yaml", "path": "chart/Chart.yaml", "jsonpath": "$.appVersion" }
+        {
+          "type": "yaml",
+          "path": "chart/Chart.yaml",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "yaml",
+          "path": "chart/Chart.yaml",
+          "jsonpath": "$.appVersion"
+        }
       ]
     }
-  }
+  },
+  "bump-minor-pre-major": true
 }
