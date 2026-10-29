@@ -70,8 +70,7 @@ src/
   latency. A connection that's behind is sent only the newest pointer update from each person.
 - **Traces.** After changing the protocol, run `scripts/record-relay-traces.sh` from the repository root to record
   `src/relay/testdata/` again.
-- **`bench/azure.sh`** runs load across a real network: a relay VM and load-generator VMs on Azure (Arm Linux, spot),
-  `up`, `push`, `run`, `perf` and `down`. **`bench/load.sh`** runs the standard scenarios on this machine.
+- **`bench/load.sh`** runs the standard scenarios on this machine.
   **`bench/load-results.md`** has every step's results side by side, and `bench/profiles/` the profiles behind them.
 - **`bench/results.txt`** is the last benchmark run, with its commit.
 

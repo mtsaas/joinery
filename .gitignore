@@ -5,3 +5,9 @@ DerivedData/
 .wrangler/
 relay/.zig-cache/
 relay/zig-out/
+
+# Only on this machine: they assume its signing identity, accounts and domain.
+infra/
+scripts/release.sh
+scripts/build.sh
+relay/bench/azure.sh
