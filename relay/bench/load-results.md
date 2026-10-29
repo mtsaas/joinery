@@ -207,3 +207,42 @@ checking each send; and the TCP stack, spread thin.
 Not tracking the relay's port (`nft ... notrack`, now in `bench/azure.sh up`, and wanted on any relay server) cut CPU
 8% at 400 rooms: 78.2 → 71.6 s, same throughput and latency. Next by this profile: io_uring with registered sockets,
 which removes most of the per-call cost and lets a frame's sends to all its guests go in one submission.
+
+### How it scales with loops
+
+Each loop count pushed with rising load (host + 3 guests a room, 1,000 changes a second each) until it fell behind;
+the generator's CPU too, to know when it was the limit. Runs are 12 s; CPU is over the whole run.
+
+| Loops | Rooms | Delivered/s | p50 / p99 | Relay CPU s | Generator CPU s (16 cores) |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 200 | 597,837 | 3.2 / 4.9 ms | 11.2 | 55 |
+| 1 | 400 | 1,189,654 | 6.3 / 11.6 ms | 11.4 | 86 |
+| 1 | 600 | 1,771,255 | 15.0 / 30.0 ms | 11.6 | 109 |
+| 1 | 800 | 2,334,529 | 27.6 / 65.5 ms | 11.8 | 135 |
+| 1 | 1,000 | 2,797,716 | 85.0 / 572 ms | 12.1 | 170 |
+| 2 | 200 | 597,865 | 1.6 / 3.2 ms | 22.3 | 81 |
+| 2 | 400 | 1,189,761 | 3.4 / 5.8 ms | 22.7 | 104 |
+| 2 | 600 | 1,775,167 | 4.9 / 8.9 ms | 23.1 | 122 |
+| 2 | 800 | 2,348,626 | 6.3 / 11.6 ms | 23.5 | 140 |
+| 2 | 1,000 | 2,905,469 | 8.9 / 19.5 ms | 23.9 | 155 |
+| 4 | 200 | 597,654 | 0.30 / 1.2 ms | 31.9 | 90 |
+| 4 | 400 | 1,186,696 | 1.7 / 3.2 ms | 45.1 | 132 |
+| 4 | 600 | 1,768,939 | 2.7 / 4.5 ms | 45.9 | 147 |
+| 4 | 800 | 2,337,084 | 3.8 / 7.5 ms | 46.6 | 157 |
+| 4 | 1,000 | 2,861,412 | 6.3 / 12.6 ms | 47.5 | 174 |
+| 8 | 200 | 597,367 | 0.24 / 0.79 ms | 38.4 | 93 |
+| 8 | 400 | 1,183,518 | 0.33 / 1.7 ms | 73.5 | 155 |
+| 8 | 600 | 1,698,936 | 1.4 / 2.7 ms | 90.7 | 172 |
+| 8 | 800 | 1,855,900 | 2.2 / 5.8 ms | 92.2 | 184 |
+
+What it says:
+
+- **A loop never stops delivering; it queues.** One loop reached 2.8 million a second on one core, but at 85 ms p50:
+  the more that waits, the more each `send` carries, so its cost per message falls as latency climbs. Capacity has
+  to be read at a latency, not as raw throughput.
+- **At p99 under ~6 ms, scaling is linear to 2 loops and sublinear after:** about 0.6, 1.2, 1.8 to 2.3, and 1.9
+  million a second for 1, 2, 4 and 8 loops.
+- **Why not linear past that:** each loop's share of the traffic is smaller, so it batches less, and a message costs
+  more: 1.6 µs of relay CPU a delivery with 1 or 2 loops, 2.2 µs with 4, 4.1 µs with 8. With 8 loops on 8 cores the
+  loops also share every core with the network card's interrupt handling. And by 800 rooms the generator was using
+  most of its 16 cores (184 s over 12 s is 15 cores), so it may be part of the limit there.
