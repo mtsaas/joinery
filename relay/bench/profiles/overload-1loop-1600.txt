@@ -1,0 +1,26 @@
+    12.75%  [k] __arch_copy_to_user
+     6.77%  [k] check_heap_object
+     6.00%  [k] _raw_spin_unlock_irqrestore
+     5.49%  [k] __arch_copy_from_user
+     5.48%  [k] tcp_recvmsg_locked
+     4.84%  [k] skb_attempt_defer_free
+     2.98%  [.] Server.messages
+     2.94%  [.] compiler_rt.memcpy.memcpyFast
+     2.57%  [.] Server.queue
+     2.30%  [k] __inet_lookup_established
+     2.13%  [k] __pi_clear_page
+     1.54%  [.] Server.relaySend
+     1.37%  [k] handle_softirqs
+     1.31%  [.] Relay.Room.trim
+     1.11%  [k] tcp_try_coalesce
+     1.00%  [k] sock_def_readable
+     0.96%  [k] _raw_spin_lock
+     0.96%  [k] __refill_objects_node
+     0.95%  [k] __pi_memset_generic
+     0.94%  [k] arch_counter_get_cntvct
+1 loops, --rooms 1600 --guests 3 --rate 1000 --seconds 11: delivered 3207650/s in all
+  load: published 726634 changes/s, delivered 1606013/s (74% of 23978910)
+  load: latency, send to receive: p50 571740 µs, p99 6468501 µs, p99.9 11863283 µs
+  load2: published 734045 changes/s, delivered 1601637/s (73% of 24223494)
+  load2: latency, send to receive: p50 571740 µs, p99 7053950 µs, p99.9 11863283 µs
+  relay 1.0 cores busy, 1899 MB, 1 threads
