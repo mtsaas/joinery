@@ -1,0 +1,9 @@
+apiVersion: v2
+name: joinery-relay
+description: Passes Joinery's live sessions between people, end-to-end encrypted, without reading them.
+type: application
+home: https://github.com/mtsaas/joinery
+sources:
+  - https://github.com/mtsaas/joinery/tree/main/relay
+version: 0.1.0
+appVersion: "0.1.0"

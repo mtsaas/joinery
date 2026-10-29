@@ -1,0 +1,5 @@
+The relay is at {{ include "relay.fullname" . }}:{{ .Values.service.port }} in {{ .Release.Namespace }}, with
+Prometheus metrics at :{{ .Values.metrics.port }}/metrics.
+
+Joinery connects over wss://, and the relay speaks plain WebSockets: put TLS in front of it, with the ingress
+(ingress.enabled) or a load balancer, and enter that address in Joinery ▸ Settings ▸ Sharing.

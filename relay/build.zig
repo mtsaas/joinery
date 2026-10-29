@@ -3,6 +3,8 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    // Without debug information, for the container image.
+    const strip = b.option(bool, "strip", "Leave out debug information") orelse false;
 
     const exe = b.addExecutable(.{
         .name = "joinery-relay",
@@ -11,6 +13,7 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
             .link_libc = true,
+            .strip = strip,
         }),
     });
     b.installArtifact(exe);

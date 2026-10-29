@@ -1,0 +1,55 @@
+image:
+  repository: ghcr.io/mtsaas/joinery-relay
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# Event loops. The relay counts the cores it can see, not its CPU limit, so set this to about half the CPUs it's
+# given: the kernel's network work needs the rest. Empty: half the node's cores.
+threads: ""
+# How long, in ms, a connection's queue waits for more before it's sent. 5 does the same work with about 40% less CPU.
+batchMs: 5
+extraArgs: []
+
+# One relay, always. Rooms live in its memory, and a room's host and guests must reach the same relay, so a second
+# replica behind the same Service would split rooms. Updates replace it (Recreate): sessions reconnect and catch up.
+
+service:
+  type: ClusterIP
+  port: 8787
+  annotations: {}
+
+metrics:
+  port: 9187
+  # Prometheus scrape annotations on the pod.
+  annotations: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
+# WebSockets need nothing special from most ingress controllers; set the read timeout well above a minute, as an
+# idle session pings every ten seconds.
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: relay.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 256Mi
+  limits:
+    memory: 2Gi
+
+podAnnotations: {}
+podLabels: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
