@@ -37,4 +37,17 @@ pub fn build(b: *std.Build) void {
         }),
     });
     b.step("bench", "Time each step a frame takes").dependOn(&b.addRunArtifact(bench).step);
+
+    // Load against a relay already running: `zig build load -- --rooms 100 --guests 3 --rate 20`.
+    const load = b.addExecutable(.{
+        .name = "load",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/load.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+        }),
+    });
+    const run_load = b.addRunArtifact(load);
+    run_load.addPassthruArgs();
+    b.step("load", "Load a running relay with rooms of hosts and guests, and report throughput and latency").dependOn(&run_load.step);
 }

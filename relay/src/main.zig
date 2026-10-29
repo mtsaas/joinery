@@ -46,7 +46,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     const address = try std.Io.net.IpAddress.parse(address_text, port);
-    var listener = try address.listen(io, .{ .reuse_address = true });
+    // Room for a burst of connections, as after a network blip, up to what the system allows.
+    var listener = try address.listen(io, .{ .reuse_address = true, .kernel_backlog = 4096 });
     defer listener.deinit(io);
     const metrics_address = try std.Io.net.IpAddress.parse(metrics_address_text, metrics_port);
     var metrics_listener = try metrics_address.listen(io, .{ .reuse_address = true });
