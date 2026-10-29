@@ -2,7 +2,7 @@
 //! docs/relay.md.
 //!
 //!     joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]
-//!                   [--threads <one per core>] [--pin <first CPU>]
+//!                   [--threads <half the cores>] [--pin <first CPU>]
 //!
 //! Prometheus metrics are at http://<metrics address>:<metrics port>/metrics, on this machine only unless the metrics
 //! address says otherwise.
@@ -32,7 +32,9 @@ pub fn main(init: std.process.Init) !void {
     var port: u16 = 8787;
     var metrics_address_text: []const u8 = "127.0.0.1";
     var metrics_port: u16 = 9187;
-    var threads: usize = std.Thread.getCpuCount() catch 1;
+    // Half the cores: the kernel's network work needs the rest. On 8 and 16 cores, more loops than that delivered no
+    // more, and past it, less (bench/load-results.md).
+    var threads: usize = (std.Thread.getCpuCount() catch 2) / 2;
     // Linux: loop i runs only on CPU `pin + i`, so its sockets' data stays in that CPU's caches.
     var pin: ?usize = null;
     var args = init.minimal.args.iterate();

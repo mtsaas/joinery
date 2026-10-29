@@ -23,7 +23,7 @@ relay's own memory is left to the process exporter of wherever it runs.
   repository root to record the traces again.
 - **`src/Log.zig`** is a room's log: a ring of whole frames, allocated once.
 - **`src/wire.zig`** is the header, the `hello` the relay reads, and the frames it writes.
-- **`src/Server.zig`** puts it on the network: a loop per core (`--threads`), each with its own thread, event queue
+- **`src/Server.zig`** puts it on the network: a loop for every two cores (`--threads`; the kernel's network work needs the other half, and more loops deliver less), each with its own thread, event queue
   (kqueue, or epoll on Linux), relay and rooms, non-blocking sockets and no lock. A room's ID names its loop, and a
   guest arriving on another loop is handed to it. Each turn reads what's ready, hands whole messages to the relay, then sends each
   connection's queue in one `send`. On Linux, `--pin 0` pins loop i to CPU i, which halves the tail latency. A connection that's behind is sent only the newest pointer update from each person.
