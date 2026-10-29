@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "bootstrap-sha": "32d4e68f2013b294a1c01f4a33ab779cbdf5c344",
+  "separate-pull-requests": true,
+  "include-component-in-tag": true,
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "component": "joinery",
+      "exclude-paths": ["relay"]
+    },
+    "relay": {
+      "release-type": "simple",
+      "component": "relay",
+      "extra-files": [
+        { "type": "yaml", "path": "chart/Chart.yaml", "jsonpath": "$.version" },
+        { "type": "yaml", "path": "chart/Chart.yaml", "jsonpath": "$.appVersion" }
+      ]
+    }
+  }
+}
