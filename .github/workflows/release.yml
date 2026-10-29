@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     branches: [main]
+  # Builds Joinery again for a release that's been made, such as after a failed build.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: The Joinery release to build, such as 0.2.0
+        required: true
 
 permissions:
   contents: write
@@ -68,11 +74,11 @@ jobs:
   # which is never the latest, so relay releases can't take its place.
   app:
     needs: release-please
-    if: needs.release-please.outputs.app == 'true'
+    if: needs.release-please.outputs.app == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     env:
-      VERSION: ${{ needs.release-please.outputs.app_version }}
-      TAG: ${{ needs.release-please.outputs.app_tag }}
+      VERSION: ${{ inputs.version || needs.release-please.outputs.app_version }}
+      TAG: joinery-v${{ inputs.version || needs.release-please.outputs.app_version }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
@@ -86,7 +92,7 @@ jobs:
       - name: Developer ID intermediate certificate
         run: |
           curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
-          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k signing_temp.keychain
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k signing_temp.keychain || echo "Already there."
       - name: Keys
         run: |
           mkdir -p "$RUNNER_TEMP/keys" build/release
@@ -104,7 +110,7 @@ jobs:
           NOTARY_ISSUER: ${{ secrets.NOTARY_API_ISSUER }}
           SPARKLE_KEY_PATH: ${{ runner.temp }}/keys/sparkle.key
           FEED_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/updates/appcast.xml
-          DOWNLOAD_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ needs.release-please.outputs.app_tag }}
+          DOWNLOAD_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.TAG }}
         run: scripts/package-app.sh
       - name: Publish
         run: |
