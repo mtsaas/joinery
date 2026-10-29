@@ -344,3 +344,43 @@ generator tops out near 1.5M changes/s from two VMs, so scaling past two loops i
 The link isn't the limit. One saturated loop sent 2.0–2.2 Gbit/s, less than four loops did (3.8–4.5), and packets
 stayed under 1.5M/s in. An earlier result, 8 loops at 1,000 rooms delivering the same 2.96M/s as 1 loop at
 1,000 rooms, was the offered load, not either relay's limit.
+
+## Event-loop generator, and capacity by loop count
+
+The generator now runs as the relay does, an event loop a core with its share of the rooms. At 1,600 rooms it uses
+about 4 of a load VM's 16 cores, where the thread-per-connection one used nearly all of them, and it reports rooms
+that didn't open and connections that closed rather than going silent.
+
+Saturated runs turned out a poor measure: hold-backs cycle on and off, and the warm-up's backlog lands in the window,
+so they varied by a third run to run. Capacity is now the most a loop count sustains with every change delivered
+and p99 within about 50 ms. Two load VMs, `--pin 0`, `--rate 1000`, 3 s. The relay machine's CPU is in cores, over
+the whole run (opening the rooms included, so idle reads high).
+
+| Loops | Rooms | Delivered/s | p50 / p99 | Packets in / out | Relay machine: user / system / interrupts / idle |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 600 | 1,802,923 | 14–15 / 30–33 ms | 522k / 141k | 0.1 / 0.6 / 0.5 / 6.9 |
+| 1 | 800 | 2,432,368 | 39–46 / 185–524 ms | 607k / 130k | 0.1 / 0.6 / 0.6 / 6.6 |
+| 2 | 1,100 | 3,308,266 | 16–18 / 39–46 ms | 922k / 227k | 0.2 / 1.1 / 1.0 / 5.4 |
+| 2 | 1,400 | 4,212,559 | 71–93 ms / 1.0–2.7 s | 971k / 189k | 0.2 / 1.0 / 1.4 / 5.3 |
+| 4 | 1,600 | 4,810,924 | 16–18 / 36–85 ms | 1,378k / 368k | 0.3 / 1.7 / 2.5 / 3.6 |
+| 4 | 2,000 | 6,041,279 | 51–60 ms / 0.4–3.0 s | 1,512k / 301k | 0.3 / 1.6 / 2.9 / 3.3 |
+| 8 | 1,600 | 4,776,222 | 9 / 33 ms | 1,677k / 785k | 0.5 / 2.8 / 3.7 / 1.4 |
+| 8 | 2,000 | 5,931,665 | 18–21 ms / 1.0–1.2 s | 1,829k / 532k | 0.4 / 2.3 / 4.1 / 1.6 |
+
+| Loops | Capacity, deliveries/s | vs. one loop |
+| --- | --- | --- |
+| 1 | 1.8M | 1.0× |
+| 2 | 3.3M | 1.8× |
+| 4 | ~4.8M | 2.7× |
+| 8 | ~4.8M | 2.7× |
+
+Near linear to two loops; past four, nothing. The relay's own code isn't what fills the machine: at 8 loops it's half
+a core of user time. The rest is the kernel: 2.8 cores of system calls and 3.7 of interrupts, the network's
+receive work, at 1.7M packets a second in. With four loops the interrupts run on the four cores the loops leave;
+with eight there are none to leave, so the loops and the kernel share the same eight cores, and the total is the
+same.
+
+The link isn't the limit: at most 5.4 Gbit/s out. Packets are. Every change is its own packet in, because each of
+these hosts sends 1,000 a second with no delay. Real hosts send a few a second, so a real relay is limited first by
+connections and their memory, not packets; this benchmark is a worst case for the network stack, and what it shows
+is the stack's cost, not the relay's.
