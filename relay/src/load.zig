@@ -17,34 +17,40 @@ const Config = struct {
     rate: u64 = 20,
     /// Pointer updates a second, per guest.
     presence: u64 = 0,
+    /// Guests in each room on a slow connection, reading 50 messages a second, measured on their own.
+    slow: u64 = 0,
     seconds: u64 = 10,
 };
 
-/// What every guest saw, added up: changes delivered, and their latencies in 10 µs buckets.
+/// What every guest saw, added up: changes delivered, and their latencies in buckets an eighth of a doubling wide
+/// (9% apart), from a microsecond to over an hour.
 const Stats = struct {
     delivered: std.atomic.Value(u64) = .init(0),
     presence: std.atomic.Value(u64) = .init(0),
     /// Pointer updates sent, each due to everyone else in the room.
     presence_sent: std.atomic.Value(u64) = .init(0),
     buckets: [bucket_count]std.atomic.Value(u64) = @splat(.init(0)),
-    const bucket_us = 10;
-    const bucket_count = 10_000;
+    const per_doubling = 8;
+    const bucket_count = 32 * per_doubling;
 
     fn record(stats: *Stats, latency_ns: i96) void {
         _ = stats.delivered.fetchAdd(1, .monotonic);
-        const bucket: usize = @intCast(@min(@max(@divFloor(latency_ns, bucket_us * 1000), 0), bucket_count - 1));
+        const us: f64 = @max(@as(f64, @floatFromInt(latency_ns)) / 1000, 1);
+        const bucket: usize = @intFromFloat(@min(@log2(us) * per_doubling, bucket_count - 1));
         _ = stats.buckets[bucket].fetchAdd(1, .monotonic);
     }
 
+    /// The `p` quantile's latency, in µs: the top of its bucket.
     fn percentile(stats: *const Stats, p: f64) f64 {
         const total = stats.delivered.load(.monotonic);
+        if (total == 0) return 0;
         const target: u64 = @intFromFloat(@ceil(@as(f64, @floatFromInt(total)) * p));
         var seen: u64 = 0;
         for (&stats.buckets, 0..) |*b, i| {
             seen += b.load(.monotonic);
-            if (seen >= target) return @floatFromInt((i + 1) * bucket_us);
+            if (seen >= target) return @round(std.math.pow(f64, 2, @as(f64, @floatFromInt(i + 1)) / per_doubling));
         }
-        return @floatFromInt(bucket_count * bucket_us);
+        return std.math.inf(f64);
     }
 };
 
@@ -66,13 +72,14 @@ pub fn main(init: std.process.Init) !void {
     }
 
     var stats: Stats = .{};
+    var slow_stats: Stats = .{};
     var published: std.atomic.Value(u64) = .init(0);
     var tasks: Io.Group = .init;
     // Started a millisecond apart, as people arrive, not all in one burst at the listen queue.
     const warmup_ms: i64 = @intCast(1000 + config.rooms);
     const deadline = nowNs(io) + (@as(i96, warmup_ms) + @as(i96, config.seconds) * 1000) * std.time.ns_per_ms;
     for (0..config.rooms) |_| {
-        try tasks.concurrent(io, room, .{ io, config, &stats, &published, deadline });
+        try tasks.concurrent(io, room, .{ io, config, &stats, &slow_stats, &published, deadline });
         try io.sleep(.fromMilliseconds(1), .awake);
     }
     try io.sleep(.fromMilliseconds(1000), .awake);
@@ -81,11 +88,13 @@ pub fn main(init: std.process.Init) !void {
     stats.delivered.store(0, .monotonic);
     stats.presence.store(0, .monotonic);
     stats.presence_sent.store(0, .monotonic);
+    slow_stats = .{};
     const published_at_start = published.load(.monotonic);
     try io.sleep(.fromSeconds(@intCast(config.seconds)), .awake);
     const delivered = stats.delivered.load(.monotonic);
     const presence = stats.presence.load(.monotonic);
-    const presence_due = stats.presence_sent.load(.monotonic) * config.guests;
+    // Only guests count what they're sent: each update is due to the other guests (the host gets it too, uncounted).
+    const presence_due = stats.presence_sent.load(.monotonic) * (config.guests -| 1);
     const sent = published.load(.monotonic) - published_at_start;
     tasks.cancel(io);
 
@@ -97,20 +106,24 @@ pub fn main(init: std.process.Init) !void {
         \\pointer updates delivered {d:.0}/s ({d:.0}% of {d} due)
         \\
     , .{
-        config.rooms,                                                                                      config.guests,
-        config.rate,                                                                                       config.rooms * (config.guests + 1),
-        @as(f64, @floatFromInt(sent)) / seconds,                                                           @as(f64, @floatFromInt(delivered)) / seconds,
-        100 * @as(f64, @floatFromInt(delivered)) / @as(f64, @floatFromInt(@max(sent * config.guests, 1))), sent * config.guests,
-        stats.percentile(0.5),                                                                             stats.percentile(0.99),
-        stats.percentile(0.999),                                                                           @as(f64, @floatFromInt(presence)) / seconds,
-        100 * @as(f64, @floatFromInt(presence)) / @as(f64, @floatFromInt(@max(presence_due, 1))),          presence_due,
+        config.rooms,                                                                                                      config.guests,
+        config.rate,                                                                                                       config.rooms * (config.guests + 1),
+        @as(f64, @floatFromInt(sent)) / seconds,                                                                           @as(f64, @floatFromInt(delivered)) / seconds,
+        100 * @as(f64, @floatFromInt(delivered)) / @as(f64, @floatFromInt(@max(sent * (config.guests - config.slow), 1))), sent * (config.guests - config.slow),
+        stats.percentile(0.5),                                                                                             stats.percentile(0.99),
+        stats.percentile(0.999),                                                                                           @as(f64, @floatFromInt(presence)) / seconds,
+        100 * @as(f64, @floatFromInt(presence)) / @as(f64, @floatFromInt(@max(presence_due, 1))),                          presence_due,
+    });
+    if (config.slow > 0) std.debug.print("slow guests: changes delivered {d:.0}/s, p50 {d:.0} µs, p99 {d:.0} µs, pointer updates {d:.0}/s\n", .{
+        @as(f64, @floatFromInt(slow_stats.delivered.load(.monotonic))) / seconds, slow_stats.percentile(0.5),
+        slow_stats.percentile(0.99),                                              @as(f64, @floatFromInt(slow_stats.presence.load(.monotonic))) / seconds,
     });
 }
 
 /// One room: its host, publishing until `deadline`, and its guests.
-fn room(io: Io, config: Config, stats: *Stats, published: *std.atomic.Value(u64), deadline: i96) Io.Cancelable!void {
+fn room(io: Io, config: Config, stats: *Stats, slow: *Stats, published: *std.atomic.Value(u64), deadline: i96) Io.Cancelable!void {
     var host: Socket = undefined;
-    host.open(io, config.port) catch return;
+    host.open(io, config.port, false) catch return;
     defer host.close();
     var w = frameWriter();
     w.byte(@backingInt(wire.Role.host));
@@ -137,7 +150,7 @@ fn room(io: Io, config: Config, stats: *Stats, published: *std.atomic.Value(u64)
     var guests: Io.Group = .init;
     defer guests.cancel(io);
     for (0..config.guests) |i| {
-        guests.concurrent(io, guest, .{ io, config, id_buffer[0..room_id.len], secret_buffer[0..guest_secret.len], i, stats }) catch return;
+        guests.concurrent(io, guest, .{ io, config, id_buffer[0..room_id.len], secret_buffer[0..guest_secret.len], i, if (i < config.slow) slow else stats }) catch return;
     }
     // Snapshot requests, answered by the host's reader, which shares its writer with publishing.
     var writing: Io.Mutex = .init;
@@ -179,7 +192,8 @@ fn hostReader(io: Io, host: *Socket, writing: *Io.Mutex, seq: *u64) Io.Cancelabl
 
 fn guest(io: Io, config: Config, room_id: []const u8, secret: []const u8, index: usize, stats: *Stats) Io.Cancelable!void {
     var socket: Socket = undefined;
-    socket.open(io, config.port) catch return;
+    // A slow connection: the network holds little, so what it's behind on waits at the relay, as it would.
+    socket.open(io, config.port, index < config.slow) catch return;
     defer socket.close();
     var client: [16]u8 = undefined;
     var w = frameWriter();
@@ -204,6 +218,8 @@ fn guest(io: Io, config: Config, room_id: []const u8, secret: []const u8, index:
     while (true) {
         try io.checkCancel();
         const frame = socket.receive() catch return;
+        // On a slow connection: 50 messages a second.
+        if (index < config.slow) try io.sleep(.fromMilliseconds(20), .awake);
         if (frame[1] == @backingInt(wire.Kind.presence)) _ = stats.presence.fetchAdd(1, .monotonic);
         if (frame[1] != @backingInt(wire.Kind.ops)) continue;
         seq = wire.seqOf(frame);
@@ -257,10 +273,21 @@ const Socket = struct {
     upgraded: bool = false,
 
     /// Connects, in place: its reader and writer point into it.
-    fn open(socket: *Socket, io: Io, port: u16) !void {
-        const address = try Io.net.IpAddress.parse("127.0.0.1", port);
-        socket.* = .{ .io = io, .stream = try address.connect(io, .{ .mode = .stream }) };
-        socket.reader = socket.stream.reader(io, &socket.read_buffer);
+    /// Connects, in place: its reader and writer point into it. A slow one has a small receive buffer, set before
+    /// connecting, as the window it offers is fixed then, and reads only what it needs, not ahead.
+    fn open(socket: *Socket, io: Io, port: u16, slow: bool) !void {
+        const c = std.c;
+        const fd = c.socket(c.AF.INET, c.SOCK.STREAM, 0);
+        if (fd < 0) return error.SystemResources;
+        errdefer _ = c.close(fd);
+        if (slow) {
+            const small: c_int = 4096;
+            _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.RCVBUF, &small, @sizeOf(c_int));
+        }
+        var address: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, port), .addr = @bitCast([4]u8{ 127, 0, 0, 1 }) };
+        if (c.connect(fd, @ptrCast(&address), @sizeOf(c.sockaddr.in)) < 0) return error.ConnectionRefused;
+        socket.* = .{ .io = io, .stream = .{ .socket = .{ .handle = fd, .address = try Io.net.IpAddress.parse("127.0.0.1", port) } } };
+        socket.reader = socket.stream.reader(io, if (slow) socket.read_buffer[0..4096] else &socket.read_buffer);
         socket.writer = socket.stream.writer(io, &socket.write_buffer);
     }
 

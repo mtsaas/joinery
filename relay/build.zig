@@ -47,6 +47,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/load.zig"),
             .target = target,
             .optimize = .ReleaseFast,
+            .link_libc = true,
         }),
     });
     const run_load = b.addRunArtifact(load);
