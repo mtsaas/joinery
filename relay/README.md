@@ -26,7 +26,7 @@ relay's own memory is left to the process exporter of wherever it runs.
 - **`src/Server.zig`** puts it on the network: a loop per core (`--threads`), each with its own thread, event queue
   (kqueue, or epoll on Linux), relay and rooms, non-blocking sockets and no lock. A room's ID names its loop, and a
   guest arriving on another loop is handed to it. Each turn reads what's ready, hands whole messages to the relay, then sends each
-  connection's queue in one `send`. A connection that's behind is sent only the newest pointer update from each person.
+  connection's queue in one `send`. On Linux, `--pin 0` pins loop i to CPU i, which halves the tail latency. A connection that's behind is sent only the newest pointer update from each person.
 - **`bench/azure.sh`** runs the same load across a real network: a relay VM and a load-generator VM on Azure (Arm Linux,
   spot), `up`, `push`, `run`, `perf` and `down`.
 - **`src/load.zig`** (`zig build load`) loads a running relay with rooms of hosts and guests, and `bench/load.sh` runs

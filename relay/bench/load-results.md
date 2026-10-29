@@ -246,3 +246,42 @@ What it says:
   more: 1.6 µs of relay CPU a delivery with 1 or 2 loops, 2.2 µs with 4, 4.1 µs with 8. With 8 loops on 8 cores the
   loops also share every core with the network card's interrupt handling. And by 800 rooms the generator was using
   most of its 16 cores (184 s over 12 s is 15 cores), so it may be part of the limit there.
+
+## Four more ideas, measured (Azure, two load VMs from here on)
+
+**A second load VM.** With one generator, it was part of the limit at 8 loops: two (32 cores between them, each
+using about 9) took 800 rooms from 1,855,900 deliveries a second at p99 5.8 ms to 2,377,016 at 3.4 ms, and 1,000 rooms
+to 2,961,407 at 4.5 to 4.9 ms. `bench/azure.sh` makes two by default and splits the rooms between them.
+
+**Holding queues back to batch more (tried, removed).** When a loop was busy, a connection's queue waited up to a set
+time (100 to 500 µs) for more before it was sent. No gain at any load, saturated or not: CPU the same or higher,
+latency the same. Each guest here gets a frame every millisecond, so a wait under one rarely catches a second; real
+sessions are sparser still. The batching one loop gets comes from queuing for milliseconds, which is what more loops
+are for avoiding.
+
+**Pinning, and where the network card's interrupts go** (8 loops unless said; 400 / 800 rooms):
+
+| Arrangement | 400 rooms p50 / p99 / p99.9 | 800 rooms p99 | Relay CPU at 400 |
+| --- | --- | --- | --- |
+| Loops unpinned, interrupts one per core (Azure's default) | 0.26 / 1.45 / 1.9 ms | 2.9 ms | 70.8 s |
+| Loops pinned one per core (`--pin 0`) | 0.26 / 0.51 / 0.94 ms | 2.9 ms | 70.1 s |
+| 6 loops on cores 2 to 7, interrupts on 0 and 1 | 66 / 143 / 185 ms | 524 ms | 15.5 s |
+| The same, with RFS steering receives to the reading core | 1.6 / 55 / 85 ms | 60 ms | 55.6 s |
+
+Pinning halves the tail. Giving interrupts cores of their own is a disaster: the kernel's per-packet work is most of
+the work (what's counted as the relay's CPU is mostly that, done on its cores), and two cores can't do it. So:
+interrupts spread over every core, as Azure sets them, and loops pinned, one to a core.
+
+**io_uring (tried, removed).** Reads and sends batched, a submission for all of a turn's, to sockets registered once
+(`IOSQE_FIXED_FILE`). It did what it's for: in a profile at 400 rooms, entering the kernel fell from 3.7% to 0.95%, and
+`__fget_files` (2.3%) and `__sys_sendto` went. But the relay's CPU didn't move (83.2 s with epoll, 84.2 s with
+io_uring), nor did throughput or latency:
+
+| Rooms | epoll p50 / p99 | io_uring p50 / p99 | Relay CPU, epoll / io_uring |
+| --- | --- | --- | --- |
+| 400 | 0.24 / 0.43 ms | 0.22 / 0.40 ms | 70.7 / 72.3 s |
+| 800 | 1.9 / 3.4 ms | 1.9 / 3.4 ms | 90.3 / 90.4 s |
+| 1,000 | 2.4 / 4.1 ms | 2.4 / 3.8 ms | 92.1 / 93.5 s |
+
+Its own submission and completion work took the place of the system calls'. For many small messages over many
+sockets, the cost is TCP's per-message work, not the calls into it.

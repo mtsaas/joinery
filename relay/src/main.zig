@@ -2,12 +2,13 @@
 //! docs/relay.md.
 //!
 //!     joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]
-//!                   [--threads <one per core>]
+//!                   [--threads <one per core>] [--pin <first CPU>]
 //!
 //! Prometheus metrics are at http://<metrics address>:<metrics port>/metrics, on this machine only unless the metrics
 //! address says otherwise.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Server = @import("Server.zig");
 
 pub const std_options: std.Options = .{ .logFn = log };
@@ -32,6 +33,8 @@ pub fn main(init: std.process.Init) !void {
     var metrics_address_text: []const u8 = "127.0.0.1";
     var metrics_port: u16 = 9187;
     var threads: usize = std.Thread.getCpuCount() catch 1;
+    // Linux: loop i runs only on CPU `pin + i`, so its sockets' data stays in that CPU's caches.
+    var pin: ?usize = null;
     var args = init.minimal.args.iterate();
     _ = args.skip();
     while (args.next()) |arg| {
@@ -46,6 +49,8 @@ pub fn main(init: std.process.Init) !void {
             metrics_port = std.fmt.parseInt(u16, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--threads")) {
             threads = std.fmt.parseInt(usize, value, 10) catch return usage();
+        } else if (std.mem.eql(u8, arg, "--pin")) {
+            pin = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else return usage();
     }
     // A room's ID names its loop in a byte.
@@ -64,13 +69,20 @@ pub fn main(init: std.process.Init) !void {
     for (loops) |loop| loop.loops = loops;
     std.log.info("relaying on {f} with {d} loops, metrics at http://{f}/metrics", .{ address, threads, metrics_address });
     for (loops[1..]) |loop| {
-        const thread = try std.Thread.spawn(.{}, runLoop, .{loop});
+        const thread = try std.Thread.spawn(.{}, runLoop, .{ loop, pin });
         thread.detach();
     }
-    runLoop(loops[0]);
+    runLoop(loops[0], pin);
 }
 
-fn runLoop(loop: *Server) void {
+fn runLoop(loop: *Server, pin: ?usize) void {
+    if (pin) |first| {
+        if (builtin.os.tag != .linux) @panic("--pin is for Linux");
+        var set: std.os.linux.cpu_set_t = @splat(0);
+        const cpu = first + loop.index;
+        set[cpu / @bitSizeOf(usize)] |= @as(usize, 1) << @intCast(cpu % @bitSizeOf(usize));
+        std.os.linux.sched_setaffinity(0, &set) catch |err| std.debug.panic("couldn't pin loop {d} to CPU {d}: {t}", .{ loop.index, cpu, err });
+    }
     loop.run() catch |err| std.debug.panic("loop {d} stopped: {t}", .{ loop.index, err });
 }
 
@@ -92,6 +104,6 @@ fn listen(address: std.Io.net.Ip4Address) !std.c.fd_t {
 }
 
 fn usage() error{Usage} {
-    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]", .{});
+    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu]", .{});
     return error.Usage;
 }
