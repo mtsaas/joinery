@@ -358,7 +358,7 @@ fn watch(server: *Server, conn: *Conn) !void {
     server.conns.append(&conn.node);
 }
 
-fn setNonblocking(fd: c.fd_t) !void {
+pub fn setNonblocking(fd: c.fd_t) !void {
     const flags = c.fcntl(fd, c.F.GETFL);
     if (flags < 0) return error.Unexpected;
     var o: c.O = @bitCast(@as(u32, @intCast(flags)));
@@ -919,18 +919,18 @@ test "metrics are in Prometheus's format" {
 
 /// The OS's event queue: kqueue, or epoll on Linux. Level-triggered: a socket with something left to read is
 /// reported again.
-const Poller = switch (builtin.os.tag) {
+pub const Poller = switch (builtin.os.tag) {
     .linux => Epoll,
     else => Kqueue,
 };
 
-const Event = struct { tag: usize, readable: bool, writable: bool };
+pub const Event = struct { tag: usize, readable: bool, writable: bool };
 
 const Kqueue = struct {
     fd: c.fd_t,
     raw: [256]c.Kevent = undefined,
 
-    fn init() !Kqueue {
+    pub fn init() !Kqueue {
         const fd = c.kqueue();
         if (fd < 0) return error.SystemResources;
         return .{ .fd = fd };
@@ -941,7 +941,7 @@ const Kqueue = struct {
         if (c.kevent(k.fd, (&ev)[0..1], 1, &k.raw, 0, null) < 0) return error.SystemResources;
     }
 
-    fn add(k: *Kqueue, fd: c.fd_t, tag: usize) !void {
+    pub fn add(k: *Kqueue, fd: c.fd_t, tag: usize) !void {
         try k.change(fd, c.EVFILT.READ, c.EV.ADD, tag);
     }
 
@@ -966,7 +966,7 @@ const Kqueue = struct {
         try k.change(fd, c.EVFILT.WRITE, if (on) c.EV.ADD | c.EV.ENABLE else c.EV.DELETE, tag);
     }
 
-    fn wait(k: *Kqueue, events: []Server.Event, timeout_ms: u64) ![]Server.Event {
+    pub fn wait(k: *Kqueue, events: []Server.Event, timeout_ms: u64) ![]Server.Event {
         const timeout: c.timespec = .{ .sec = @intCast(timeout_ms / 1000), .nsec = @intCast(timeout_ms % 1000 * std.time.ns_per_ms) };
         const n = c.kevent(k.fd, &k.raw, 0, &k.raw, @intCast(@min(events.len, k.raw.len)), &timeout);
         if (n < 0) return if (c.errno(n) == .INTR) events[0..0] else error.SystemResources;
@@ -982,7 +982,7 @@ const Epoll = struct {
     fd: c.fd_t,
     raw: [256]c.epoll_event = undefined,
 
-    fn init() !Epoll {
+    pub fn init() !Epoll {
         const fd = c.epoll_create1(0);
         if (fd < 0) return error.SystemResources;
         return .{ .fd = fd };
@@ -993,7 +993,7 @@ const Epoll = struct {
         if (c.epoll_ctl(e.fd, op, fd, &ev) < 0) return error.SystemResources;
     }
 
-    fn add(e: *Epoll, fd: c.fd_t, tag: usize) !void {
+    pub fn add(e: *Epoll, fd: c.fd_t, tag: usize) !void {
         try e.control(std.os.linux.EPOLL.CTL_ADD, fd, std.os.linux.EPOLL.IN, tag);
     }
 
@@ -1024,7 +1024,7 @@ const Epoll = struct {
         try e.watchFor(fd, tag, reading, on);
     }
 
-    fn wait(e: *Epoll, events: []Server.Event, timeout_ms: u64) ![]Server.Event {
+    pub fn wait(e: *Epoll, events: []Server.Event, timeout_ms: u64) ![]Server.Event {
         const linux = std.os.linux;
         const n = c.epoll_wait(e.fd, &e.raw, @intCast(@min(events.len, e.raw.len)), @intCast(timeout_ms));
         if (n < 0) return if (c.errno(n) == .INTR) events[0..0] else error.SystemResources;

@@ -1,13 +1,20 @@
 //! `zig build load -- [--host 127.0.0.1] [--port 8787] [--rooms 10] [--guests 3] [--rate 20] [--presence 0]
-//! [--seconds 10]`: a load generator for a relay already running, here or at `--host`. Each room has a host publishing
-//! changes at `rate` a second, each carrying when it was sent, and `guests` guests that read them, pinging now and then
-//! so the log can be trimmed, and each sending `presence` pointer updates a second, as a moving pointer does. At the
-//! end it prints changes delivered a second and the time from the host's send to a guest's receive. On one machine, the
-//! times are the relay's, the kernel's and this program's, with no network.
+//! [--slow 0] [--seconds 10] [--threads <cores>]`: a load generator for a relay already running, here or at `--host`.
+//! Each room has a host publishing changes at `rate` a second, each carrying when it was sent, and `guests` guests
+//! that read them, pinging now and then so the log can be trimmed, and each sending `presence` pointer updates a
+//! second, as a moving pointer does. At the end it prints changes delivered a second and the time from the host's
+//! send to a guest's receive. On one machine, the times are the relay's, the kernel's and this program's, with no
+//! network.
+//!
+//! It runs as the relay does, an event loop a core, each with its share of the rooms, so one machine can drive many
+//! connections without a thread for each.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const Io = std.Io;
+const c = std.c;
 const wire = @import("wire.zig");
+const Server = @import("Server.zig");
 
 /// Where the relay is.
 var relay_address: [4]u8 = .{ 127, 0, 0, 1 };
@@ -23,34 +30,46 @@ const Config = struct {
     /// Guests in each room on a slow connection, reading 50 messages a second, measured on their own.
     slow: u64 = 0,
     seconds: u64 = 10,
+    /// Event loops: one a core if 0.
+    threads: usize = 0,
 };
 
-/// What every guest saw, added up: changes delivered, and their latencies in buckets an eighth of a doubling wide
-/// (9% apart), from a microsecond to over an hour.
+/// Loops that have opened their rooms, and when they all start counting, once they have.
+var opened: std.atomic.Value(usize) = .init(0);
+var start_ns: std.atomic.Value(i64) = .init(0);
+
+/// What a loop's guests saw: changes delivered, and their latencies in buckets an eighth of a doubling wide (9%
+/// apart), from a microsecond to over an hour. Each loop keeps its own, added up at the end.
 const Stats = struct {
-    delivered: std.atomic.Value(u64) = .init(0),
-    presence: std.atomic.Value(u64) = .init(0),
+    delivered: u64 = 0,
+    presence: u64 = 0,
     /// Pointer updates sent, each due to everyone else in the room.
-    presence_sent: std.atomic.Value(u64) = .init(0),
-    buckets: [bucket_count]std.atomic.Value(u64) = @splat(.init(0)),
+    presence_sent: u64 = 0,
+    buckets: [bucket_count]u64 = @splat(0),
     const per_doubling = 8;
     const bucket_count = 32 * per_doubling;
 
-    fn record(stats: *Stats, latency_ns: i96) void {
-        _ = stats.delivered.fetchAdd(1, .monotonic);
+    fn record(stats: *Stats, latency_ns: i64) void {
+        stats.delivered += 1;
         const us: f64 = @max(@as(f64, @floatFromInt(latency_ns)) / 1000, 1);
         const bucket: usize = @intFromFloat(@min(@log2(us) * per_doubling, bucket_count - 1));
-        _ = stats.buckets[bucket].fetchAdd(1, .monotonic);
+        stats.buckets[bucket] += 1;
+    }
+
+    fn add(total: *Stats, other: Stats) void {
+        total.delivered += other.delivered;
+        total.presence += other.presence;
+        total.presence_sent += other.presence_sent;
+        for (&total.buckets, other.buckets) |*t, o| t.* += o;
     }
 
     /// The `p` quantile's latency, in µs: the top of its bucket.
     fn percentile(stats: *const Stats, p: f64) f64 {
-        const total = stats.delivered.load(.monotonic);
-        if (total == 0) return 0;
-        const target: u64 = @intFromFloat(@ceil(@as(f64, @floatFromInt(total)) * p));
+        if (stats.delivered == 0) return 0;
+        const target: u64 = @intFromFloat(@ceil(@as(f64, @floatFromInt(stats.delivered)) * p));
         var seen: u64 = 0;
-        for (&stats.buckets, 0..) |*b, i| {
-            seen += b.load(.monotonic);
+        for (stats.buckets, 0..) |b, i| {
+            seen += b;
             if (seen >= target) return @round(std.math.pow(f64, 2, @as(f64, @floatFromInt(i + 1)) / per_doubling));
         }
         return std.math.inf(f64);
@@ -79,189 +98,392 @@ pub fn main(init: std.process.Init) !void {
             }
         } else return error.Usage;
     }
+    if (config.threads == 0) config.threads = std.Thread.getCpuCount() catch 1;
+    config.threads = std.math.clamp(config.threads, 1, @max(config.rooms, 1));
+
+    // Each loop opens its share of the rooms; when all have, every loop counts from a second later.
+    const loops = try init.gpa.alloc(Loop, config.threads);
+    const threads = try init.gpa.alloc(std.Thread, config.threads);
+    for (loops, threads, 0..) |*loop, *thread, i| {
+        const rooms = config.rooms / config.threads + @intFromBool(i < config.rooms % config.threads);
+        loop.* = .{
+            .io = io,
+            .config = config,
+            .rooms = try init.gpa.alloc(Room, rooms),
+            .conns = try init.gpa.alloc(Conn, rooms * (1 + config.guests)),
+            .poller = try Server.Poller.init(),
+        };
+        thread.* = try std.Thread.spawn(.{}, Loop.run, .{loop});
+    }
+    while (opened.load(.acquire) < loops.len) try io.sleep(.fromMilliseconds(1), .awake);
+    start_ns.store(nowNs(io) + std.time.ns_per_s, .release);
+    for (threads) |thread| thread.join();
 
     var stats: Stats = .{};
-    var slow_stats: Stats = .{};
-    var published: std.atomic.Value(u64) = .init(0);
-    var tasks: Io.Group = .init;
-    // Started a millisecond apart, as people arrive, not all in one burst at the listen queue.
-    const warmup_ms: i64 = @intCast(1000 + config.rooms);
-    const deadline = nowNs(io) + (@as(i96, warmup_ms) + @as(i96, config.seconds) * 1000) * std.time.ns_per_ms;
-    for (0..config.rooms) |_| {
-        try tasks.concurrent(io, room, .{ io, config, &stats, &slow_stats, &published, deadline });
-        try io.sleep(.fromMilliseconds(1), .awake);
+    var slow: Stats = .{};
+    var sent: u64 = 0;
+    var unopened: u64 = 0;
+    var lost: u64 = 0;
+    for (loops) |*loop| {
+        stats.add(loop.stats);
+        slow.add(loop.slow);
+        sent += loop.published;
+        unopened += loop.unopened;
+        lost += loop.lost;
     }
-    try io.sleep(.fromMilliseconds(1000), .awake);
-    // Counted from when every room's had time to start.
-    for (&stats.buckets) |*b| b.store(0, .monotonic);
-    stats.delivered.store(0, .monotonic);
-    stats.presence.store(0, .monotonic);
-    stats.presence_sent.store(0, .monotonic);
-    slow_stats = .{};
-    const published_at_start = published.load(.monotonic);
-    try io.sleep(.fromSeconds(@intCast(config.seconds)), .awake);
-    const delivered = stats.delivered.load(.monotonic);
-    const presence = stats.presence.load(.monotonic);
     // Only guests count what they're sent: each update is due to the other guests (the host gets it too, uncounted).
-    const presence_due = stats.presence_sent.load(.monotonic) * (config.guests -| 1);
-    const sent = published.load(.monotonic) - published_at_start;
-    tasks.cancel(io);
-
+    const presence_due = stats.presence_sent * (config.guests -| 1);
     const seconds: f64 = @floatFromInt(config.seconds);
+    const due = sent * (config.guests - config.slow);
     std.debug.print(
-        \\rooms {d}, guests each {d}, {d} changes/s each: {d} connections
+        \\rooms {d}, guests each {d}, {d} changes/s each: {d} connections, {d} loops
         \\published {d:.0} changes/s, delivered {d:.0}/s ({d:.0}% of {d})
         \\latency, send to receive: p50 {d:.0} µs, p99 {d:.0} µs, p99.9 {d:.0} µs
         \\pointer updates delivered {d:.0}/s ({d:.0}% of {d} due)
         \\
     , .{
-        config.rooms,                                                                                                      config.guests,
-        config.rate,                                                                                                       config.rooms * (config.guests + 1),
-        @as(f64, @floatFromInt(sent)) / seconds,                                                                           @as(f64, @floatFromInt(delivered)) / seconds,
-        100 * @as(f64, @floatFromInt(delivered)) / @as(f64, @floatFromInt(@max(sent * (config.guests - config.slow), 1))), sent * (config.guests - config.slow),
-        stats.percentile(0.5),                                                                                             stats.percentile(0.99),
-        stats.percentile(0.999),                                                                                           @as(f64, @floatFromInt(presence)) / seconds,
-        100 * @as(f64, @floatFromInt(presence)) / @as(f64, @floatFromInt(@max(presence_due, 1))),                          presence_due,
+        config.rooms,                                       config.guests,
+        config.rate,                                        config.rooms * (config.guests + 1),
+        config.threads,                                     @as(f64, @floatFromInt(sent)) / seconds,
+        @as(f64, @floatFromInt(stats.delivered)) / seconds, 100 * @as(f64, @floatFromInt(stats.delivered)) / @as(f64, @floatFromInt(@max(due, 1))),
+        due,                                                stats.percentile(0.5),
+        stats.percentile(0.99),                             stats.percentile(0.999),
+        @as(f64, @floatFromInt(stats.presence)) / seconds,  100 * @as(f64, @floatFromInt(stats.presence)) / @as(f64, @floatFromInt(@max(presence_due, 1))),
+        presence_due,
     });
     if (config.slow > 0) std.debug.print("slow guests: changes delivered {d:.0}/s, p50 {d:.0} µs, p99 {d:.0} µs, pointer updates {d:.0}/s\n", .{
-        @as(f64, @floatFromInt(slow_stats.delivered.load(.monotonic))) / seconds, slow_stats.percentile(0.5),
-        slow_stats.percentile(0.99),                                              @as(f64, @floatFromInt(slow_stats.presence.load(.monotonic))) / seconds,
+        @as(f64, @floatFromInt(slow.delivered)) / seconds, slow.percentile(0.5),
+        slow.percentile(0.99),                             @as(f64, @floatFromInt(slow.presence)) / seconds,
     });
+    if (unopened + lost > 0) std.debug.print("failed: {d} rooms didn't open, {d} connections closed\n", .{ unopened, lost });
 }
 
-/// One room: its host, publishing until `deadline`, and its guests.
-fn room(io: Io, config: Config, stats: *Stats, slow: *Stats, published: *std.atomic.Value(u64), deadline: i96) Io.Cancelable!void {
-    var host: Socket = undefined;
-    host.open(io, config.port, false) catch return;
-    defer host.close();
-    var w = frameWriter();
-    w.byte(@backingInt(wire.Role.host));
-    for (0..3) |_| w.blob("");
-    w.varint(0);
-    w.varint(wire.room_version);
-    w.blob("Load");
-    w.blob("Load");
-    host.send(w.finish(.hello, 0, 0)) catch return;
-    var seq: u64 = 0;
-    host.sendSnapshot(seq) catch return;
-    // The welcome: the room, and the guests' secret.
-    const welcome = host.receive() catch return;
-    var r: Reader = .{ .bytes = welcome[wire.header_size..] };
-    _ = r.varint();
-    const room_id = r.blob();
-    _ = r.blob();
-    const guest_secret = r.blob();
-    var id_buffer: [32]u8 = undefined;
-    var secret_buffer: [32]u8 = undefined;
-    @memcpy(id_buffer[0..room_id.len], room_id);
-    @memcpy(secret_buffer[0..guest_secret.len], guest_secret);
+/// A room's host's schedule: when its next change is due, and the last one's number.
+const Room = struct { next_ns: i64 = 0, seq: u64 = 0 };
 
-    var guests: Io.Group = .init;
-    defer guests.cancel(io);
-    for (0..config.guests) |i| {
-        guests.concurrent(io, guest, .{ io, config, id_buffer[0..room_id.len], secret_buffer[0..guest_secret.len], i, if (i < config.slow) slow else stats }) catch return;
-    }
-    // Snapshot requests, answered by the host's reader, which shares its writer with publishing.
-    var writing: Io.Mutex = .init;
-    var reader = io.concurrent(hostReader, .{ io, &host, &writing, &seq }) catch return;
-    defer reader.cancel(io) catch {};
+/// An event loop and its share of the rooms: each room's host, then its guests, in `conns`.
+const Loop = struct {
+    io: Io,
+    config: Config,
+    rooms: []Room,
+    conns: []Conn,
+    poller: Server.Poller,
+    /// Whether it's past the start: only then does what's sent and delivered count.
+    counting: bool = false,
+    stats: Stats = .{},
+    slow: Stats = .{},
+    published: u64 = 0,
+    unopened: u64 = 0,
+    lost: u64 = 0,
 
-    const interval_ns: i96 = @divFloor(std.time.ns_per_s, @as(i96, config.rate));
-    var next = nowNs(io);
-    while (true) {
-        const now = nowNs(io);
-        if (now >= deadline) return;
-        if (now < next) {
-            try io.sleep(.fromNanoseconds(@min(next - now, std.time.ns_per_ms)), .awake);
-            continue;
+    fn run(loop: *Loop) void {
+        for (loop.rooms, 0..) |*room, r| {
+            room.* = .{};
+            loop.open(r) catch {
+                loop.unopened += 1;
+                for (loop.roomConns(r)) |*conn| conn.close();
+            };
         }
-        next += interval_ns;
-        try writing.lock(io);
-        defer writing.unlock(io);
-        seq += 1;
-        // A change about the size of a sealed rename: when it was sent, then padding.
-        var body: [96]u8 = @splat(0);
-        std.mem.writeInt(i96, body[0..12], nowNs(io), .little);
-        w = frameWriter();
-        w.raw(&body);
-        host.send(w.finish(.ops, seq, 0)) catch return;
-        _ = published.fetchAdd(1, .monotonic);
+        _ = opened.fetchAdd(1, .release);
+        var events: [256]Server.Event = undefined;
+        var end: i64 = std.math.maxInt(i64);
+        while (true) {
+            for (loop.poller.wait(&events, 1) catch return) |event| loop.receive(@ptrFromInt(event.tag));
+            const now = nowNs(loop.io);
+            if (now >= end) return;
+            const start = start_ns.load(.acquire);
+            if (start != 0) {
+                end = start + @as(i64, @intCast(loop.config.seconds * std.time.ns_per_s));
+                loop.counting = now >= start;
+            }
+            loop.tick(now);
+        }
     }
-}
 
-fn hostReader(io: Io, host: *Socket, writing: *Io.Mutex, seq: *u64) Io.Cancelable!void {
-    while (true) {
-        const frame = host.receive() catch return;
-        if (frame[1] != @backingInt(wire.Kind.snapshot_request)) continue;
-        try writing.lock(io);
-        defer writing.unlock(io);
-        host.sendSnapshot(seq.*) catch return;
+    fn roomConns(loop: *Loop, r: usize) []Conn {
+        return loop.conns[r * (1 + loop.config.guests) ..][0 .. 1 + loop.config.guests];
     }
-}
 
-fn guest(io: Io, config: Config, room_id: []const u8, secret: []const u8, index: usize, stats: *Stats) Io.Cancelable!void {
-    var socket: Socket = undefined;
-    // A slow connection: the network holds little, so what it's behind on waits at the relay, as it would.
-    socket.open(io, config.port, index < config.slow) catch return;
-    defer socket.close();
-    var client: [16]u8 = undefined;
-    var w = frameWriter();
-    w.byte(@backingInt(wire.Role.guest));
-    w.blob(room_id);
-    w.blob(secret);
-    w.blob(std.fmt.bufPrint(&client, "load-{d}", .{index}) catch unreachable);
-    w.varint(0);
-    w.varint(wire.room_version);
-    w.blob("Guest");
-    w.blob("");
-    socket.send(w.finish(.hello, 0, 0)) catch return;
-    // Pointer updates, from a task of their own, sharing the socket's writing with pings.
-    var writing: Io.Mutex = .init;
-    var pointer: ?Io.Future(Io.Cancelable!void) = if (config.presence > 0)
-        io.concurrent(movePointer, .{ io, &socket, &writing, config.presence, stats }) catch return
-    else
-        null;
-    defer if (pointer) |*f| f.cancel(io) catch {};
-    var seq: u64 = 0;
-    var unpinged: usize = 0;
-    while (true) {
-        try io.checkCancel();
-        const frame = socket.receive() catch return;
-        // On a slow connection: 50 messages a second.
-        if (index < config.slow) try io.sleep(.fromMilliseconds(20), .awake);
-        if (frame[1] == @backingInt(wire.Kind.presence)) _ = stats.presence.fetchAdd(1, .monotonic);
-        if (frame[1] != @backingInt(wire.Kind.ops)) continue;
-        seq = wire.seqOf(frame);
-        const sent = std.mem.readInt(i96, frame[wire.header_size..][0..12], .little);
-        stats.record(nowNs(io) - sent);
+    /// Opens room `r`: its host, which says hello, sends its snapshot and is welcomed, then its guests, who join
+    /// with the room's secret. Blocking until it's done, then watched without blocking.
+    fn open(loop: *Loop, r: usize) !void {
+        const conns = loop.roomConns(r);
+        for (conns, 0..) |*conn, i| conn.* = .{ .room = @intCast(r), .role = if (i == 0) .host else if (i - 1 < loop.config.slow) .slow else .guest };
+        const host = &conns[0];
+        try host.connect(loop.config.port);
+        var w = frameWriter();
+        w.byte(@backingInt(wire.Role.host));
+        for (0..3) |_| w.blob("");
+        w.varint(0);
+        w.varint(wire.room_version);
+        w.blob("Load");
+        w.blob("Load");
+        _ = host.queue(w.finish(.hello, 0, 0));
+        _ = host.queueSnapshot(0);
+        try host.flushAll();
+        // The welcome: the room, and the guests' secret.
+        var welcome: Reader = .{ .bytes = (try host.receiveBlocking())[wire.header_size..] };
+        _ = welcome.varint();
+        var id: [32]u8 = undefined;
+        var secret: [32]u8 = undefined;
+        const room_id = id[0..welcome.blobInto(&id)];
+        _ = welcome.blob();
+        const guest_secret = secret[0..welcome.blobInto(&secret)];
+
+        for (conns[1..], 0..) |*guest, i| {
+            try guest.connect(loop.config.port);
+            var client: [16]u8 = undefined;
+            w = frameWriter();
+            w.byte(@backingInt(wire.Role.guest));
+            w.blob(room_id);
+            w.blob(guest_secret);
+            w.blob(std.fmt.bufPrint(&client, "load-{d}", .{i}) catch unreachable);
+            w.varint(0);
+            w.varint(wire.room_version);
+            w.blob("Guest");
+            w.blob("");
+            _ = guest.queue(w.finish(.hello, 0, 0));
+            try guest.flushAll();
+        }
+        for (conns) |*conn| {
+            try Server.setNonblocking(conn.fd);
+            // A slow guest reads on a timer, not when there's something to.
+            if (conn.role != .slow) try loop.poller.add(conn.fd, @intFromPtr(conn));
+        }
+    }
+
+    fn receive(loop: *Loop, conn: *Conn) void {
+        if (conn.fd < 0) return;
+        conn.fill(conn.in.len) catch return loop.lose(conn);
+        while (conn.next()) |frame| loop.handle(conn, frame);
+    }
+
+    fn handle(loop: *Loop, conn: *Conn, frame: []const u8) void {
+        if (frame.len < wire.header_size) return;
+        const kind = frame[1];
+        if (conn.role == .host) {
+            if (kind == @backingInt(wire.Kind.snapshot_request)) _ = conn.queueSnapshot(loop.rooms[conn.room].seq);
+            return;
+        }
+        const stats = if (conn.role == .slow) &loop.slow else &loop.stats;
+        if (kind == @backingInt(wire.Kind.presence) and loop.counting) stats.presence += 1;
+        if (kind != @backingInt(wire.Kind.ops) or frame.len < wire.header_size + 8) return;
+        conn.seq = wire.seqOf(frame);
+        const sent = std.mem.readInt(i64, frame[wire.header_size..][0..8], .little);
+        if (loop.counting) stats.record(nowNs(loop.io) - sent);
         // Now and then: what it has, so the log can let go of what's before it.
-        unpinged += 1;
-        if (unpinged >= 200) {
-            unpinged = 0;
+        conn.unpinged += 1;
+        if (conn.unpinged >= 200) {
+            conn.unpinged = 0;
             var ping: [wire.header_size]u8 = undefined;
             var pw: wire.FrameWriter = .{ .buffer = &ping };
-            try writing.lock(io);
-            defer writing.unlock(io);
-            socket.send(pw.finish(.ping, seq, 0)) catch return;
+            _ = conn.queue(pw.finish(.ping, conn.seq, 0));
         }
     }
-}
 
-/// A pointer moving across the canvas: `rate` updates a second, each about the size of a sealed one.
-fn movePointer(io: Io, socket: *Socket, writing: *Io.Mutex, rate: u64, stats: *Stats) Io.Cancelable!void {
-    var buffer: [wire.header_size + 64]u8 = @splat(0);
-    while (true) {
-        try io.sleep(.fromNanoseconds(@divFloor(std.time.ns_per_s, rate)), .awake);
-        try writing.lock(io);
-        defer writing.unlock(io);
-        var w: wire.FrameWriter = .{ .buffer = &buffer, .len = buffer.len };
-        socket.send(w.finish(.presence, 0, 0)) catch return;
-        _ = stats.presence_sent.fetchAdd(1, .monotonic);
+    /// What's due: hosts' changes, guests' pointer updates and slow guests' reads. Then what's queued goes out.
+    fn tick(loop: *Loop, now: i64) void {
+        const change_ns: i64 = @intCast(std.time.ns_per_s / @max(loop.config.rate, 1));
+        const pointer_ns: i64 = @intCast(std.time.ns_per_s / @max(loop.config.presence, 1));
+        for (loop.rooms, 0..) |*room, r| {
+            const conns = loop.roomConns(r);
+            const host = &conns[0];
+            if (host.fd < 0) continue;
+            if (room.next_ns == 0) room.next_ns = now;
+            // A change about the size of a sealed rename: when it was sent, then padding. One that doesn't fit, as
+            // the relay's behind on reading, isn't sent.
+            while (room.next_ns <= now) : (room.next_ns += change_ns) {
+                var body: [96]u8 = @splat(0);
+                std.mem.writeInt(i64, body[0..8], now, .little);
+                var w = frameWriter();
+                w.raw(&body);
+                if (!host.queue(w.finish(.ops, room.seq + 1, 0))) continue;
+                room.seq += 1;
+                if (loop.counting) loop.published += 1;
+            }
+            for (conns[1..]) |*guest| {
+                if (guest.fd < 0) continue;
+                if (loop.config.presence > 0 and now >= guest.pointer_ns) {
+                    // A pointer moving across the canvas, each update about the size of a sealed one.
+                    var buffer: [wire.header_size + 64]u8 = @splat(0);
+                    var w: wire.FrameWriter = .{ .buffer = &buffer, .len = buffer.len };
+                    if (guest.queue(w.finish(.presence, 0, 0)) and loop.counting) {
+                        (if (guest.role == .slow) &loop.slow else &loop.stats).presence_sent += 1;
+                    }
+                    guest.pointer_ns = @max(guest.pointer_ns + pointer_ns, now - pointer_ns);
+                }
+                // On a slow connection: 50 messages a second, reading only what it needs, not ahead.
+                if (guest.role == .slow and now >= guest.read_ns) {
+                    guest.read_ns = now + 20 * std.time.ns_per_ms;
+                    if (guest.peek() == null) guest.fill(slow_window) catch {
+                        loop.lose(guest);
+                        continue;
+                    };
+                    if (guest.next()) |frame| loop.handle(guest, frame);
+                }
+            }
+        }
+        for (loop.conns) |*conn| {
+            if (conn.fd >= 0 and conn.out_len > 0) conn.flush() catch loop.lose(conn);
+        }
     }
-}
 
-fn nowNs(io: Io) i96 {
-    return Io.Clock.awake.now(io).nanoseconds;
+    fn lose(loop: *Loop, conn: *Conn) void {
+        if (conn.fd < 0) return;
+        conn.close();
+        loop.lost += 1;
+    }
+};
+
+/// The network holds little for a slow guest, so what it's behind on waits at the relay, as it would.
+const slow_window = 4096;
+
+/// A WebSocket client's connection: frames out masked (with a zero mask, which changes nothing), frames in whole.
+const Conn = struct {
+    fd: c.fd_t = -1,
+    room: u32,
+    role: enum { host, guest, slow },
+    /// A guest's last change, and changes since it last said so.
+    seq: u64 = 0,
+    unpinged: u32 = 0,
+    /// When a guest's next pointer update is due, and a slow guest's next read.
+    pointer_ns: i64 = 0,
+    read_ns: i64 = 0,
+    in_start: usize = 0,
+    in_len: usize = 0,
+    out_len: usize = 0,
+    in: [32 * 1024]u8 = undefined,
+    out: [16 * 1024]u8 = undefined,
+
+    /// Connects and upgrades to a WebSocket, blocking. A slow guest's small receive buffer is set before connecting,
+    /// as the window it offers is fixed then.
+    fn connect(conn: *Conn, port: u16) !void {
+        const fd = c.socket(c.AF.INET, c.SOCK.STREAM, 0);
+        if (fd < 0) return error.SystemResources;
+        conn.fd = fd;
+        const one: c_int = 1;
+        // Small messages go at once, as the app's do, not held for the last one's acknowledgement.
+        _ = c.setsockopt(fd, c.IPPROTO.TCP, c.TCP.NODELAY, &one, @sizeOf(c_int));
+        if (builtin.os.tag.isDarwin()) _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.NOSIGPIPE, &one, @sizeOf(c_int));
+        if (conn.role == .slow) {
+            const small: c_int = slow_window;
+            _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.RCVBUF, &small, @sizeOf(c_int));
+        }
+        var address: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, port), .addr = @bitCast(relay_address) };
+        if (c.connect(fd, @ptrCast(&address), @sizeOf(c.sockaddr.in)) < 0) return error.ConnectionRefused;
+        const request = "GET / HTTP/1.1\r\nHost: relay\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" ++
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n";
+        @memcpy(conn.out[0..request.len], request);
+        conn.out_len = request.len;
+        try conn.flushAll();
+        // Its answer, to the blank line; anything after is the first frames.
+        while (std.mem.indexOf(u8, conn.in[0..conn.in_len], "\r\n\r\n") == null) try conn.fill(conn.in.len);
+        conn.in_start = std.mem.indexOf(u8, conn.in[0..conn.in_len], "\r\n\r\n").? + 4;
+    }
+
+    /// Queues a frame to go out, if there's room.
+    fn queue(conn: *Conn, frame: []const u8) bool {
+        var head: [14]u8 = undefined;
+        head[0] = 0x82;
+        var n: usize = 2;
+        if (frame.len < 126) {
+            head[1] = 0x80 | @as(u8, @intCast(frame.len));
+        } else if (frame.len <= 0xffff) {
+            head[1] = 0x80 | 126;
+            std.mem.writeInt(u16, head[2..4], @intCast(frame.len), .big);
+            n = 4;
+        } else {
+            head[1] = 0x80 | 127;
+            std.mem.writeInt(u64, head[2..10], frame.len, .big);
+            n = 10;
+        }
+        @memset(head[n..][0..4], 0);
+        n += 4;
+        if (conn.out_len + n + frame.len > conn.out.len) return false;
+        @memcpy(conn.out[conn.out_len..][0..n], head[0..n]);
+        @memcpy(conn.out[conn.out_len + n ..][0..frame.len], frame);
+        conn.out_len += n + frame.len;
+        return true;
+    }
+
+    fn queueSnapshot(conn: *Conn, seq: u64) bool {
+        var buffer: [wire.header_size + 2048]u8 = @splat(0);
+        var w: wire.FrameWriter = .{ .buffer = &buffer, .len = buffer.len };
+        return conn.queue(w.finish(.snapshot, seq, 0));
+    }
+
+    /// Sends what it can of what's queued.
+    fn flush(conn: *Conn) !void {
+        const flags: u32 = if (builtin.os.tag == .linux) c.MSG.NOSIGNAL else 0;
+        const n = c.send(conn.fd, &conn.out, conn.out_len, flags);
+        if (n < 0) return if (c.errno(n) == .AGAIN) {} else error.Closed;
+        const sent: usize = @intCast(n);
+        std.mem.copyForwards(u8, conn.out[0 .. conn.out_len - sent], conn.out[sent..conn.out_len]);
+        conn.out_len -= sent;
+    }
+
+    /// Sends all that's queued, blocking: while opening.
+    fn flushAll(conn: *Conn) !void {
+        while (conn.out_len > 0) try conn.flush();
+    }
+
+    /// Reads what's there, up to `limit` bytes held.
+    fn fill(conn: *Conn, limit: usize) !void {
+        if (conn.in_start > 0) {
+            std.mem.copyForwards(u8, conn.in[0 .. conn.in_len - conn.in_start], conn.in[conn.in_start..conn.in_len]);
+            conn.in_len -= conn.in_start;
+            conn.in_start = 0;
+        }
+        if (conn.in_len >= limit) return;
+        const n = c.recv(conn.fd, conn.in[conn.in_len..].ptr, limit - conn.in_len, 0);
+        if (n == 0) return error.Closed;
+        if (n < 0) return if (c.errno(n) == .AGAIN) {} else error.Closed;
+        conn.in_len += @intCast(n);
+    }
+
+    /// The next whole frame read, if there is one, and its length with its WebSocket header.
+    fn peek(conn: *Conn) ?struct { []u8, usize } {
+        const in = conn.in[conn.in_start..conn.in_len];
+        if (in.len < 2) return null;
+        var head: usize = 2;
+        const length: usize = switch (in[1] & 0x7f) {
+            126 => if (in.len < 4) return null else blk: {
+                head = 4;
+                break :blk std.mem.readInt(u16, in[2..4], .big);
+            },
+            127 => if (in.len < 10) return null else blk: {
+                head = 10;
+                break :blk @intCast(std.mem.readInt(u64, in[2..10], .big));
+            },
+            else => |n| n,
+        };
+        if (in.len < head + length) return null;
+        return .{ in[head..][0..length], head + length };
+    }
+
+    /// The next whole frame read, good until the next read.
+    fn next(conn: *Conn) ?[]u8 {
+        const frame, const size = conn.peek() orelse return null;
+        conn.in_start += size;
+        return frame;
+    }
+
+    /// The next frame, blocking: while opening.
+    fn receiveBlocking(conn: *Conn) ![]u8 {
+        while (true) {
+            if (conn.next()) |frame| return frame;
+            try conn.fill(conn.in.len);
+        }
+    }
+
+    fn close(conn: *Conn) void {
+        if (conn.fd >= 0) _ = c.close(conn.fd);
+        conn.fd = -1;
+    }
+};
+
+fn nowNs(io: Io) i64 {
+    return @intCast(Io.Clock.awake.now(io).nanoseconds);
 }
 
 fn frameWriter() wire.FrameWriter {
@@ -270,94 +492,6 @@ fn frameWriter() wire.FrameWriter {
     };
     return .{ .buffer = &S.buffer };
 }
-
-/// A WebSocket client: frames out masked (with a zero mask, which changes nothing), frames in whole.
-const Socket = struct {
-    io: Io,
-    stream: Io.net.Stream,
-    read_buffer: [64 * 1024]u8 = undefined,
-    write_buffer: [16 * 1024]u8 = undefined,
-    reader: Io.net.Stream.Reader = undefined,
-    writer: Io.net.Stream.Writer = undefined,
-    upgraded: bool = false,
-
-    /// Connects, in place: its reader and writer point into it.
-    /// Connects, in place: its reader and writer point into it. A slow one has a small receive buffer, set before
-    /// connecting, as the window it offers is fixed then, and reads only what it needs, not ahead.
-    fn open(socket: *Socket, io: Io, port: u16, slow: bool) !void {
-        const c = std.c;
-        const fd = c.socket(c.AF.INET, c.SOCK.STREAM, 0);
-        if (fd < 0) return error.SystemResources;
-        errdefer _ = c.close(fd);
-        // Small messages go at once, as the app's do, not held for the last one's acknowledgement.
-        const one: c_int = 1;
-        _ = c.setsockopt(fd, c.IPPROTO.TCP, c.TCP.NODELAY, &one, @sizeOf(c_int));
-        if (slow) {
-            const small: c_int = 4096;
-            _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.RCVBUF, &small, @sizeOf(c_int));
-        }
-        var address: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, port), .addr = @bitCast(relay_address) };
-        if (c.connect(fd, @ptrCast(&address), @sizeOf(c.sockaddr.in)) < 0) return error.ConnectionRefused;
-        socket.* = .{ .io = io, .stream = .{ .socket = .{ .handle = fd, .address = .{ .ip4 = .{ .bytes = relay_address, .port = port } } } } };
-        socket.reader = socket.stream.reader(io, if (slow) socket.read_buffer[0..4096] else &socket.read_buffer);
-        socket.writer = socket.stream.writer(io, &socket.write_buffer);
-    }
-
-    fn upgrade(socket: *Socket) !void {
-        try socket.writer.interface.writeAll("GET / HTTP/1.1\r\nHost: relay\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" ++
-            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n");
-        try socket.writer.interface.flush();
-        // Its answer, to the blank line.
-        var matched: usize = 0;
-        while (matched < 4) {
-            const c = try socket.reader.interface.takeByte();
-            matched = if (c == "\r\n\r\n"[matched]) matched + 1 else @intFromBool(c == '\r');
-        }
-    }
-
-    fn send(socket: *Socket, frame: []const u8) !void {
-        if (!socket.upgraded) {
-            try socket.upgrade();
-            socket.upgraded = true;
-        }
-        const out = &socket.writer.interface;
-        try out.writeByte(0x82);
-        if (frame.len < 126) {
-            try out.writeByte(0x80 | @as(u8, @intCast(frame.len)));
-        } else if (frame.len <= 0xffff) {
-            try out.writeByte(0x80 | 126);
-            try out.writeInt(u16, @intCast(frame.len), .big);
-        } else {
-            try out.writeByte(0x80 | 127);
-            try out.writeInt(u64, frame.len, .big);
-        }
-        try out.writeAll(&.{ 0, 0, 0, 0 });
-        try out.writeAll(frame);
-        try out.flush();
-    }
-
-    fn sendSnapshot(socket: *Socket, seq: u64) !void {
-        var buffer: [wire.header_size + 2048]u8 = @splat(0);
-        var w: wire.FrameWriter = .{ .buffer = &buffer, .len = buffer.len };
-        try socket.send(w.finish(.snapshot, seq, 0));
-    }
-
-    /// The next whole frame, good until the next call.
-    fn receive(socket: *Socket) ![]u8 {
-        const in = &socket.reader.interface;
-        const head = try in.takeArray(2);
-        const length: usize = switch (head[1] & 0x7f) {
-            126 => try in.takeInt(u16, .big),
-            127 => @intCast(try in.takeInt(u64, .big)),
-            else => |n| n,
-        };
-        return in.take(length);
-    }
-
-    fn close(socket: *Socket) void {
-        socket.stream.close(socket.io);
-    }
-};
 
 /// Reads the welcome's fields.
 const Reader = struct {
@@ -379,5 +513,12 @@ const Reader = struct {
         const n: usize = @intCast(r.varint());
         defer r.index += n;
         return r.bytes[r.index..][0..n];
+    }
+
+    /// A blob, copied: what it's read from is reused.
+    fn blobInto(r: *Reader, out: []u8) usize {
+        const b = r.blob();
+        @memcpy(out[0..b.len], b);
+        return b.len;
     }
 };
