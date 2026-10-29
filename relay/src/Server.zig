@@ -35,6 +35,8 @@ inbox: std.atomic.Value(?*Conn) = .init(null),
 wake: [2]c.fd_t,
 /// Connections to hand to another loop at the end of this turn.
 leaving: std.ArrayList(*Conn) = .empty,
+/// Hosts not being read while this loop catches up, so they send no faster than it can pass their changes on.
+held_back: std.ArrayList(*Conn) = .empty,
 /// This loop's metrics as of its last tick, for the loop answering scrapes to add up.
 published: Published = .{},
 published_lock: Io.Mutex = .init,
@@ -71,6 +73,9 @@ const Counts = struct {
     lagging: u64 = 0,
     /// Pointer updates a connection was behind on, replaced by newer ones from the same person before they went.
     pointers_replaced: u64 = 0,
+    /// Times a loop fell behind and held its hosts back, and how many it's holding back now.
+    hold_backs: u64 = 0,
+    hosts_held_back: u64 = 0,
 };
 
 /// Lets go of silent connections, and ends rooms whose host has gone, this often.
@@ -81,6 +86,11 @@ const closing_grace_ms = 5000;
 const unsent_limit = 16 * 1024;
 /// TCP_NOTSENT_LOWAT, which std doesn't name for macOS.
 const tcp_notsent_lowat: u32 = if (builtin.os.tag == .linux) std.os.linux.TCP.NOTSENT_LOWAT else 0x201;
+/// A turn this long means the loop's behind: it holds its rooms' hosts back, not reading what they send, until a
+/// turn's this short again. Their TCP windows close, so they send no faster than the loop can pass changes on, rather
+/// than the loop's queues, memory and latency growing without bound.
+const behind_ns = 20 * std.time.ns_per_ms;
+const caught_up_ns = 5 * std.time.ns_per_ms;
 /// A connection gets this long to finish its HTTP request.
 const request_ms = 10_000;
 
@@ -117,6 +127,7 @@ pub fn deinit(server: *Server) void {
     server.dirty.deinit(server.gpa);
     server.done.deinit(server.gpa);
     server.leaving.deinit(server.gpa);
+    server.held_back.deinit(server.gpa);
 }
 
 /// What the poller hands back for the listeners and the wake pipe; connections are their own addresses.
@@ -130,7 +141,8 @@ pub fn run(server: *Server) !void {
     var next_tick = server.now() + tick_ms;
     while (true) {
         const ready = try server.poller.wait(&events, @intCast(@max(next_tick - server.now(), 0)));
-        server.time = server.now();
+        const turn_start = Io.Clock.boot.now(server.io).nanoseconds;
+        server.time = @intCast(@divFloor(turn_start, std.time.ns_per_ms));
         for (ready) |event| switch (event.tag) {
             listener_tag => server.accept(server.listener, .http),
             metrics_tag => server.accept(server.metrics_listener, .metrics),
@@ -150,6 +162,33 @@ pub fn run(server: *Server) !void {
             server.publish();
         }
         server.finishTurn();
+        server.regulate(@intCast(Io.Clock.boot.now(server.io).nanoseconds - turn_start));
+    }
+}
+
+/// Holds this loop's hosts back if that turn showed it's behind, or lets them go if it's caught up.
+fn regulate(server: *Server, turn_ns: i64) void {
+    if (server.held_back.items.len == 0 and turn_ns > behind_ns) {
+        var next = server.conns.first;
+        while (next) |node| : (next = node.next) {
+            const conn: *Conn = @fieldParentPtr("node", node);
+            const room = conn.link.room orelse continue;
+            if (room.host != &conn.link or conn.hot.state != .open) continue;
+            server.poller.wantRead(conn.fd, @intFromPtr(conn), false, conn.hot.wants_write) catch continue;
+            conn.held_back = true;
+            server.held_back.appendAssumeCapacity(conn);
+        }
+        server.counts.hold_backs += 1;
+        server.counts.hosts_held_back = server.held_back.items.len;
+        log.info("loop {d} is behind ({d} ms a turn): holding {d} hosts back", .{ server.index, @divFloor(turn_ns, std.time.ns_per_ms), server.held_back.items.len });
+    } else if (server.held_back.items.len > 0 and turn_ns < caught_up_ns) {
+        for (server.held_back.items) |conn| {
+            conn.held_back = false;
+            server.poller.wantRead(conn.fd, @intFromPtr(conn), true, conn.hot.wants_write) catch server.lose(conn, null);
+        }
+        server.held_back.clearRetainingCapacity();
+        server.counts.hosts_held_back = 0;
+        log.info("loop {d} has caught up: reading its hosts again", .{server.index});
     }
 }
 
@@ -166,6 +205,8 @@ const Conn = struct {
     link: Relay.Link,
     fd: c.fd_t,
     kind: enum { http, websocket, metrics },
+    /// A host not being read while its loop catches up.
+    held_back: bool = false,
     /// While it's being handed to another loop, the next in that loop's inbox, and which loop.
     next_handed: ?*Conn = null,
     owner: u8 = 0,
@@ -311,6 +352,7 @@ fn watch(server: *Server, conn: *Conn) !void {
     try server.dirty.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.done.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.leaving.ensureTotalCapacity(server.gpa, server.conn_count + 1);
+    try server.held_back.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.poller.add(conn.fd, @intFromPtr(conn));
     server.conn_count += 1;
     server.conns.append(&conn.node);
@@ -492,6 +534,12 @@ fn shut(server: *Server, conn: *Conn) void {
     if (conn.in_relay) server.counts.connections_open -= 1;
     conn.in_relay = false;
     conn.hot.state = .gone;
+    if (conn.held_back) {
+        conn.held_back = false;
+        const i = std.mem.indexOfScalar(*Conn, server.held_back.items, conn).?;
+        _ = server.held_back.swapRemove(i);
+        server.counts.hosts_held_back = server.held_back.items.len;
+    }
     _ = c.close(conn.fd);
     server.conns.remove(&conn.node);
     server.conn_count -= 1;
@@ -586,7 +634,7 @@ fn flush(server: *Server, conn: *Conn) void {
         pointers.count = 0;
     }
     if (conn.hot.wants_write) {
-        server.poller.wantWrite(conn.fd, @intFromPtr(conn), false) catch {};
+        server.poller.wantWrite(conn.fd, @intFromPtr(conn), false, !conn.held_back) catch {};
         conn.hot.wants_write = false;
     }
     if (conn.hot.state == .closing) server.shut(conn);
@@ -600,7 +648,7 @@ fn send(server: *Server, conn: *Conn) ?void {
         if (n < 0) {
             if (c.errno(n) == .AGAIN) {
                 // Told when it can take more.
-                if (!conn.hot.wants_write) server.poller.wantWrite(conn.fd, @intFromPtr(conn), true) catch {
+                if (!conn.hot.wants_write) server.poller.wantWrite(conn.fd, @intFromPtr(conn), true, !conn.held_back) catch {
                     server.lose(conn, null);
                     return null;
                 };
@@ -802,6 +850,8 @@ fn writeMetrics(w: *Io.Writer, total: Published, loops: usize, started: i64) Io.
         .{ .name = "connections", .kind = "gauge", .help = "WebSocket connections open.", .value = counts.connections_open },
         .{ .name = "connections_total", .kind = "counter", .help = "WebSocket connections accepted.", .value = counts.connections },
         .{ .name = "lagging_total", .kind = "counter", .help = "Connections closed for falling too far behind.", .value = counts.lagging },
+        .{ .name = "hold_backs_total", .kind = "counter", .help = "Times a loop fell behind and held its rooms' hosts back.", .value = counts.hold_backs },
+        .{ .name = "hosts_held_back", .kind = "gauge", .help = "Hosts not being read while their loop catches up.", .value = counts.hosts_held_back },
         .{ .name = "pointers_replaced_total", .kind = "counter", .help = "Pointer updates replaced by newer ones before a connection that was behind was sent them.", .value = counts.pointers_replaced },
         .{ .name = "frames_received_total", .kind = "counter", .help = "Frames received.", .value = counts.frames_in },
         .{ .name = "bytes_received_total", .kind = "counter", .help = "Bytes of frames received.", .value = counts.bytes_in },
@@ -905,7 +955,14 @@ const Kqueue = struct {
         if (writing) k.change(fd, c.EVFILT.WRITE, c.EV.DELETE, 0) catch {};
     }
 
-    fn wantWrite(k: *Kqueue, fd: c.fd_t, tag: usize, on: bool) !void {
+    /// Whether the socket's reported readable; writable stays as it is.
+    fn wantRead(k: *Kqueue, fd: c.fd_t, tag: usize, on: bool, writing: bool) !void {
+        _ = writing;
+        try k.change(fd, c.EVFILT.READ, if (on) c.EV.ENABLE else c.EV.DISABLE, tag);
+    }
+
+    fn wantWrite(k: *Kqueue, fd: c.fd_t, tag: usize, on: bool, reading: bool) !void {
+        _ = reading;
         try k.change(fd, c.EVFILT.WRITE, if (on) c.EV.ADD | c.EV.ENABLE else c.EV.DELETE, tag);
     }
 
@@ -951,10 +1008,20 @@ const Epoll = struct {
         e.control(std.os.linux.EPOLL.CTL_DEL, fd, 0, 0) catch {};
     }
 
-    fn wantWrite(e: *Epoll, fd: c.fd_t, tag: usize, on: bool) !void {
+    /// What the socket's reported for: epoll sets both at once.
+    fn watchFor(e: *Epoll, fd: c.fd_t, tag: usize, reading: bool, writing: bool) !void {
         const linux = std.os.linux;
-        const out: u32 = if (on) linux.EPOLL.OUT else 0;
-        try e.control(linux.EPOLL.CTL_MOD, fd, linux.EPOLL.IN | out, tag);
+        const in: u32 = if (reading) linux.EPOLL.IN else 0;
+        const out: u32 = if (writing) linux.EPOLL.OUT else 0;
+        try e.control(linux.EPOLL.CTL_MOD, fd, in | out, tag);
+    }
+
+    fn wantRead(e: *Epoll, fd: c.fd_t, tag: usize, on: bool, writing: bool) !void {
+        try e.watchFor(fd, tag, on, writing);
+    }
+
+    fn wantWrite(e: *Epoll, fd: c.fd_t, tag: usize, on: bool, reading: bool) !void {
+        try e.watchFor(fd, tag, reading, on);
     }
 
     fn wait(e: *Epoll, events: []Server.Event, timeout_ms: u64) ![]Server.Event {

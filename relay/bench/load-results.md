@@ -300,3 +300,22 @@ seconds of load gives what ten did (two load VMs, `--pin 0`):
 
 A run is now 6 to 7 seconds end to end, from 23.5. Memory is the exception: logs fill through a run, so it wants the
 longer one.
+
+## Backpressure under overload
+
+Past what a loop can deliver, its queues grew without bound: at 1,600 rooms on one loop, ten seconds of load took
+the relay to 2.6 GB, p50 to 1.4 s and p99 to 4.2 s, and the metrics endpoint stopped answering. Now a loop that takes
+more than 20 ms over a turn stops reading its rooms' hosts until a turn takes under 5 ms again. Guests are still
+read. The hosts' TCP windows close, so the changes wait in their sockets, not in the relay
+(`hold_backs_total`, `hosts_held_back`).
+
+One loop, two load VMs, 3 s, `--rate 1000`:
+
+| Rooms | Hold-backs | Delivered/s, before / after | p50, before / after | p99, before / after | Memory, before / after |
+| --- | --- | --- | --- | --- | --- |
+| 1,000 | 0 | — / 2,915,521 | — / 36 ms | — / 78 ms | — / 497 MB |
+| 1,600 | 53 | 2,197,252 / 2,987,701 | 0.81–1.05 / 0.48–0.57 s | 2.3 / 3.0–3.2 s | 766 / 590 MB |
+
+Under capacity it never triggers. Over it, the loop delivers 36% more and holds less, because it stops spending turns
+reading changes it can't yet pass on. The tail gets worse: a held host's changes wait out the hold in its socket
+buffer, so p99 rises. Overload still means latency; what this bounds is the relay's memory and its time.
