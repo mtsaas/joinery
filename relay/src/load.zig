@@ -1,5 +1,5 @@
 //! `zig build load -- [--host 127.0.0.1] [--port 8787] [--rooms 10] [--guests 3] [--rate 20] [--presence 0]
-//! [--slow 0] [--seconds 10] [--threads <cores>]`: a load generator for a relay already running, here or at `--host`.
+//! [--slow 0] [--seconds 10] [--threads <cores>] [--sources 10.0.0.5,10.0.0.6]`: a load generator for a relay already running, here or at `--host`.
 //! Each room has a host publishing changes at `rate` a second, each carrying when it was sent, and `guests` guests
 //! that read them, pinging now and then so the log can be trimmed, and each sending `presence` pointer updates a
 //! second, as a moving pointer does. At the end it prints changes delivered a second and the time from the host's
@@ -18,6 +18,10 @@ const Server = @import("Server.zig");
 
 /// Where the relay is.
 var relay_address: [4]u8 = .{ 127, 0, 0, 1 };
+/// This machine's addresses to connect from, in turn: one has ports for about 55,000 connections to the relay.
+var sources: [16][4]u8 = undefined;
+var source_count: usize = 0;
+var next_source: std.atomic.Value(usize) = .init(0);
 
 const Config = struct {
     port: u16 = 8787,
@@ -86,6 +90,14 @@ pub fn main(init: std.process.Init) !void {
         // The relay's address, if it's on another machine.
         if (std.mem.eql(u8, arg, "--host")) {
             relay_address = (Io.net.Ip4Address.parse(text, 0) catch return error.Usage).bytes;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--sources")) {
+            var each = std.mem.tokenizeScalar(u8, text, ',');
+            while (each.next()) |source| : (source_count += 1) {
+                if (source_count == sources.len) return error.Usage;
+                sources[source_count] = (Io.net.Ip4Address.parse(source, 0) catch return error.Usage).bytes;
+            }
             continue;
         }
         const value = std.fmt.parseInt(u64, text, 10) catch return error.Usage;
@@ -368,6 +380,10 @@ const Conn = struct {
         if (conn.role == .slow) {
             const small: c_int = slow_window;
             _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.RCVBUF, &small, @sizeOf(c_int));
+        }
+        if (source_count > 0) {
+            const source: c.sockaddr.in = .{ .port = 0, .addr = @bitCast(sources[next_source.fetchAdd(1, .monotonic) % source_count]) };
+            if (c.bind(fd, @ptrCast(&source), @sizeOf(c.sockaddr.in)) < 0) return error.AddressNotAvailable;
         }
         var address: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, port), .addr = @bitCast(relay_address) };
         if (c.connect(fd, @ptrCast(&address), @sizeOf(c.sockaddr.in)) < 0) return error.ConnectionRefused;
