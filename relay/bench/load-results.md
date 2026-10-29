@@ -66,3 +66,74 @@ is replaced. The slow-guest scenario, on Linux:
 Slow guests get three times the changes, sooner, because they're no longer behind a queue of pointer positions
 already out of date. What's left of their 5 seconds is what the kernel still holds: 16 KB unsent is over 3 seconds
 for a guest reading 50 messages a second. A smaller limit would cut it, for more wakeups on fast connections.
+
+## Step 3: what a profile says, and the layout and instructions in the hot paths
+
+**First, a profile** (`sample`, throughput scenario, 5 s; `bench/profiles/`). Of the relay's ~3,100 samples, 71% were
+in `sendto`, 25% in `recvfrom` and 2% in `kevent`, all in the kernel; all of the relay's own code together was 1.2%,
+reading the clock 0.4%, `memmove` 0.3%. So layout and instruction-level work can buy at most a percent or two of the
+relay's CPU end to end; system calls are the cost. What was done, and what it measured:
+
+| Change | Why | Measured |
+| --- | --- | --- |
+| One `recv` per readable socket unless it filled the buffer | Reading until "nothing left" is always one more call that returns nothing | `recvfrom` samples 773 → 524; relay CPU on throughput 9.35–9.40 s → 9.06–9.08 s against the step-2 build, back to back (~3%) |
+| The clock read once per turn, not per message | 0.4% of samples, for millisecond timestamps | Folded into the above |
+| Unmasking 16 bytes at a time | The disassembly showed a byte loop, unrolled 6×, reloading the mask byte from the stack each time: ~4 instructions a byte. Now `eor.16b`. | 124 bytes: 19.4 → 5.4 ns. A 1 MiB snapshot: 163 → 15 µs (ReleaseSafe) |
+| `@memmove` for buffer compaction | `std.mem.copyForwards` compiled to a scalar byte loop | Not measurable at this load (`memmove` was 0.3%) |
+| Guests 112 → 32 bytes (name moved to the client table) | Fan-out reads every guest; 31 went from 55 cache lines to 16 | 1 room, in cache: 34.5–36 ns (was 34.4–54); 2,000 rooms: 134–138 ns (was 143–144), ~6% |
+| A connection's send-side fields grouped, pointer slots moved out and made on first use | What every send touches in one place; 192 bytes of slot bookkeeping out of the connection | Not measurable at this load (`queue` was 0.2%) |
+| The client table reserved, not filled | `alloc` in ReleaseSafe writes every one of a room's 1,024 entries: 72 KB a room, resident whether used or not | 4,000 connections: 132 → 82 MB |
+
+Tried and undone: the guests as a `MultiArrayList` (a struct of arrays). Fetching its arrays costs a fixed amount per
+change: 34.5 → 45 ns in cache, and no clear win across 2,000 rooms. Aligning the hot fields to a cache line: the
+allocator gives over-aligned objects a page each, ~16 KB a connection.
+
+| Scenario | Changes delivered/s | p50 | p99 | Pointer updates/s | Pointer updates replaced | Relay CPU s | Relay RSS MB | Threads |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| throughput | 298,777 | 1,878 µs | 2,656 µs | 0 | 0 | 9.4 | 135 | 1 |
+| fan-out | 123,941 | 128 µs | 664 µs | 0 | 0 | 3.8 | 8 | 1 |
+| connections | 13,020 | 470 µs | 17,867 µs | 0 | 0 | 2.1 | 82 | 1 |
+| pointers | 6,860 | 32,768 µs | 220,436 µs | 191,999 (93%) | 199,271 | 6.9 | 18 | 1 |
+
+Run with the machine busy (load average 58 at the start, from macOS's malware scanners, set off by every new build),
+so CPU here reads a few percent high; the back-to-back comparisons above are the fair ones. The pointers scenario is
+the one that suffers: its generator runs 1,600 connections and 1,400 pointer tasks, and on a busy machine its guests
+read late, so the relay rightly holds them to the newest pointer updates (the replacements); the step-2 build did the
+same under the same conditions.
+
+Microbenchmarks, best of five (`zig build bench`, ReleaseFast):
+
+| Step | Before step 3 | After |
+| --- | --- | --- |
+| read a header | 0.7 ns | 0.8 ns |
+| append to the log | 1.5–1.6 ns | 1.6 ns |
+| a host's change, to 31 guests | 34.4–54.6 ns | 34.5–36.2 ns |
+| a host's change, to 31 guests, across 2,000 rooms | 143–144 ns | 134–141 ns |
+| a guest's change, to the host | 6.8 ns | 6.9 ns |
+| unmask a 1 MiB snapshot (ReleaseSafe) | 163 µs | 15 µs |
+
+## All steps, side by side
+
+The stable scenarios, the same on every run that wasn't disturbed:
+
+| Scenario | Measure | Threads + lock | Event loop | Newest pointers only | Layout, SIMD, fewer calls |
+| --- | --- | --- | --- | --- | --- |
+| throughput (300k/s delivered) | relay CPU | 43.5 s | 9.4 s | 9.5 s | 9.1 s (back to back) |
+| | p50 / p99 | 4.3 / 9.6 ms | 1.8 / 5.8 ms | 1.9 / 2.7 ms | 1.9 / 2.7 ms |
+| | memory, threads | 179 MB, 803 | 140 MB, 1 | 140 MB, 1 | 135 MB, 1 |
+| fan-out (124k/s delivered) | relay CPU | 22.0 s | 4.1 s | 3.5 s | 3.5–3.8 s |
+| | p50 / p99 | 0.18 / 0.72 ms | 0.20 / 3.9 ms | 0.11 / 0.61 ms | 0.11–0.13 / 0.61–0.66 ms |
+| connections (4,000) | relay CPU | 18.8 s | 2.1 s | 2.1 s | 1.8–2.1 s |
+| | p99 | 100+ ms | 19.7 ms | 19.5 ms | 2.4–17.9 ms |
+| | memory, threads | 515 MB, 8,003 | 132 MB, 1 | 132 MB, 1 | 82 MB, 1 |
+| slow guests (Linux) | their changes delivered/s, p99 | | 65, 16.8 s | 198, 5.9 s | (unchanged) |
+
+What moved the numbers: the event loop (4.6 to 9 times less CPU, a thread instead of thousands, a quarter of the
+memory); holding only the newest pointer updates (slow guests get three times the changes); reserving instead of
+filling (memory). What didn't, measurably: layout and SIMD, because 98% of the relay's time is in the kernel; they
+pay off per snapshot (unmasking) and per cache miss across many rooms (6%), and will matter more once system calls
+are fewer.
+
+**Next, by the profile:** fewer system calls. On Linux, io_uring submits a frame's sends to all its guests in one
+call, and receives likewise; macOS has nothing like it. Short of that, coalescing a connection's frames for a fraction
+of a millisecond trades a little latency for fewer `send`s.

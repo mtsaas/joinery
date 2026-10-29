@@ -36,6 +36,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/bench.zig"),
             .target = target,
             .optimize = .ReleaseFast,
+            .link_libc = true,
         }),
     });
     b.step("bench", "Time each step a frame takes").dependOn(&b.addRunArtifact(bench).step);

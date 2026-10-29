@@ -14,6 +14,7 @@ const builtin = @import("builtin");
 const c = std.c;
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 const Relay = @import("Relay.zig");
 const wire = @import("wire.zig");
 
@@ -29,6 +30,9 @@ poller: Poller,
 listener: c.fd_t,
 metrics_listener: c.fd_t,
 next_id: u64 = 1,
+/// The time, in ms, read once a turn: the relay works in milliseconds, and reading the clock for every message showed
+/// up in profiles.
+time: i64 = 0,
 /// Every connection, for the tick to visit.
 conns: std.DoublyLinkedList = .{},
 conn_count: usize = 0,
@@ -100,17 +104,18 @@ pub fn run(server: *Server) !void {
     var next_tick = server.now() + tick_ms;
     while (true) {
         const ready = try server.poller.wait(&events, @intCast(@max(next_tick - server.now(), 0)));
+        server.time = server.now();
         for (ready) |event| switch (event.tag) {
             listener_tag => server.accept(server.listener, .http),
             metrics_tag => server.accept(server.metrics_listener, .metrics),
             else => {
                 const conn: *Conn = @ptrFromInt(event.tag);
-                if (conn.state == .gone) continue;
+                if (conn.hot.state == .gone) continue;
                 if (event.readable) server.read(conn);
                 if (event.writable) server.markDirty(conn);
             },
         };
-        const time = server.now();
+        const time = server.time;
         if (time >= next_tick) {
             next_tick = time + tick_ms;
             server.relay.tick(time);
@@ -127,72 +132,88 @@ fn now(server: *const Server) i64 {
 // Connections
 
 const Conn = struct {
+    /// What every send to it touches, together: 48 bytes, so usually one cache line, two at most. Not aligned to one:
+    /// the allocator gives over-aligned things a page each.
+    hot: Hot,
     link: Relay.Link,
     fd: c.fd_t,
     kind: enum { http, websocket, metrics },
-    state: enum {
-        open,
-        /// The relay's closed it: what's queued goes, then the socket.
-        closing,
-        /// Too far behind: closed, and the relay told at the end of the turn.
-        lagging,
-        /// Closed; let go of at the end of the turn.
-        gone,
-    } = .open,
     /// Whether the relay knows it: from its upgrade to a WebSocket, until it's closed.
     in_relay: bool = false,
     in: []u8,
     in_len: usize = 0,
-    /// What's queued to send, `out[out_start..out_end]`.
-    out: []u8,
-    out_start: usize = 0,
-    out_end: usize = 0,
-    is_dirty: bool = false,
-    wants_write: bool = false,
     /// When it was accepted, or when the relay closed it.
     since: i64,
-    /// The newest pointer update from each person, waiting for the queue to go: `pointer_count` of them, each in its
-    /// slot of `pointers`.
-    pointers: []u8,
-    pointer_peers: [pointer_slots]u32 = undefined,
-    pointer_lens: [pointer_slots]u16 = undefined,
-    pointer_count: usize = 0,
+    /// The newest pointer update from each person, waiting for the queue to go: made on the first one, as some
+    /// connections never get any.
+    pointers: ?*Pointers = null,
     node: std.DoublyLinkedList.Node = .{},
 
+    const Hot = struct {
+        /// What's queued to send, `out[out_start..out_end]`.
+        out: []u8,
+        out_start: usize = 0,
+        out_end: usize = 0,
+        state: enum {
+            open,
+            /// The relay's closed it: what's queued goes, then the socket.
+            closing,
+            /// Too far behind: closed, and the relay told at the end of the turn.
+            lagging,
+            /// Closed; let go of at the end of the turn.
+            gone,
+        } = .open,
+        is_dirty: bool = false,
+        wants_write: bool = false,
+
+        comptime {
+            assert(@sizeOf(Hot) <= std.atomic.cache_line);
+        }
+    };
+};
+
+/// A connection's newest pointer update from each person, while its queue goes: `count` of them, each in its slot.
+/// Apart from the connection, which every send touches; this is touched only for pointer updates.
+const Pointers = struct {
+    count: usize,
+    peers: [pointer_slots]u32,
+    lens: [pointer_slots]u16,
+    bytes: [pointer_slots * pointer_slot_size]u8,
+
     /// Holds the newest pointer update from `peer`, in place of any held already.
-    fn holdPointer(conn: *Conn, peer: u32, frame: []const u8) enum { held, replaced, full } {
-        var result: @TypeOf(conn.holdPointer(peer, frame)) = .held;
-        const slot = for (conn.pointer_peers[0..conn.pointer_count], 0..) |p, i| {
+    fn hold(pointers: *Pointers, peer: u32, frame: []const u8) enum { held, replaced, full } {
+        var result: @TypeOf(pointers.hold(peer, frame)) = .held;
+        const slot = for (pointers.peers[0..pointers.count], 0..) |p, i| {
             if (p == peer) {
                 result = .replaced;
                 break i;
             }
         } else slot: {
-            if (conn.pointer_count == pointer_slots) return .full;
-            conn.pointer_count += 1;
-            break :slot conn.pointer_count - 1;
+            if (pointers.count == pointer_slots) return .full;
+            pointers.count += 1;
+            break :slot pointers.count - 1;
         };
-        conn.pointer_peers[slot] = peer;
-        conn.pointer_lens[slot] = @intCast(frame.len);
-        @memcpy(conn.pointers[slot * pointer_slot_size ..][0..frame.len], frame);
+        pointers.peers[slot] = peer;
+        pointers.lens[slot] = @intCast(frame.len);
+        @memcpy(pointers.bytes[slot * pointer_slot_size ..][0..frame.len], frame);
         return result;
     }
 
-    fn heldPointer(conn: *const Conn, slot: usize) []const u8 {
-        return conn.pointers[slot * pointer_slot_size ..][0..conn.pointer_lens[slot]];
+    fn held(pointers: *const Pointers, slot: usize) []const u8 {
+        return pointers.bytes[slot * pointer_slot_size ..][0..pointers.lens[slot]];
     }
 
-    fn dropPointer(conn: *Conn, peer: u32) void {
-        for (conn.pointer_peers[0..conn.pointer_count], 0..) |p, i| {
+    fn drop(pointers: *Pointers, peer: u32) void {
+        for (pointers.peers[0..pointers.count], 0..) |p, i| {
             if (p != peer) continue;
             // The last slot fills the gap.
-            const last = conn.pointer_count - 1;
+            const last = pointers.count - 1;
             if (i != last) {
-                conn.pointer_peers[i] = conn.pointer_peers[last];
-                conn.pointer_lens[i] = conn.pointer_lens[last];
-                @memcpy(conn.pointers[i * pointer_slot_size ..][0..conn.pointer_lens[last]], conn.pointers[last * pointer_slot_size ..][0..conn.pointer_lens[last]]);
+                pointers.peers[i] = pointers.peers[last];
+                pointers.lens[i] = pointers.lens[last];
+                @memcpy(pointers.bytes[i * pointer_slot_size ..][0..pointers.lens[last]], pointers.bytes[last * pointer_slot_size ..][0..pointers.lens[last]]);
             }
-            conn.pointer_count = last;
+            pointers.count = last;
             return;
         }
     }
@@ -240,13 +261,11 @@ fn adopt(server: *Server, fd: c.fd_t, kind: @FieldType(Conn, "kind")) !void {
     const pages = std.heap.page_allocator;
     const conn = try server.gpa.create(Conn);
     errdefer server.gpa.destroy(conn);
-    const in = try Relay.reserve(pages, if (kind == .metrics) 8192 else inSize(server.limits));
+    const in = try Relay.reserve(u8, pages, if (kind == .metrics) 8192 else inSize(server.limits));
     errdefer Relay.release(pages, in);
-    const out = try Relay.reserve(pages, if (kind == .metrics) 32 * 1024 else outSize(server.limits));
+    const out = try Relay.reserve(u8, pages, if (kind == .metrics) 32 * 1024 else outSize(server.limits));
     errdefer Relay.release(pages, out);
-    const pointers = try Relay.reserve(pages, pointer_slots * pointer_slot_size);
-    errdefer Relay.release(pages, pointers);
-    conn.* = .{ .link = .{ .id = server.next_id }, .fd = fd, .kind = kind, .in = in, .out = out, .pointers = pointers, .since = server.now() };
+    conn.* = .{ .hot = .{ .out = out }, .link = .{ .id = server.next_id }, .fd = fd, .kind = kind, .in = in, .since = server.time };
     // Room for every connection in a turn's lists, so adding to them in a turn never allocates or fails.
     try server.dirty.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.done.ensureTotalCapacity(server.gpa, server.conn_count + 1);
@@ -266,9 +285,10 @@ fn setNonblocking(fd: c.fd_t) !void {
 
 /// Reads all that's come in, handling each whole message as it's complete.
 fn read(server: *Server, conn: *Conn) void {
-    while (conn.state == .open) {
+    while (conn.hot.state == .open) {
         if (conn.in_len == conn.in.len) return server.lose(conn, "a message too big to take");
-        const n = c.recv(conn.fd, conn.in[conn.in_len..].ptr, conn.in.len - conn.in_len, 0);
+        const space = conn.in.len - conn.in_len;
+        const n = c.recv(conn.fd, conn.in[conn.in_len..].ptr, space, 0);
         if (n == 0) return server.lose(conn, null);
         if (n < 0) return if (c.errno(n) == .AGAIN) {} else server.lose(conn, null);
         conn.in_len += @intCast(n);
@@ -277,8 +297,11 @@ fn read(server: *Server, conn: *Conn) void {
             .websocket => server.messages(conn),
         };
         // What's left is the start of what's next.
-        std.mem.copyForwards(u8, conn.in, conn.in[used..conn.in_len]);
+        @memmove(conn.in[0 .. conn.in_len - used], conn.in[used..conn.in_len]);
         conn.in_len -= used;
+        // Short of the space: that was all there was. Asking again would only be told so, a system call for nothing;
+        // if more comes, the event queue says.
+        if (@as(usize, @intCast(n)) < space) return;
     }
 }
 
@@ -317,10 +340,10 @@ fn request(server: *Server, conn: *Conn) usize {
         conn.in_relay = true;
         server.counts.connections += 1;
         server.counts.connections_open += 1;
-        server.relay.opened(&conn.link, server.now());
+        server.relay.opened(&conn.link, server.time);
         const used = head.len;
         // Anything after it is the first messages.
-        std.mem.copyForwards(u8, conn.in, conn.in[used..conn.in_len]);
+        @memmove(conn.in[0 .. conn.in_len - used], conn.in[used..conn.in_len]);
         conn.in_len -= used;
         return server.messages(conn);
     } else {
@@ -344,7 +367,7 @@ fn respondText(server: *Server, conn: *Conn, status: []const u8, body: []const u
 /// Every whole WebSocket message in what's come in. Returns the bytes they took.
 fn messages(server: *Server, conn: *Conn) usize {
     var at: usize = 0;
-    while (conn.state == .open) {
+    while (conn.hot.state == .open) {
         const bytes = conn.in[at..conn.in_len];
         if (bytes.len < 2) break;
         const fin = bytes[0] & 0x80 != 0;
@@ -380,7 +403,7 @@ fn messages(server: *Server, conn: *Conn) usize {
             0x2 => {
                 server.counts.frames_in += 1;
                 server.counts.bytes_in += payload.len;
-                server.relay.received(&conn.link, payload, server.now());
+                server.relay.received(&conn.link, payload, server.time);
             },
             0x8 => server.lose(conn, null),
             0x9 => server.queueFrame(conn, 0xA, payload),
@@ -390,24 +413,33 @@ fn messages(server: *Server, conn: *Conn) usize {
     return at;
 }
 
-/// Unmasks a client's message in place: the one pass the relay makes over a body.
-fn unmask(payload: []u8, mask: [4]u8) void {
-    for (payload, 0..) |*b, i| b.* ^= mask[i % 4];
+/// Unmasks a client's message in place: the one pass the relay makes over a body. Sixteen bytes at a time, the mask
+/// repeated across a vector: byte by byte, it was four instructions a byte, a millisecond for a 1 MiB snapshot.
+pub fn unmask(payload: []u8, mask: [4]u8) void {
+    const V = @Vector(16, u8);
+    const repeated: V = @bitCast(@as(@Vector(4, u32), @splat(@bitCast(mask))));
+    var i: usize = 0;
+    while (i + 16 <= payload.len) : (i += 16) {
+        const chunk: V = payload[i..][0..16].*;
+        payload[i..][0..16].* = chunk ^ repeated;
+    }
+    // The rest; `i` is a multiple of 16, so the mask lines up.
+    for (payload[i..], i..) |*b, j| b.* ^= mask[j % 4];
 }
 
 /// A connection's gone, or is no use: closed now, and the relay told, unless it's the one that closed it.
 fn lose(server: *Server, conn: *Conn, why: ?[]const u8) void {
-    if (conn.state == .gone) return;
+    if (conn.hot.state == .gone) return;
     if (why) |w| log.info("connection {d} closed: {s}", .{ conn.link.id, w });
-    const tell = conn.in_relay and (conn.state == .open or conn.state == .lagging);
+    const tell = conn.in_relay and (conn.hot.state == .open or conn.hot.state == .lagging);
     server.shut(conn);
-    if (tell) server.relay.closed(&conn.link, server.now());
+    if (tell) server.relay.closed(&conn.link, server.time);
 }
 
 fn shut(server: *Server, conn: *Conn) void {
     if (conn.in_relay) server.counts.connections_open -= 1;
     conn.in_relay = false;
-    conn.state = .gone;
+    conn.hot.state = .gone;
     _ = c.close(conn.fd);
     server.conns.remove(&conn.node);
     server.conn_count -= 1;
@@ -416,8 +448,8 @@ fn shut(server: *Server, conn: *Conn) void {
 
 /// Once what's queued is sent, the connection's closed.
 fn closeAfterSending(server: *Server, conn: *Conn) void {
-    conn.state = .closing;
-    conn.since = server.now();
+    conn.hot.state = .closing;
+    conn.since = server.time;
     server.markDirty(conn);
 }
 
@@ -427,7 +459,7 @@ fn expire(server: *Server, now_ms: i64) void {
     while (next) |node| {
         next = node.next;
         const conn: *Conn = @fieldParentPtr("node", node);
-        const late = switch (conn.state) {
+        const late = switch (conn.hot.state) {
             .closing => now_ms - conn.since > closing_grace_ms,
             .open => conn.kind != .websocket and now_ms - conn.since > request_ms,
             .lagging, .gone => false,
@@ -439,30 +471,30 @@ fn expire(server: *Server, now_ms: i64) void {
 // Sending
 
 fn markDirty(server: *Server, conn: *Conn) void {
-    if (conn.is_dirty or conn.state == .gone) return;
-    conn.is_dirty = true;
+    if (conn.hot.is_dirty or conn.hot.state == .gone) return;
+    conn.hot.is_dirty = true;
     server.dirty.appendAssumeCapacity(conn);
 }
 
 /// Appends bytes to a connection's outbox, or if it's full, gives up on it: it's too far behind.
 fn queue(server: *Server, conn: *Conn, bytes: []const u8) void {
-    if (conn.state != .open) return;
-    if (conn.out_end + bytes.len > conn.out.len) {
+    if (conn.hot.state != .open) return;
+    if (conn.hot.out_end + bytes.len > conn.hot.out.len) {
         // Room at the start, where what's been sent was.
-        std.mem.copyForwards(u8, conn.out, conn.out[conn.out_start..conn.out_end]);
-        conn.out_end -= conn.out_start;
-        conn.out_start = 0;
-        if (conn.out_end + bytes.len > conn.out.len) {
+        @memmove(conn.hot.out[0 .. conn.hot.out_end - conn.hot.out_start], conn.hot.out[conn.hot.out_start..conn.hot.out_end]);
+        conn.hot.out_end -= conn.hot.out_start;
+        conn.hot.out_start = 0;
+        if (conn.hot.out_end + bytes.len > conn.hot.out.len) {
             log.info("connection {d} dropped: its outbox is full, so it's too far behind", .{conn.link.id});
             server.counts.lagging += 1;
-            conn.state = .lagging;
+            conn.hot.state = .lagging;
             // Told to the relay at the end of the turn: this is inside one of its calls.
             server.markDirty(conn);
             return;
         }
     }
-    @memcpy(conn.out[conn.out_end..][0..bytes.len], bytes);
-    conn.out_end += bytes.len;
+    @memcpy(conn.hot.out[conn.hot.out_end..][0..bytes.len], bytes);
+    conn.hot.out_end += bytes.len;
     server.markDirty(conn);
 }
 
@@ -478,12 +510,12 @@ fn finishTurn(server: *Server) void {
     var i: usize = 0;
     while (i < server.dirty.items.len) : (i += 1) {
         const conn = server.dirty.items[i];
-        if (conn.state == .lagging) server.lose(conn, null);
+        if (conn.hot.state == .lagging) server.lose(conn, null);
     }
     for (server.dirty.items) |conn| {
-        if (conn.state != .gone) server.flush(conn);
+        if (conn.hot.state != .gone) server.flush(conn);
         // After: sending queues what was held, which would list it again.
-        conn.is_dirty = false;
+        conn.hot.is_dirty = false;
     }
     server.dirty.clearRetainingCapacity();
     for (server.done.items) |conn| server.free(conn);
@@ -494,46 +526,47 @@ fn flush(server: *Server, conn: *Conn) void {
     while (true) {
         server.send(conn) orelse return;
         // Sent everything: the newest pointer updates go next.
-        if (conn.pointer_count == 0) break;
-        for (0..conn.pointer_count) |i| server.queueFrame(conn, 0x2, conn.heldPointer(i));
-        conn.pointer_count = 0;
+        const pointers = conn.pointers orelse break;
+        if (pointers.count == 0) break;
+        for (0..pointers.count) |i| server.queueFrame(conn, 0x2, pointers.held(i));
+        pointers.count = 0;
     }
-    if (conn.wants_write) {
+    if (conn.hot.wants_write) {
         server.poller.wantWrite(conn.fd, @intFromPtr(conn), false) catch {};
-        conn.wants_write = false;
+        conn.hot.wants_write = false;
     }
-    if (conn.state == .closing) server.shut(conn);
+    if (conn.hot.state == .closing) server.shut(conn);
 }
 
 /// Sends what's queued. Null if it couldn't all go: the socket's full, and the poller will say when it isn't.
 fn send(server: *Server, conn: *Conn) ?void {
-    while (conn.out_start < conn.out_end) {
+    while (conn.hot.out_start < conn.hot.out_end) {
         const flags: u32 = if (builtin.os.tag == .linux) c.MSG.NOSIGNAL else 0;
-        const n = c.send(conn.fd, conn.out[conn.out_start..conn.out_end].ptr, conn.out_end - conn.out_start, flags);
+        const n = c.send(conn.fd, conn.hot.out[conn.hot.out_start..conn.hot.out_end].ptr, conn.hot.out_end - conn.hot.out_start, flags);
         if (n < 0) {
             if (c.errno(n) == .AGAIN) {
                 // Told when it can take more.
-                if (!conn.wants_write) server.poller.wantWrite(conn.fd, @intFromPtr(conn), true) catch {
+                if (!conn.hot.wants_write) server.poller.wantWrite(conn.fd, @intFromPtr(conn), true) catch {
                     server.lose(conn, null);
                     return null;
                 };
-                conn.wants_write = true;
+                conn.hot.wants_write = true;
                 return null;
             }
             server.lose(conn, null);
             return null;
         }
-        conn.out_start += @intCast(n);
+        conn.hot.out_start += @intCast(n);
     }
-    conn.out_start = 0;
-    conn.out_end = 0;
+    conn.hot.out_start = 0;
+    conn.hot.out_end = 0;
 }
 
 fn free(server: *Server, conn: *Conn) void {
     const pages = std.heap.page_allocator;
     Relay.release(pages, conn.in);
-    Relay.release(pages, conn.out);
-    Relay.release(pages, conn.pointers);
+    Relay.release(pages, conn.hot.out);
+    if (conn.pointers) |pointers| pages.rawFree(std.mem.asBytes(pointers), .of(Pointers), @returnAddress());
     server.gpa.destroy(conn);
 }
 
@@ -542,7 +575,7 @@ fn free(server: *Server, conn: *Conn) void {
 fn relaySend(ptr: *anyopaque, link: *Relay.Link, frame: []const u8) void {
     const server: *Server = @ptrCast(@alignCast(ptr));
     const conn: *Conn = @fieldParentPtr("link", link);
-    if (conn.state != .open) return;
+    if (conn.hot.state != .open) return;
     server.counts.frames_out += 1;
     server.counts.bytes_out += frame.len;
     const kind = frame[1];
@@ -551,12 +584,22 @@ fn relaySend(ptr: *anyopaque, link: *Relay.Link, frame: []const u8) void {
         return server.holdPointer(conn, peer, frame);
     }
     // Gone: an update from before can't follow it, or they'd seem to be back.
-    if (kind == @backingInt(wire.Kind.left)) conn.dropPointer(peer);
+    if (kind == @backingInt(wire.Kind.left)) if (conn.pointers) |pointers| pointers.drop(peer);
     server.queueFrame(conn, 0x2, frame);
 }
 
 fn holdPointer(server: *Server, conn: *Conn, peer: u32, frame: []const u8) void {
-    switch (conn.holdPointer(peer, frame)) {
+    const pointers = conn.pointers orelse made: {
+        // Taken as it is, unfilled: only its count's written now, and its slots as they're used.
+        const bytes = std.heap.page_allocator.rawAlloc(@sizeOf(Pointers), .of(Pointers), @returnAddress()) orelse {
+            return server.queueFrame(conn, 0x2, frame);
+        };
+        const made: *Pointers = @ptrCast(@alignCast(bytes));
+        made.count = 0;
+        conn.pointers = made;
+        break :made made;
+    };
+    switch (pointers.hold(peer, frame)) {
         .held => {},
         .replaced => server.counts.pointers_replaced += 1,
         // More people than slots: queued like anything else.
@@ -568,7 +611,7 @@ fn holdPointer(server: *Server, conn: *Conn, peer: u32, frame: []const u8) void 
 fn close(ptr: *anyopaque, link: *Relay.Link) void {
     const server: *Server = @ptrCast(@alignCast(ptr));
     const conn: *Conn = @fieldParentPtr("link", link);
-    if (conn.state != .open) return;
+    if (conn.hot.state != .open) return;
     // The relay's let go of it already.
     if (conn.in_relay) server.counts.connections_open -= 1;
     conn.in_relay = false;
@@ -770,26 +813,31 @@ test "WebSocket headers" {
     try std.testing.expectEqualSlices(u8, &.{ 0x82, 127, 0, 0, 0, 0, 0, 1, 0, 0 }, webSocketHeader(&buffer, 2, 0x10000));
 }
 
-test "unmasking" {
-    var payload = "Hello".*;
-    const mask = [4]u8{ 1, 2, 3, 4 };
-    unmask(&payload, mask);
-    unmask(&payload, mask);
-    try std.testing.expectEqualStrings("Hello", &payload);
+test "unmasking, sixteen at a time, matches byte by byte" {
+    const mask = [4]u8{ 0x12, 0x34, 0x56, 0x78 };
+    for ([_]usize{ 0, 1, 15, 16, 17, 100, 1000 }) |len| {
+        var bytes: [1000]u8 = undefined;
+        for (&bytes, 0..) |*b, i| b.* = @truncate(i * 7);
+        var expected = bytes;
+        for (expected[0..len], 0..) |*b, i| b.* ^= mask[i % 4];
+        unmask(bytes[0..len], mask);
+        try std.testing.expectEqualSlices(u8, expected[0..len], bytes[0..len]);
+    }
 }
 
 test "a connection that's behind holds only the newest pointer update from each person" {
-    var slots: [pointer_slots * pointer_slot_size]u8 = undefined;
-    var conn: Conn = .{ .link = .{ .id = 1 }, .fd = -1, .kind = .websocket, .in = &.{}, .out = &.{}, .pointers = &slots, .since = 0 };
-    try std.testing.expectEqual(.held, conn.holdPointer(2, "ann at 1"));
-    try std.testing.expectEqual(.held, conn.holdPointer(3, "bob at 1"));
-    try std.testing.expectEqual(.replaced, conn.holdPointer(2, "ann at 2"));
-    try std.testing.expectEqual(@as(usize, 2), conn.pointer_count);
-    try std.testing.expectEqualStrings("ann at 2", conn.heldPointer(0));
+    const pointers = try std.testing.allocator.create(Pointers);
+    defer std.testing.allocator.destroy(pointers);
+    pointers.count = 0;
+    try std.testing.expectEqual(.held, pointers.hold(2, "ann at 1"));
+    try std.testing.expectEqual(.held, pointers.hold(3, "bob at 1"));
+    try std.testing.expectEqual(.replaced, pointers.hold(2, "ann at 2"));
+    try std.testing.expectEqual(@as(usize, 2), pointers.count);
+    try std.testing.expectEqualStrings("ann at 2", pointers.held(0));
     // Ann leaves: her update goes, and Bob's fills the gap.
-    conn.dropPointer(2);
-    try std.testing.expectEqual(@as(usize, 1), conn.pointer_count);
-    try std.testing.expectEqualStrings("bob at 1", conn.heldPointer(0));
-    for (0..pointer_slots - 1) |peer| _ = conn.holdPointer(@intCast(100 + peer), "x");
-    try std.testing.expectEqual(.full, conn.holdPointer(999, "y"));
+    pointers.drop(2);
+    try std.testing.expectEqual(@as(usize, 1), pointers.count);
+    try std.testing.expectEqualStrings("bob at 1", pointers.held(0));
+    for (0..pointer_slots - 1) |peer| _ = pointers.hold(@intCast(100 + peer), "x");
+    try std.testing.expectEqual(.full, pointers.hold(999, "y"));
 }

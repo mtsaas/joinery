@@ -129,14 +129,13 @@ over a body.
 On Linux the relay sends with io_uring and zero-copy sends. Each room's block is registered with io_uring when the
 room is made, so every send is a pointer into memory that's already registered.
 
-**As built in step 4, the relay is one step short of this.** Each connection has an outbox, and the relay's sends append
-to it, a copy per guest, which the connection's writer task then sends. That keeps the relay simple and a slow
-connection from holding up anyone else: the relay never waits on a socket, and a connection whose outbox fills is too
-far behind and is closed, to come back by the snapshot route. The outbox holds a joiner's whole catch-up (snapshot and
-log, twice over for WebSocket headers); its memory is only touched as it's used. Per-guest cursors into the log, as
-above, would remove the copy and the outbox, and are the next step if the copy shows up in measurements. Guest frames
-go straight to the host's outbox, so there's no inbox. The std library's WebSocket unmasks each frame in place as it's
-read, the one pass over a body.
+**As built, the relay is one step short of this.** It runs one thread on the OS's event queue (kqueue, epoll on
+Linux), with no lock. Its sends append to each connection's outbox, a copy per guest, and each connection's outbox
+goes in one `send` per turn of the loop; a connection whose outbox fills is too far behind and is closed, to come back
+by the snapshot route. Pointer updates are held one per sender while a connection is behind, so it's sent where
+pointers are, not where they were, and sockets keep at most 16 KB unsent (`TCP_NOTSENT_LOWAT`) so that backlog waits
+in the relay rather than the kernel. A profile puts 98% of its time in `send` and `recv`, so the next gain is fewer
+system calls (io_uring), not the copy. `relay/bench/load-results.md` has the measurements.
 
 ## The log and compaction
 

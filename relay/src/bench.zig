@@ -5,6 +5,7 @@ const std = @import("std");
 const Io = std.Io;
 const Relay = @import("Relay.zig");
 const Log = @import("Log.zig");
+const Server = @import("Server.zig");
 const wire = @import("wire.zig");
 
 pub fn main(init: std.process.Init) !void {
@@ -12,7 +13,7 @@ pub fn main(init: std.process.Init) !void {
     var counting: std.testing.FailingAllocator = .init(std.heap.page_allocator, .{});
     const gpa = counting.allocator();
 
-    std.debug.print("{s:<44} {s:>10} {s:>12}\n", .{ "step", "ns/frame", "allocations" });
+    std.debug.print("{s:<52} {s:>10} {s:>12}\n", .{ "step", "ns/frame", "allocations" });
 
     var frame: [24 + 64]u8 = @splat(0);
     _ = writeHeader(&frame, .ops, 1);
@@ -22,6 +23,20 @@ pub fn main(init: std.process.Init) !void {
             std.mem.doNotOptimizeAway(wire.Header.ofFrame(f) catch unreachable);
         }
     }.run, .{&frame});
+
+    // Unmasking: a change's worth, and a whole snapshot's, which is where it counts.
+    const snapshot = try gpa.alloc(u8, 1 << 20);
+    @memset(snapshot, 7);
+    try bench(io, &counting, "unmask a 124-byte change", 10_000_000, struct {
+        fn run(bytes: []u8, i: usize) void {
+            Server.unmask(bytes[0..124], .{ 1, 2, 3, @truncate(i) });
+        }
+    }.run, .{snapshot});
+    try bench(io, &counting, "unmask a 1 MiB snapshot", 200, struct {
+        fn run(bytes: []u8, i: usize) void {
+            Server.unmask(bytes, .{ 1, 2, 3, @truncate(i) });
+        }
+    }.run, .{snapshot});
 
     const buffer = try gpa.alloc(u8, Log.capacity(2 << 20, 1 << 20));
     var log: Log = .init(buffer);
@@ -37,17 +52,28 @@ pub fn main(init: std.process.Init) !void {
     defer room.deinit();
     try bench(io, &counting, "a host's change, to 31 guests", 1_000_000, Room.publish, .{&room});
     try bench(io, &counting, "a guest's change, to the host", 10_000_000, Room.change, .{&room});
-    std.debug.print("{d} frames sent in all\n", .{room.sink.sent});
+
+    // The same, but each change in another of many rooms, so their guests aren't still in the cache from the last.
+    var rooms: Rooms = undefined;
+    try rooms.init(gpa, 2000);
+    defer rooms.deinit();
+    try bench(io, &counting, "a host's change, to 31 guests, across 2,000 rooms", 1_000_000, Rooms.publish, .{&rooms});
+    std.debug.print("{d} frames sent in all\n", .{room.sink.sent + rooms.sink.sent});
 }
 
-/// Runs `step` `n` times and prints the time each took and the allocations made, which must be none.
+/// Runs `step` `n` times, five times over, and prints the best of the five, per step, and the allocations made, which
+/// must be none. The best, not the mean: what else the machine's doing only ever adds time.
 fn bench(io: Io, counting: *std.testing.FailingAllocator, name: []const u8, n: usize, step: anytype, args: anytype) !void {
     const allocations = counting.allocations;
-    const start = Io.Clock.awake.now(io);
-    for (0..n) |i| @call(.auto, step, args ++ .{i});
-    const elapsed = start.durationTo(Io.Clock.awake.now(io)).toNanoseconds();
+    var best: f64 = std.math.inf(f64);
+    for (0..5) |round| {
+        const start = Io.Clock.awake.now(io);
+        for (0..n) |i| @call(.auto, step, args ++ .{round * n + i});
+        const elapsed = start.durationTo(Io.Clock.awake.now(io)).toNanoseconds();
+        best = @min(best, @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(n)));
+    }
     const made = counting.allocations - allocations;
-    std.debug.print("{s:<44} {d:>10.1} {d:>12}\n", .{ name, @as(f64, @floatFromInt(elapsed)) / @as(f64, @floatFromInt(n)), made });
+    std.debug.print("{s:<52} {d:>10.1} {d:>12}\n", .{ name, best, made });
     if (made != 0) return error.Allocated;
 }
 
@@ -139,5 +165,65 @@ const Room = struct {
 
     fn change(room: *Room, i: usize) void {
         room.relay.received(&room.guests[i % room.guests.len], writeHeader(room.frame[0..88], .change, i), room.now);
+    }
+};
+
+/// Many rooms of a host and 31 guests in one relay, each change going to the next room round.
+const Rooms = struct {
+    sink: Sink = .{},
+    relay: Relay,
+    prng: std.Random.DefaultPrng = .init(2),
+    links: []Relay.Link,
+    seqs: []u64,
+    frame: [24 + 200]u8 = @splat(0),
+    const per_room = 32;
+
+    fn init(rooms: *Rooms, gpa: std.mem.Allocator, count: usize) !void {
+        rooms.* = .{ .relay = undefined, .links = try gpa.alloc(Relay.Link, count * per_room), .seqs = try gpa.alloc(u64, count) };
+        @memset(rooms.seqs, 0);
+        rooms.relay = .init(gpa, rooms.prng.random(), .{ .ptr = &rooms.sink, .vtable = &.{ .send = Sink.send, .close = Sink.close } }, .{});
+        var buffer: [512]u8 = undefined;
+        var snapshot: [24 + 4096]u8 = @splat(0);
+        for (0..count) |r| {
+            const host = &rooms.links[r * per_room];
+            host.* = .{ .id = r * per_room };
+            var w: wire.FrameWriter = .{ .buffer = &buffer };
+            w.byte(@backingInt(wire.Role.host));
+            for (0..3) |_| w.blob("");
+            w.varint(0);
+            w.varint(wire.room_version);
+            w.blob("Host");
+            w.blob("Bench");
+            rooms.relay.opened(host, 0);
+            rooms.relay.received(host, w.finish(.hello, 0, 0), 0);
+            rooms.relay.received(host, writeHeader(&snapshot, .snapshot, 0), 0);
+            const room = host.room.?;
+            for (1..per_room) |i| {
+                const g = &rooms.links[r * per_room + i];
+                g.* = .{ .id = r * per_room + i };
+                var client: [8]u8 = undefined;
+                w = .{ .buffer = &buffer };
+                w.byte(@backingInt(wire.Role.guest));
+                w.blob(&room.id);
+                w.blob(&room.guest_secret);
+                w.blob(std.fmt.bufPrint(&client, "c{d}", .{i}) catch unreachable);
+                w.varint(0);
+                w.varint(wire.room_version);
+                w.blob("Guest");
+                w.blob("");
+                rooms.relay.opened(g, 0);
+                rooms.relay.received(g, w.finish(.hello, 0, 0), 0);
+            }
+        }
+    }
+
+    fn deinit(rooms: *Rooms) void {
+        rooms.relay.deinit();
+    }
+
+    fn publish(rooms: *Rooms, i: usize) void {
+        const r = i % rooms.seqs.len;
+        rooms.seqs[r] += 1;
+        rooms.relay.received(&rooms.links[r * per_room], writeHeader(&rooms.frame, .ops, rooms.seqs[r]), 0);
     }
 };

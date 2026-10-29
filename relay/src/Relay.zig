@@ -276,13 +276,13 @@ fn join(relay: *Relay, link: *Link, h: wire.Hello, room: *Room) void {
     relay.lobby.remove(&link.node);
     link.room = room;
     const peer = room.clients.items[client].peer;
+    room.clients.items[client].name = .init(h.name);
     relay.welcome(link, room, peer, .without_secrets);
 
     var g: Guest = .{
         .link = link,
         .peer = peer,
-        .client = client,
-        .name = .init(h.name),
+        .client = @intCast(client),
         .can_edit = h.role == .guest,
         .applied = h.applied orelse 0,
         .sent = room.latest,
@@ -331,7 +331,7 @@ fn welcome(relay: *Relay, link: *Link, room: *const Room, peer: u32, secrets: en
     var peers: [max_peers]Peer = undefined;
     var count: usize = 0;
     for (room.guests.items) |*g| {
-        peers[count] = .{ .peer = g.peer, .name = g.name.slice() };
+        peers[count] = .{ .peer = g.peer, .name = room.clients.items[g.client].name.slice() };
         count += 1;
     }
     if (peer != wire.host_peer and room.host != null) {
@@ -504,7 +504,7 @@ fn forget(relay: *Relay, link: *Link) void {
         return;
     }
     const g = room.remove(link) orelse return;
-    log.info("{f}: {s} left room {s}", .{ who(link), g.name.slice(), room.shortID() });
+    log.info("{f}: {s} left room {s}", .{ who(link), room.clients.items[g.client].name.slice(), room.shortID() });
     room.trim();
     relay.sendToEveryone(room, null, w.finish(.left, 0, g.peer));
 }
@@ -563,22 +563,29 @@ fn Text(comptime capacity: usize) type {
     };
 }
 
+/// A connected guest: 32 bytes, so sending to 31 of them reads 16 cache lines. Its name, needed only when people come
+/// and go, is with its client.
 const Guest = struct {
     link: *Link,
-    peer: u32,
-    /// Its index in the room's clients.
-    client: usize,
-    name: Text(wire.max_name),
-    can_edit: bool,
-    /// The last change it's said it has, from its pings, which the log keeps until it's past. 0 for none.
-    applied: u64,
     /// The last change sent to it.
     sent: u64,
+    /// The last change it's said it has, from its pings, which the log keeps until it's past. 0 for none.
+    applied: u64,
+    peer: u32,
+    /// Its index in the room's clients.
+    client: u16,
+    can_edit: bool,
+
+    comptime {
+        assert(@sizeOf(Guest) == 32);
+    }
 };
 
 const Client = struct {
     id: Text(wire.max_client),
     peer: u32,
+    /// As it last joined.
+    name: Text(wire.max_name) = .init(""),
 };
 
 pub const Room = struct {
@@ -659,12 +666,13 @@ fn makeRoom(relay: *Relay, h: wire.Hello) Allocator.Error!*Room {
     const log_capacity = Log.capacity(limits.log_bytes, limits.max_frame);
     const room = try gpa.create(Room);
     errdefer gpa.destroy(room);
-    const memory = try reserve(gpa, log_capacity + limits.max_snapshot);
+    const memory = try reserve(u8, gpa, log_capacity + limits.max_snapshot);
     errdefer release(gpa, memory);
     const guests = try gpa.alloc(Guest, limits.max_peers - 1);
     errdefer gpa.free(guests);
-    const clients = try gpa.alloc(Client, max_clients);
-    errdefer gpa.free(clients);
+    // Its entries take memory only as people join.
+    const clients = try reserve(Client, gpa, max_clients);
+    errdefer release(gpa, clients);
     try relay.rooms.ensureUnusedCapacity(gpa, 1);
 
     // In the reference's order: the room's ID, then the host's, guests' and viewers' secrets.
@@ -697,20 +705,22 @@ fn free(relay: *Relay, room: *Room) void {
     assert(relay.rooms.remove(&room.id));
     relay.room_list.remove(&room.node);
     relay.gpa.free(room.guests.allocatedSlice());
-    relay.gpa.free(room.clients.allocatedSlice());
+    release(relay.gpa, room.clients.allocatedSlice());
     release(relay.gpa, room.memory);
     relay.gpa.destroy(room);
 }
 
-/// Bytes for a buffer that's filled as it's used, such as a room's log. Unlike `Allocator.alloc`, they're not filled
-/// with a pattern first, which safety-checked builds do, so memory the OS hands over takes no room until it's written.
-pub fn reserve(allocator: Allocator, len: usize) Allocator.Error![]u8 {
-    const bytes = allocator.rawAlloc(len, .of(u8), @returnAddress()) orelse return error.OutOfMemory;
-    return bytes[0..len];
+/// Room for `n` of `T` that's filled as it's used, such as a room's log or its clients. Unlike `Allocator.alloc`, it's
+/// not filled with a pattern first, which safety-checked builds do, so memory the OS hands over takes no room until
+/// it's written.
+pub fn reserve(comptime T: type, allocator: Allocator, n: usize) Allocator.Error![]T {
+    const bytes = allocator.rawAlloc(n * @sizeOf(T), .of(T), @returnAddress()) orelse return error.OutOfMemory;
+    return @as([*]T, @ptrCast(@alignCast(bytes)))[0..n];
 }
 
-pub fn release(allocator: Allocator, bytes: []u8) void {
-    allocator.rawFree(bytes, .of(u8), @returnAddress());
+pub fn release(allocator: Allocator, items: anytype) void {
+    const T = @typeInfo(@TypeOf(items)).pointer.child;
+    allocator.rawFree(std.mem.sliceAsBytes(items), .of(T), @returnAddress());
 }
 
 /// 16 random bytes, as hex.

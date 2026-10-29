@@ -23,9 +23,12 @@ relay's own memory is left to the process exporter of wherever it runs.
   repository root to record the traces again.
 - **`src/Log.zig`** is a room's log: a ring of whole frames, allocated once.
 - **`src/wire.zig`** is the header, the `hello` the relay reads, and the frames it writes.
-- **`src/Server.zig`** puts it on the network: WebSockets, a reader and a writer task per connection, one lock around
-  the relay. Sends only append to a connection's outbox, so a slow connection holds up no one. A link opened in a
-  browser (`/r/<room>`) is told to paste it into Join in Joinery.
+- **`src/Server.zig`** puts it on the network: one thread, the OS's event queue (kqueue, or epoll on Linux),
+  non-blocking sockets and no lock. Each turn reads what's ready, hands whole messages to the relay, then sends each
+  connection's queue in one `send`. A connection that's behind is sent only the newest pointer update from each person.
+- **`src/load.zig`** (`zig build load`) loads a running relay with rooms of hosts and guests, and `bench/load.sh` runs
+  the standard scenarios. **`bench/load-results.md`** has every step's results side by side, and `bench/profiles/`
+  the profiles behind them.
 - **`bench/results.txt`** is the last benchmark run, with its commit.
 
 Each room's memory is allocated when it's made and freed when it ends; nothing allocates in between, which the replay
