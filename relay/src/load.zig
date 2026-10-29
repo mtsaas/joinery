@@ -1,13 +1,16 @@
-//! `zig build load -- [--port 8787] [--rooms 10] [--guests 3] [--rate 20] [--presence 0] [--seconds 10]`: a load
-//! generator for a relay already running. Each room has a host publishing changes at `rate` a second, each carrying
-//! when it was sent, and `guests` guests that read them, pinging now and then so the log can be trimmed, and each
-//! sending `presence` pointer updates a second, as a moving pointer does. At the end it prints changes
-//! delivered a second and the time from the host's send to a guest's receive. Everything's on this machine, so the
+//! `zig build load -- [--host 127.0.0.1] [--port 8787] [--rooms 10] [--guests 3] [--rate 20] [--presence 0]
+//! [--seconds 10]`: a load generator for a relay already running, here or at `--host`. Each room has a host publishing
+//! changes at `rate` a second, each carrying when it was sent, and `guests` guests that read them, pinging now and then
+//! so the log can be trimmed, and each sending `presence` pointer updates a second, as a moving pointer does. At the
+//! end it prints changes delivered a second and the time from the host's send to a guest's receive. On one machine, the
 //! times are the relay's, the kernel's and this program's, with no network.
 
 const std = @import("std");
 const Io = std.Io;
 const wire = @import("wire.zig");
+
+/// Where the relay is.
+var relay_address: [4]u8 = .{ 127, 0, 0, 1 };
 
 const Config = struct {
     port: u16 = 8787,
@@ -60,7 +63,13 @@ pub fn main(init: std.process.Init) !void {
     var args = init.minimal.args.iterate();
     _ = args.skip();
     while (args.next()) |arg| {
-        const value = std.fmt.parseInt(u64, args.next() orelse return error.Usage, 10) catch return error.Usage;
+        const text = args.next() orelse return error.Usage;
+        // The relay's address, if it's on another machine.
+        if (std.mem.eql(u8, arg, "--host")) {
+            relay_address = (Io.net.Ip4Address.parse(text, 0) catch return error.Usage).bytes;
+            continue;
+        }
+        const value = std.fmt.parseInt(u64, text, 10) catch return error.Usage;
         // Each flag sets the field it names: --rooms 10 sets rooms.
         const name = if (std.mem.startsWith(u8, arg, "--")) arg[2..] else return error.Usage;
         inline for (@typeInfo(Config).@"struct".field_names) |field| {
@@ -280,13 +289,16 @@ const Socket = struct {
         const fd = c.socket(c.AF.INET, c.SOCK.STREAM, 0);
         if (fd < 0) return error.SystemResources;
         errdefer _ = c.close(fd);
+        // Small messages go at once, as the app's do, not held for the last one's acknowledgement.
+        const one: c_int = 1;
+        _ = c.setsockopt(fd, c.IPPROTO.TCP, c.TCP.NODELAY, &one, @sizeOf(c_int));
         if (slow) {
             const small: c_int = 4096;
             _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.RCVBUF, &small, @sizeOf(c_int));
         }
-        var address: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, port), .addr = @bitCast([4]u8{ 127, 0, 0, 1 }) };
+        var address: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, port), .addr = @bitCast(relay_address) };
         if (c.connect(fd, @ptrCast(&address), @sizeOf(c.sockaddr.in)) < 0) return error.ConnectionRefused;
-        socket.* = .{ .io = io, .stream = .{ .socket = .{ .handle = fd, .address = try Io.net.IpAddress.parse("127.0.0.1", port) } } };
+        socket.* = .{ .io = io, .stream = .{ .socket = .{ .handle = fd, .address = .{ .ip4 = .{ .bytes = relay_address, .port = port } } } } };
         socket.reader = socket.stream.reader(io, if (slow) socket.read_buffer[0..4096] else &socket.read_buffer);
         socket.writer = socket.stream.writer(io, &socket.write_buffer);
     }

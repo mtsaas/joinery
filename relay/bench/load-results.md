@@ -174,3 +174,36 @@ The standard scenarios with 18 loops:
 | pointers | 6,868 | 38,968 µs | 285,870 µs | 177,941 (86%) | 356,808 | 11.6 | 20 | 18 |
 
 Same results, 20% to twice the CPU. `--threads` sets the loops; it defaults to one per core.
+
+## On Linux, across a real network (Azure)
+
+`bench/azure.sh`: the relay on a D8ps v6 (8 Arm cores, 32 GB) and the load generator on a D16ps v6 (16 cores), spot
+VMs in one proximity placement group in Central US with accelerated networking, Ubuntu 24.04 (kernel 7.0). So the
+generator isn't on the relay's cores, and the network isn't loopback. Generator sockets set `TCP_NODELAY`, as the
+app's do: without it the kernel held back clients' small frames and merged them, which flattered the relay (a quarter
+of the CPU at 100 rooms) and added ~5 ms of latency.
+
+| Load (host + 3 guests a room) | Loops | Changes delivered/s | p50 / p99 | Relay CPU (of 8 cores) |
+| --- | --- | --- | --- | --- |
+| 100 rooms × 1,000/s | 1 | 299,515 | 1.45 / 2.9 ms | 11.1 s: one core, near full |
+| | 8 | 299,618 | 0.17 / 0.47 ms | 22.5 s |
+| 400 rooms × 1,000/s | 1 | 1,191,911 | 5.8 / 10.6 ms | 11.4 s: one core, full |
+| | 8 | 1,186,138 | 0.30 / 1.7 ms | 78.2 s, 71.6 s untracked (below) |
+| 800 rooms × 1,000/s | 8 | 2,246,977 | 2.4 / 3.8 ms | 92.6 s: all eight, full |
+| 1,600 rooms × 1,000/s | 1 or 8 | collapsed | | full |
+
+Here, unlike on the Mac, one loop is the limit: it fills a core at about 300,000 deliveries a second and only keeps up
+past that by queuing. Eight loops carry 2.25 million a second on 8 cores, about 280,000 a core, and at the same load
+cut latency 9 to 20 times. They spend more CPU a message than one loop (each batches less), which is the price of
+not queuing. So `--threads` stays at one per core.
+
+**Where the time goes** (`perf`, 8 loops, 400 rooms): the relay's own code is under 5% (`memcpy` 1.7%, the loop
+1.3%). The rest is the kernel: about 10% in the firewall's connection tracking (`__nf_conntrack_find_get` 7.6%,
+`nf_conntrack_in`, `nft_do_chain`), which the Azure agent's firewall rules turn on and the relay gains nothing from;
+about 10% in locks (`_raw_spin_lock` and friends: sockets and network interrupts); 6 to 7% the cost of each system
+call itself (`el0_svc` entering the kernel, `__fget_files` looking up the socket, `sock_poll`); about 2% AppArmor
+checking each send; and the TCP stack, spread thin.
+
+Not tracking the relay's port (`nft ... notrack`, now in `bench/azure.sh up`, and wanted on any relay server) cut CPU
+8% at 400 rooms: 78.2 → 71.6 s, same throughput and latency. Next by this profile: io_uring with registered sockets,
+which removes most of the per-call cost and lets a frame's sends to all its guests go in one submission.
