@@ -532,3 +532,22 @@ A 5 ms window does the same work with about 40% less of the relay's CPU, half th
 from 750 to 1,000 a relay. It costs up to 5 ms on every message, loaded or not. At 1,250 full rooms it fell behind
 again, though the relay was only 4.5 cores busy: the load VMs, handling 2.5M+ messages a second each, may be the
 limit there.
+
+## Final numbers, on the shipping build
+
+5 ms batching is now the default. `azure.sh` now reports the relay's memory at its peak (`VmHWM`): it read the
+current figure after the load VMs had gone, by when connections were already freed, so earlier memory figures for
+the realistic and room-size runs read low. 8 loops, `--pin 0`, two load VMs:
+
+| Load | Delivered/s | p50 / p99 | Delivered of due | Relay cores busy | Memory at peak |
+| --- | --- | --- | --- | --- | --- |
+| 20,000 rooms of 4 | 0.56M | 6–9 ms / 0.4–1.8 s | 77–95% | 1.8 | 1.4 GB |
+| 30,000 rooms of 4 | 0.70M | 6–21 ms / 7 ms–3.2 s | 53–100% | 1.9 | 1.9 GB |
+| 750 rooms of 32 | 3.5M | 10 / 18 ms | 98–100% | 4.2 | 381 MB |
+| 1,000 rooms of 32 | 4.6M | 19 / 33–286 ms | 97–100% | 4.0 | 549 MB |
+| 2,400 rooms of 4, 1,000 changes/s each | 7,203,676 | 8 / 18–39 ms | 100% | 4.8 | 1.2 GB |
+| 3,200 rooms of 4, 1,000 changes/s each | 9,629,489 | 21 / 42–66 ms | 100% | 4.5 | 1.7 GB |
+
+The shortfall in rooms of 4 is the first load VM's, not the relay's: run back to back at 20,000 rooms, batching off
+and on, that VM got 75% and 77% of its updates either way, the other 88–99%, and the relay closed no connections.
+Batching took the relay from 4.4–4.7 cores busy to 1.8 there, with 60% fewer packets in and out.

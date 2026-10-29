@@ -2,7 +2,7 @@
 //! docs/relay.md.
 //!
 //!     joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]
-//!                   [--threads <half the cores>] [--pin <first CPU>] [--batch-ms 0]
+//!                   [--threads <half the cores>] [--pin <first CPU>] [--batch-ms 5]
 //!
 //! Prometheus metrics are at http://<metrics address>:<metrics port>/metrics, on this machine only unless the metrics
 //! address says otherwise.
@@ -38,8 +38,9 @@ pub fn main(init: std.process.Init) !void {
     var threads: usize = (std.Thread.getCpuCount() catch 2) / 2;
     // Linux: loop i runs only on CPU `pin + i`, so its sockets' data stays in that CPU's caches.
     var pin: ?usize = null;
-    // How long a connection's queue waits for more before it's sent.
-    var batch_ms: i64 = 0;
+    // How long a connection's queue waits for more before it's sent: 5 ms did the same work with 40% less CPU and
+    // took a relay from 750 full rooms to 1,000, for a wait well under a frame (bench/load-results.md).
+    var batch_ms: i64 = 5;
     var args = init.minimal.args.iterate();
     _ = args.skip();
     while (args.next()) |arg| {

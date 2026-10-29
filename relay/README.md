@@ -17,14 +17,23 @@ and bytes in and out, rooms made and ended, joins, decisions, guests' changes, s
 falling behind, and every connection let go of or turned away, by why (`joinery_relay_dropped_total{reason=…}`). The
 relay's own memory is left to the process exporter of wherever it runs.
 
-**How much one relay holds.** On a 16-core Arm VM (Azure D16ps_v6, 64 GB) with the default 8 loops:
+**How much one relay holds.** One relay on a 16-core Arm VM with 64 GB (Azure D16ps_v6, Neoverse-N2), with the
+defaults (8 loops, 5 ms batching) and `--pin 0`. Every host sends a change a second, and every guest five pointer
+updates a second:
 
-- **20,000 rooms, 80,000 people** (a host and three guests each), every host sending a change a second and every guest
-  five pointer updates a second: about a million messages delivered a second, everything delivered, median latency
-  0.4–4 ms, using about 4.5 of the 16 cores and under 1 GB. At 25,000 rooms, the half of the load from the steadier
-  load VM still got everything at p99 1.4 ms.
-- **7.2 million messages delivered a second** at most, with p99 under 25 ms: 2,400 rooms whose hosts each send 1,000
-  changes a second. Past that it's the kernel's work on each packet, not the relay's code, that fills the machine.
+| Rooms | People | Delivered a second | Latency | Relay used |
+| --- | --- | --- | --- | --- |
+| 1,000 full rooms (32 people) | 32,000 | 2.3M pointer updates, 97–100% of them | p50 19 ms | 4 cores, 0.55 GB at peak |
+| 20,000 rooms of 4 | 80,000 | 0.6M | p50 7–9 ms | under 2 cores, 1.4 GB at peak |
+
+At most it delivers **9.6 million messages a second** (3,200 rooms whose hosts send 1,000 changes a second each), at
+p99 under 70 ms, with 4.5 cores busy and 1.7 GB at peak.
+
+These are what the test could show, not the relay's limits. In the rooms of 4 the relay closed nothing and used under
+2 of its 16 cores, but one of the two load VMs couldn't keep up (it got 75–77% of its updates, the other 88–100%,
+with batching on or off), and at 30,000 rooms the steadier VM still got all of its half at p99 7 ms. Cores busy are
+averaged over the whole run, opening the rooms included, so they read low. Rooms hold 32 people; a relay's limit is
+messages delivered, not people, so rooms twice the size hold about a quarter as many people.
 
 Details, and how each number was found, are in `bench/load-results.md`.
 
