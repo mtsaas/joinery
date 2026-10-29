@@ -125,6 +125,7 @@ pub fn main(init: std.process.Init) !void {
             .rooms = try init.gpa.alloc(Room, rooms),
             .conns = try init.gpa.alloc(Conn, rooms * (1 + config.guests)),
             .poller = try poller.Poller.init(),
+            .prng = .init(i),
         };
         thread.* = try std.Thread.spawn(.{}, Loop.run, .{loop});
     }
@@ -183,6 +184,9 @@ const Loop = struct {
     poller: poller.Poller,
     /// Whether it's past the start: only then does what's sent and delivered count.
     counting: bool = false,
+    /// Where in its interval each room's changes and each guest's pointer updates start, so they're spread out, as
+    /// people's are, not all sent in the same millisecond.
+    prng: std.Random.DefaultPrng,
     stats: Stats = .{},
     slow: Stats = .{},
     published: u64 = 0,
@@ -200,6 +204,7 @@ const Loop = struct {
         _ = opened.fetchAdd(1, .release);
         var events: [256]poller.Event = undefined;
         var end: i64 = std.math.maxInt(i64);
+        var last_tick: i64 = 0;
         while (true) {
             for (loop.poller.wait(&events, 1) catch return) |event| loop.receive(@ptrFromInt(event.tag));
             const now = nowNs(loop.io);
@@ -209,6 +214,10 @@ const Loop = struct {
                 end = start + @as(i64, @intCast(loop.config.seconds * std.time.ns_per_s));
                 loop.counting = now >= start;
             }
+            // What's due goes once a millisecond: every turn, scanning every connection was most of the time
+            // with many.
+            if (now - last_tick < std.time.ns_per_ms) continue;
+            last_tick = now;
             loop.tick(now);
         }
     }
@@ -302,7 +311,7 @@ const Loop = struct {
             const conns = loop.roomConns(r);
             const host = &conns[0];
             if (host.fd < 0) continue;
-            if (room.next_ns == 0) room.next_ns = now;
+            if (room.next_ns == 0) room.next_ns = now + loop.prng.random().intRangeLessThan(i64, 0, change_ns);
             // A change about the size of a sealed rename: when it was sent, then padding. One that doesn't fit, as
             // the relay's behind on reading, isn't sent.
             while (room.next_ns <= now) : (room.next_ns += change_ns) {
@@ -316,6 +325,7 @@ const Loop = struct {
             }
             for (conns[1..]) |*guest| {
                 if (guest.fd < 0) continue;
+                if (guest.pointer_ns == 0) guest.pointer_ns = now + loop.prng.random().intRangeLessThan(i64, 0, pointer_ns);
                 if (loop.config.presence > 0 and now >= guest.pointer_ns) {
                     // A pointer moving across the canvas, each update about the size of a sealed one.
                     var buffer: [wire.header_size + 64]u8 = @splat(0);
@@ -383,6 +393,9 @@ const Conn = struct {
             _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.RCVBUF, &small, @sizeOf(c_int));
         }
         if (source_count > 0) {
+            // The port's chosen on connecting, for this relay: chosen on binding, Linux searches for one free for
+            // every address, slower as they fill, and opening 50,000 rooms took minutes.
+            if (builtin.os.tag == .linux) _ = c.setsockopt(fd, c.IPPROTO.IP, std.os.linux.IP.BIND_ADDRESS_NO_PORT, &one, @sizeOf(c_int));
             const source: c.sockaddr.in = .{ .port = 0, .addr = @bitCast(sources[next_source.fetchAdd(1, .monotonic) % source_count]) };
             if (c.bind(fd, @ptrCast(&source), @sizeOf(c.sockaddr.in)) < 0) return error.AddressNotAvailable;
         }

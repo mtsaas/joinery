@@ -146,6 +146,8 @@ pub fn run(server: *Server) !void {
         const time = server.time;
         if (time >= next_tick) {
             next_tick = time + tick_ms;
+            // A host held back isn't silent: it's this loop that isn't listening.
+            for (server.held_back.items) |conn| conn.link.heard = time;
             server.relay.tick(time);
             server.expire(time);
             server.publish();

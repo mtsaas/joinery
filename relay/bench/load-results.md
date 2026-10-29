@@ -448,3 +448,34 @@ The high-rate capacity, rerun with even loops:
 
 Capacity at 8 loops is now about 8M deliveries/s. Sixteen loops are no longer worse, but no better, with twice the
 cores busy: half the cores stays the default.
+
+## Past 27,000 rooms
+
+Each load VM now has three addresses (`--sources`; `azure.sh` passes them all), about 165,000 connections each, and
+a third load VM was added. Three fixes to the generator came out of it, each of which had skewed results:
+
+- **Ports.** Bound to an address with port 0, Linux searched for a free port on every connection, slower as they
+  filled: 50,000 rooms took minutes to open, and the first rooms' connections went silent and were dropped before
+  the run began. `IP_BIND_ADDRESS_NO_PORT` leaves the port to `connect`.
+- **Scanning.** Each loop looked over every connection on every turn, not once a millisecond: at 30,000 rooms a VM,
+  that was most of its CPU.
+- **Lockstep.** Every room's changes and every guest's pointer updates started in the same millisecond, so they
+  came in bursts of all of them at once, five times a second. Each now starts at a random point in its interval,
+  as people's do.
+
+And one fix to the relay: **a host held back looked silent**, as nothing's read from it, and was dropped once the
+hold outlasted the silence timeout. Held-back hosts now count as heard.
+
+What holds up (8 loops, 16-core relay, two load VMs, 1 change a second per host, 5 pointer updates per guest):
+
+| Rooms | Connections | p99 | Delivered | Relay |
+| --- | --- | --- | --- | --- |
+| 20,000 | 80,000 | 23–30 ms (three runs, before and after the refactor) | 90–100% | 3.4–3.8 cores busy, 0.5–1 GB |
+| 30,000 | 120,000 | 36–71 ms once; 1.4–2.7 s in two later runs | 58–100% | 2.5–4.7 cores busy, 0.7–0.9 GB |
+| 40,000+ | 160,000+ | seconds | 60–95% | 4–6 cores busy, 0.9–1.5 GB |
+
+Above 20,000 rooms the runs don't agree with each other, and both sides show strain: the relay's loops take
+25–36 ms over some turns (16–133 hold-backs a run) though they're 40% idle on average, and the first load VM falls
+further behind than the second every time. The third VM made the other two worse when it joined, at 20,000 rooms
+as well, so the measurements above leave it out. The ceiling is somewhere between 20,000 and 40,000 rooms per
+16-core relay; the rig doesn't yet say where.
