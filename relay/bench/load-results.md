@@ -408,3 +408,43 @@ each packet in 4.3%, copies 5.5%, spin locks 2.8%. The relay's own code is about
 contending for the same per-packet work, which is why the curve turns down.
 
 Half the cores is the right number of loops on both machine sizes: on 8 cores, 4 matched 8; on 16, 8 beat 16.
+
+## Uneven loops, and realistic rooms
+
+**Realistic load.** Each host sends a change a second, and each of three guests five pointer updates a second (the
+app sends up to 20 while the pointer moves, so a quarter of the time): about 48 deliveries per room a second, nearly
+all pointer updates. Each load VM can open about 55k connections to one relay address, so two cap a test at about
+27,000 rooms.
+
+**The loops were uneven.** At 20,000 rooms latency jumped to a p99 of 0.3–1.1 s with the relay three-quarters idle.
+Turns of 25–75 ms, nearly all of it sending, came from loops doing far more than their share: one VM's load at
+10,000 rooms took 6.1, 4.7, 3.2, 2.2, 1.3, 0.8, 0.4 and 0.3 s of CPU on the eight loops. All of them waited on one
+listening socket, Linux woke the same few first, and a room lives on the loop that accepted its host. On Linux each
+loop now has its own listener on the port (`SO_REUSEPORT`), and the kernel spreads connections across them by
+address: the same load took 2.6–2.8 s on every loop, and p99 fell from 46 to 23 ms. (macOS still shares one; its
+kqueue wakes every loop.)
+
+Realistic load, 8 loops on the 16-core relay, after the fix:
+
+| Rooms | Connections | p50 / p99, each load VM | Pointer updates delivered | Relay memory | Relay machine: user / system / interrupts / idle |
+| --- | --- | --- | --- | --- | --- |
+| 10,000 | 40,000 | 8–10 / 12–15 ms | 98–100% | 296 MB | 0.3 / 1.6 / 2.1 / 12.9 |
+| 20,000 | 80,000 | 16–21 / 23–30 ms | 87–100% | 659 MB | 0.4 / 2.1 / 2.3 / 11.7 |
+| 26,000 | 104,000 | 21–30 ms / 46 ms–1.8 s | 69–100% | 728 MB | 0.4 / 2.2 / 2.2 / 11.6 |
+
+At 26,000 rooms the second load VM gets every update with a p99 of 46 ms, and the first falls behind. Each alone
+at its 13,000 rooms gets every update, p99 30–36 ms, and the relay's loops are about 75% busy and even, with no TCP
+drops or memory pressure. A limit in the relay would hit both alike, so the first VM or its path is the limit here,
+not the relay. Memory is about 7 KB a connection: CPU, not memory, decides how many rooms a relay holds.
+
+The high-rate capacity, rerun with even loops:
+
+| Loops | Rooms | Delivered/s | p99 | Relay machine: user / system / interrupts / idle |
+| --- | --- | --- | --- | --- |
+| 8 | 2,400 | 7,096,198 | 21 ms (was 46–156) | 0.6 / 3.3 / 4.4 / 8.0 |
+| 8 | 3,200 | 9,231,596 | 78–185 ms | 0.6 / 3.2 / 4.7 / 7.6 |
+| 16 | 3,200 | 9,603,831 | 78–202 ms | 1.0 / 6.1 / 6.3 / 3.3 |
+| 16 | 4,000 | 11,615,448 | 1.5 s | 0.9 / 4.3 / 8.1 / 3.4 |
+
+Capacity at 8 loops is now about 8M deliveries/s. Sixteen loops are no longer worse, but no better, with twice the
+cores busy: half the cores stays the default.

@@ -60,12 +60,16 @@ pub fn main(init: std.process.Init) !void {
 
     const address = try std.Io.net.Ip4Address.parse(address_text, port);
     const metrics_address = try std.Io.net.Ip4Address.parse(metrics_address_text, metrics_port);
-    const listener = try listen(address);
-    const metrics_listener = try listen(metrics_address);
+    // On Linux each loop has its own listener on the port, and the kernel spreads connections across them evenly. One
+    // shared, it woke the same few loops first: they took most of the rooms, the busiest 20 times the quietest's work.
+    const own_listeners = builtin.os.tag == .linux;
+    const shared_listener = try listen(address, own_listeners);
+    const metrics_listener = try listen(metrics_address, false);
     // A loop per thread, each with its own rooms; this thread runs the first.
     const loops = try init.gpa.alloc(*Server, threads);
     for (loops, 0..) |*loop, i| {
         loop.* = try init.gpa.create(Server);
+        const listener = if (own_listeners and i > 0) try listen(address, true) else shared_listener;
         try loop.*.init(io, init.gpa, .{}, @intCast(i), listener, metrics_listener);
     }
     for (loops) |loop| loop.loops = loops;
@@ -89,12 +93,13 @@ fn runLoop(loop: *Server, pin: ?usize) void {
 }
 
 /// A non-blocking TCP listener on `address`, with room for a burst of connections, as after a network blip.
-fn listen(address: std.Io.net.Ip4Address) !std.c.fd_t {
+fn listen(address: std.Io.net.Ip4Address, reuse_port: bool) !std.c.fd_t {
     const c = std.c;
     const fd = c.socket(c.AF.INET, c.SOCK.STREAM, 0);
     if (fd < 0) return error.SystemResources;
     const one: c_int = 1;
     _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.REUSEADDR, &one, @sizeOf(c_int));
+    if (reuse_port) _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.REUSEPORT, &one, @sizeOf(c_int));
     var sockaddr: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, address.port), .addr = @bitCast(address.bytes) };
     if (c.bind(fd, @ptrCast(&sockaddr), @sizeOf(c.sockaddr.in)) < 0) return error.AddressInUse;
     if (c.listen(fd, 4096) < 0) return error.SystemResources;
