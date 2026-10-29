@@ -17,6 +17,17 @@ and bytes in and out, rooms made and ended, joins, decisions, guests' changes, s
 falling behind, and every connection let go of or turned away, by why (`joinery_relay_dropped_total{reason=…}`). The
 relay's own memory is left to the process exporter of wherever it runs.
 
+**How much one relay holds.** On a 16-core Arm VM (Azure D16ps_v6, 64 GB) with the default 8 loops:
+
+- **20,000 rooms, 80,000 people** (a host and three guests each), every host sending a change a second and every guest
+  five pointer updates a second: about a million messages delivered a second, everything delivered, median latency
+  0.4–4 ms, using about 4.5 of the 16 cores and under 1 GB. At 25,000 rooms, the half of the load from the steadier
+  load VM still got everything at p99 1.4 ms.
+- **7.2 million messages delivered a second** at most, with p99 under 25 ms: 2,400 rooms whose hosts each send 1,000
+  changes a second. Past that it's the kernel's work on each packet, not the relay's code, that fills the machine.
+
+Details, and how each number was found, are in `bench/load-results.md`.
+
 The code is in two parts: what the relay does, and how it's on the network.
 
 ```
