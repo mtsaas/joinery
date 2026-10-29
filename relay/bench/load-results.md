@@ -285,3 +285,18 @@ io_uring), nor did throughput or latency:
 
 Its own submission and completion work took the place of the system calls'. For many small messages over many
 sockets, the cost is TCP's per-message work, not the calls into it.
+
+## Faster runs
+
+`bench/azure.sh` looks the VMs' addresses up once (each Azure lookup took ~2 s, five a run), keeps one SSH connection
+to each VM open between commands, and reports the relay's CPU as cores busy, so runs of any length compare. Three
+seconds of load gives what ten did (two load VMs, `--pin 0`):
+
+| Point | Delivered/s, 10 s / 3 s | p50 / p99, 10 s / 3 s | Cores busy, 10 s / 3 s |
+| --- | --- | --- | --- |
+| 8 loops, 1,000 rooms | 2,963,985 / 2,881,982 | 2.4, 4.1 / 2.4–2.7, 4.1 ms | 6.9 / 6.9 |
+| 1 loop, 200 rooms | 599,298 / 597,993 | 2.9–3.2, 4.9 / same | 1.0 / 0.9 |
+| 2 loops, 400 rooms | 1,196,587 / 1,188,060 | 3.2, 4.9–5.3 / same | 1.9 / 1.8 |
+
+A run is now 6 to 7 seconds end to end, from 23.5. Memory is the exception: logs fill through a run, so it wants the
+longer one.
