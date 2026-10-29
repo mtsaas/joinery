@@ -1,10 +1,14 @@
-//! The relay on the network: one thread, the OS's event queue (kqueue, or epoll on Linux), and non-blocking sockets.
+//! The relay on the network: one loop per core, each on its own thread with its own event queue (kqueue, or epoll on
+//! Linux), its own relay and its own rooms, sharing nothing as they run. Every loop watches the one listening socket,
+//! and whichever's free takes a new connection. A room's ID says which loop has it, so a guest's connection that
+//! comes in on another loop is handed to that one, with what it's sent so far, before the relay sees its hello. That,
+//! and adding up the metrics, is all the loops ever do together.
 //!
 //! Each turn of the loop reads whatever's come in, hands each whole WebSocket message to the relay, then writes
 //! everything queued for each connection in one `send`, so a frame going to 31 guests costs 31 sends however many
 //! frames came in that turn, not more. Nothing waits on a socket: what a socket won't take yet stays in its outbox
 //! until it's writable. A connection whose outbox fills is too far behind: it's closed, and when it comes back the
-//! relay catches it up from the snapshot. With one thread, the relay needs no lock.
+//! relay catches it up from the snapshot. With one thread to each relay, no relay needs a lock.
 //!
 //! Pointer updates are the exception to "everything queued goes": each connection holds only the newest from each
 //! person until its queue has gone, so a connection that's behind is sent where pointers are, not where they were.
@@ -23,6 +27,17 @@ const log = std.log.scoped(.server);
 
 io: Io,
 gpa: Allocator,
+/// Which loop this is, and all of them, this one included.
+index: u8,
+loops: []const *Server = &.{},
+/// Connections handed to this loop by others, and the pipe that wakes it for them.
+inbox: std.atomic.Value(?*Conn) = .init(null),
+wake: [2]c.fd_t,
+/// Connections to hand to another loop at the end of this turn.
+leaving: std.ArrayList(*Conn) = .empty,
+/// This loop's metrics as of its last tick, for the loop answering scrapes to add up.
+published: Published = .{},
+published_lock: Io.Mutex = .init,
 limits: wire.Limits,
 relay: Relay,
 csprng: std.Random.DefaultCsprng,
@@ -69,12 +84,18 @@ const tcp_notsent_lowat: u32 = if (builtin.os.tag == .linux) std.os.linux.TCP.NO
 /// A connection gets this long to finish its HTTP request.
 const request_ms = 10_000;
 
-pub fn init(server: *Server, io: Io, gpa: Allocator, config: Relay.Config, listener: c.fd_t, metrics_listener: c.fd_t) !void {
+/// Loop `index`, on `listener`; loop 0 answers scrapes on `metrics_listener` too. Then each needs `loops` set.
+pub fn init(server: *Server, io: Io, gpa: Allocator, config: Relay.Config, index: u8, listener: c.fd_t, metrics_listener: c.fd_t) !void {
     var seed: [std.Random.DefaultCsprng.secret_seed_length]u8 = undefined;
     try io.randomSecure(&seed);
+    var wake: [2]c.fd_t = undefined;
+    if (c.pipe(&wake) < 0) return error.SystemResources;
+    for (wake) |fd| try setNonblocking(fd);
     server.* = .{
         .io = io,
         .gpa = gpa,
+        .index = index,
+        .wake = wake,
         .limits = config.limits,
         .csprng = .init(seed),
         .relay = undefined,
@@ -83,20 +104,25 @@ pub fn init(server: *Server, io: Io, gpa: Allocator, config: Relay.Config, liste
         .metrics_listener = metrics_listener,
         .started = @divFloor(Io.Clock.real.now(io).toMilliseconds(), 1000),
     };
-    server.relay = .init(gpa, server.csprng.random(), .{ .ptr = server, .vtable = &.{ .send = relaySend, .close = close } }, config);
-    try server.poller.add(listener, listener_tag);
-    try server.poller.add(metrics_listener, metrics_tag);
+    var relay_config = config;
+    relay_config.shard = index;
+    server.relay = .init(gpa, server.csprng.random(), .{ .ptr = server, .vtable = &.{ .send = relaySend, .close = close } }, relay_config);
+    try server.poller.addListener(listener, listener_tag);
+    if (index == 0) try server.poller.add(metrics_listener, metrics_tag);
+    try server.poller.add(wake[0], wake_tag);
 }
 
 pub fn deinit(server: *Server) void {
     server.relay.deinit();
     server.dirty.deinit(server.gpa);
     server.done.deinit(server.gpa);
+    server.leaving.deinit(server.gpa);
 }
 
-/// What the poller hands back for the two listeners; connections are their own addresses.
+/// What the poller hands back for the listeners and the wake pipe; connections are their own addresses.
 const listener_tag: usize = 1;
 const metrics_tag: usize = 2;
+const wake_tag: usize = 3;
 
 /// Runs until something's badly wrong with the event queue.
 pub fn run(server: *Server) !void {
@@ -108,6 +134,7 @@ pub fn run(server: *Server) !void {
         for (ready) |event| switch (event.tag) {
             listener_tag => server.accept(server.listener, .http),
             metrics_tag => server.accept(server.metrics_listener, .metrics),
+            wake_tag => server.takeHandedOver(),
             else => {
                 const conn: *Conn = @ptrFromInt(event.tag);
                 if (conn.hot.state == .gone) continue;
@@ -120,6 +147,7 @@ pub fn run(server: *Server) !void {
             next_tick = time + tick_ms;
             server.relay.tick(time);
             server.expire(time);
+            server.publish();
         }
         server.finishTurn();
     }
@@ -138,6 +166,9 @@ const Conn = struct {
     link: Relay.Link,
     fd: c.fd_t,
     kind: enum { http, websocket, metrics },
+    /// While it's being handed to another loop, the next in that loop's inbox, and which loop.
+    next_handed: ?*Conn = null,
+    owner: u8 = 0,
     /// Whether the relay knows it: from its upgrade to a WebSocket, until it's closed.
     in_relay: bool = false,
     in: []u8,
@@ -162,6 +193,8 @@ const Conn = struct {
             lagging,
             /// Closed; let go of at the end of the turn.
             gone,
+            /// For another loop, whose room it's joining: handed to it at the end of the turn.
+            leaving,
         } = .open,
         is_dirty: bool = false,
         wants_write: bool = false,
@@ -265,12 +298,20 @@ fn adopt(server: *Server, fd: c.fd_t, kind: @FieldType(Conn, "kind")) !void {
     errdefer Relay.release(pages, in);
     const out = try Relay.reserve(u8, pages, if (kind == .metrics) 32 * 1024 else outSize(server.limits));
     errdefer Relay.release(pages, out);
-    conn.* = .{ .hot = .{ .out = out }, .link = .{ .id = server.next_id }, .fd = fd, .kind = kind, .in = in, .since = server.time };
+    // IDs unique across loops: each loop counts in its own lane.
+    const id = server.next_id * server.loops.len + server.index;
+    conn.* = .{ .hot = .{ .out = out }, .link = .{ .id = id }, .fd = fd, .kind = kind, .in = in, .since = server.time };
+    try server.watch(conn);
+    server.next_id += 1;
+}
+
+/// Takes a connection into this loop's event queue and lists.
+fn watch(server: *Server, conn: *Conn) !void {
     // Room for every connection in a turn's lists, so adding to them in a turn never allocates or fails.
     try server.dirty.ensureTotalCapacity(server.gpa, server.conn_count + 1);
     try server.done.ensureTotalCapacity(server.gpa, server.conn_count + 1);
-    try server.poller.add(fd, @intFromPtr(conn));
-    server.next_id += 1;
+    try server.leaving.ensureTotalCapacity(server.gpa, server.conn_count + 1);
+    try server.poller.add(conn.fd, @intFromPtr(conn));
     server.conn_count += 1;
     server.conns.append(&conn.node);
 }
@@ -398,6 +439,17 @@ fn messages(server: *Server, conn: *Conn) usize {
         const mask = bytes[head..][0..4].*;
         const payload = bytes[head + 4 .. total];
         unmask(payload, mask);
+        // A hello for a room another loop has: that loop takes the connection, this message and all after it, as
+        // they came.
+        if (opcode == 0x2 and conn.link.room == null and server.loops.len > 1) {
+            if (server.ownerOf(payload)) |owner| if (owner != server.index) {
+                unmask(payload, mask);
+                conn.owner = owner;
+                conn.hot.state = .leaving;
+                server.leaving.appendAssumeCapacity(conn);
+                break;
+            };
+        }
         at += total;
         switch (opcode) {
             0x2 => {
@@ -462,7 +514,7 @@ fn expire(server: *Server, now_ms: i64) void {
         const late = switch (conn.hot.state) {
             .closing => now_ms - conn.since > closing_grace_ms,
             .open => conn.kind != .websocket and now_ms - conn.since > request_ms,
-            .lagging, .gone => false,
+            .lagging, .gone, .leaving => false,
         };
         if (late) server.shut(conn);
     }
@@ -471,7 +523,7 @@ fn expire(server: *Server, now_ms: i64) void {
 // Sending
 
 fn markDirty(server: *Server, conn: *Conn) void {
-    if (conn.hot.is_dirty or conn.hot.state == .gone) return;
+    if (conn.hot.is_dirty or conn.hot.state == .gone or conn.hot.state == .leaving) return;
     conn.hot.is_dirty = true;
     server.dirty.appendAssumeCapacity(conn);
 }
@@ -513,11 +565,13 @@ fn finishTurn(server: *Server) void {
         if (conn.hot.state == .lagging) server.lose(conn, null);
     }
     for (server.dirty.items) |conn| {
-        if (conn.hot.state != .gone) server.flush(conn);
+        if (conn.hot.state == .open or conn.hot.state == .closing) server.flush(conn);
         // After: sending queues what was held, which would list it again.
         conn.hot.is_dirty = false;
     }
     server.dirty.clearRetainingCapacity();
+    for (server.leaving.items) |conn| server.handOver(conn);
+    server.leaving.clearRetainingCapacity();
     for (server.done.items) |conn| server.free(conn);
     server.done.clearRetainingCapacity();
 }
@@ -568,6 +622,61 @@ fn free(server: *Server, conn: *Conn) void {
     Relay.release(pages, conn.hot.out);
     if (conn.pointers) |pointers| pages.rawFree(std.mem.asBytes(pointers), .of(Pointers), @returnAddress());
     server.gpa.destroy(conn);
+}
+
+// Handing connections between loops
+
+/// The loop a guest's hello says has its room; none for anything else, which this loop's relay answers.
+fn ownerOf(server: *const Server, message: []const u8) ?u8 {
+    const header = wire.Header.ofFrame(message) catch return null;
+    if (header.kind != .hello) return null;
+    const hello = wire.Hello.parse(message[wire.header_size..]) catch return null;
+    if (hello.role == .host) return null;
+    const shard = Relay.shardOf(hello.room) orelse return null;
+    return @intCast(shard % server.loops.len);
+}
+
+/// Gives a connection to the loop that has its room. From here on, this loop doesn't touch it.
+fn handOver(server: *Server, conn: *Conn) void {
+    server.poller.remove(conn.fd, conn.hot.wants_write);
+    conn.hot.wants_write = false;
+    // Out of this relay's lobby, quietly: it hasn't joined anything here.
+    server.relay.closed(&conn.link, server.time);
+    server.counts.connections_open -= 1;
+    server.conns.remove(&conn.node);
+    server.conn_count -= 1;
+    const owner = server.loops[conn.owner];
+    var head = owner.inbox.load(.monotonic);
+    while (true) {
+        conn.next_handed = head;
+        head = owner.inbox.cmpxchgWeak(head, conn, .release, .monotonic) orelse break;
+    }
+    _ = c.write(owner.wake[1], "x", 1);
+}
+
+/// Takes the connections other loops have handed this one, and handles what each has sent.
+fn takeHandedOver(server: *Server) void {
+    var drain: [64]u8 = undefined;
+    while (c.read(server.wake[0], &drain, drain.len) > 0) {}
+    var next = server.inbox.swap(null, .acquire);
+    while (next) |conn| {
+        next = conn.next_handed;
+        conn.hot.state = .open;
+        conn.hot.is_dirty = false;
+        conn.link.room = null;
+        conn.link.node = .{};
+        server.watch(conn) catch {
+            _ = c.close(conn.fd);
+            server.free(conn);
+            continue;
+        };
+        server.counts.connections_open += 1;
+        server.relay.opened(&conn.link, server.time);
+        const used = server.messages(conn);
+        @memmove(conn.in[0 .. conn.in_len - used], conn.in[used..conn.in_len]);
+        conn.in_len -= used;
+        if (conn.hot.out_end > conn.hot.out_start) server.markDirty(conn);
+    }
 }
 
 // What the relay does.
@@ -636,11 +745,43 @@ fn webSocketHeader(buffer: *[10]u8, opcode: u8, length: usize) []const u8 {
 
 // Metrics
 
+/// A loop's metrics, as it last published them.
+const Published = struct {
+    counts: Counts = .{},
+    metrics: Relay.Metrics = .{},
+    gauges: Relay.Gauges = .{ .rooms = 0, .peers = 0, .lobby = 0, .log_bytes = 0 },
+
+    /// Adds `other`'s to these.
+    fn add(total: *Published, other: Published) void {
+        inline for (@typeInfo(Counts).@"struct".field_names) |name| @field(total.counts, name) += @field(other.counts, name);
+        inline for (@typeInfo(Relay.Gauges).@"struct".field_names) |name| @field(total.gauges, name) += @field(other.gauges, name);
+        inline for (@typeInfo(Relay.Metrics).@"struct".field_names) |name| {
+            if (@TypeOf(@field(total.metrics, name)) == u64) @field(total.metrics, name) += @field(other.metrics, name);
+        }
+        for (other.metrics.drops[0..other.metrics.reasons]) |reason| total.metrics.droppedBy(reason.why, reason.count);
+    }
+};
+
+/// Copies this loop's metrics where the loop answering scrapes can add them up. Once a tick, so they're up to a
+/// second old.
+fn publish(server: *Server) void {
+    server.published_lock.lockUncancelable(server.io);
+    defer server.published_lock.unlock(server.io);
+    server.published = .{ .counts = server.counts, .metrics = server.relay.metrics, .gauges = server.relay.gauges() };
+}
+
 fn respondMetrics(server: *Server, conn: *Conn, found: bool) void {
     if (!found) return server.respondText(conn, "404 Not Found", "Not found.\n");
+    server.publish();
+    var total: Published = .{};
+    for (server.loops) |loop| {
+        loop.published_lock.lockUncancelable(server.io);
+        defer loop.published_lock.unlock(server.io);
+        total.add(loop.published);
+    }
     var body_buffer: [16 * 1024]u8 = undefined;
     var body: Io.Writer = .fixed(&body_buffer);
-    writeMetrics(&body, &server.relay, server.counts, server.started) catch {};
+    writeMetrics(&body, total, server.loops.len, server.started) catch {};
     var head: [160]u8 = undefined;
     server.queue(conn, std.fmt.bufPrint(&head, "HTTP/1.1 200 OK\r\ncontent-type: text/plain; version=0.0.4; charset=utf-8\r\ncontent-length: {d}\r\nconnection: close\r\n\r\n", .{body.buffered().len}) catch unreachable);
     server.queue(conn, body.buffered());
@@ -648,9 +789,10 @@ fn respondMetrics(server: *Server, conn: *Conn, found: bool) void {
 }
 
 /// The metrics, in Prometheus's text format.
-fn writeMetrics(w: *Io.Writer, relay: *const Relay, counts: Counts, started: i64) Io.Writer.Error!void {
-    const g = relay.gauges();
-    const m = relay.metrics;
+fn writeMetrics(w: *Io.Writer, total: Published, loops: usize, started: i64) Io.Writer.Error!void {
+    const g = total.gauges;
+    const m = total.metrics;
+    const counts = total.counts;
     const Metric = struct { name: []const u8, kind: []const u8, help: []const u8, value: u64 };
     const metrics = [_]Metric{
         .{ .name = "rooms", .kind = "gauge", .help = "Rooms open.", .value = g.rooms },
@@ -673,6 +815,7 @@ fn writeMetrics(w: *Io.Writer, relay: *const Relay, counts: Counts, started: i64
         .{ .name = "snapshots_total", .kind = "counter", .help = "Snapshots received from hosts.", .value = m.snapshots },
         .{ .name = "snapshot_requests_total", .kind = "counter", .help = "Snapshots asked of hosts.", .value = m.snapshot_requests },
         .{ .name = "start_time_seconds", .kind = "gauge", .help = "When the relay started, in seconds since 1970.", .value = @intCast(started) },
+        .{ .name = "loops", .kind = "gauge", .help = "Event loops, one to a thread, each with its own rooms.", .value = loops },
     };
     for (metrics) |metric| {
         try w.print("# HELP joinery_relay_{s} {s}\n# TYPE joinery_relay_{s} {s}\njoinery_relay_{s} {d}\n", .{
@@ -709,13 +852,17 @@ test "metrics are in Prometheus's format" {
     frame[1] = @backingInt(wire.Kind.ping);
     relay.received(&link, &frame, 0); // Not a hello: dropped.
 
+    // Two loops' worth: one with the drop, one with two connections.
+    var total: Published = .{};
+    total.add(.{ .metrics = relay.metrics, .gauges = relay.gauges() });
+    total.add(.{ .counts = .{ .connections_open = 2 }, .metrics = relay.metrics });
     var buffer: [16 * 1024]u8 = undefined;
     var w: Io.Writer = .fixed(&buffer);
-    try writeMetrics(&w, &relay, .{ .connections_open = 2 }, 1700000000);
+    try writeMetrics(&w, total, 2, 1700000000);
     const text = w.buffered();
     try std.testing.expect(std.mem.indexOf(u8, text, "# TYPE joinery_relay_rooms gauge\njoinery_relay_rooms 0\n") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "joinery_relay_connections 2\n") != null);
-    try std.testing.expect(std.mem.indexOf(u8, text, "joinery_relay_dropped_total{reason=\"something other than hello first\"} 1\n") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "joinery_relay_dropped_total{reason=\"something other than hello first\"} 2\n") != null);
 }
 
 // The event queue
@@ -746,6 +893,16 @@ const Kqueue = struct {
 
     fn add(k: *Kqueue, fd: c.fd_t, tag: usize) !void {
         try k.change(fd, c.EVFILT.READ, c.EV.ADD, tag);
+    }
+
+    /// A listening socket every loop watches: each is woken, and whichever accepts first has the connection.
+    fn addListener(k: *Kqueue, fd: c.fd_t, tag: usize) !void {
+        try k.add(fd, tag);
+    }
+
+    fn remove(k: *Kqueue, fd: c.fd_t, writing: bool) void {
+        k.change(fd, c.EVFILT.READ, c.EV.DELETE, 0) catch {};
+        if (writing) k.change(fd, c.EVFILT.WRITE, c.EV.DELETE, 0) catch {};
     }
 
     fn wantWrite(k: *Kqueue, fd: c.fd_t, tag: usize, on: bool) !void {
@@ -781,6 +938,17 @@ const Epoll = struct {
 
     fn add(e: *Epoll, fd: c.fd_t, tag: usize) !void {
         try e.control(std.os.linux.EPOLL.CTL_ADD, fd, std.os.linux.EPOLL.IN, tag);
+    }
+
+    /// A listening socket every loop watches: one is woken for each connection, not all.
+    fn addListener(e: *Epoll, fd: c.fd_t, tag: usize) !void {
+        const linux = std.os.linux;
+        try e.control(linux.EPOLL.CTL_ADD, fd, linux.EPOLL.IN | linux.EPOLL.EXCLUSIVE, tag);
+    }
+
+    fn remove(e: *Epoll, fd: c.fd_t, writing: bool) void {
+        _ = writing;
+        e.control(std.os.linux.EPOLL.CTL_DEL, fd, 0, 0) catch {};
     }
 
     fn wantWrite(e: *Epoll, fd: c.fd_t, tag: usize, on: bool) !void {

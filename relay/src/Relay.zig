@@ -27,6 +27,7 @@ out: Out,
 limits: wire.Limits,
 /// A room whose host has been gone this long ends, in ms.
 host_grace: i64,
+shard: ?u8,
 rooms: std.StringHashMapUnmanaged(*Room) = .empty,
 /// The same rooms, to visit each on a tick.
 room_list: DoublyLinkedList = .{},
@@ -57,13 +58,18 @@ pub const Metrics = struct {
     const max_reasons = 32;
 
     fn dropped(m: *Metrics, why: []const u8) void {
+        m.droppedBy(why, 1);
+    }
+
+    /// Counts `count` drops for `why`, as adding up several relays' metrics does too.
+    pub fn droppedBy(m: *Metrics, why: []const u8, count: u64) void {
         for (m.drops[0..m.reasons]) |*r| if (std.mem.eql(u8, r.why, why)) {
-            r.count += 1;
+            r.count += count;
             return;
         };
         // Every reason is written in this file, so there are only so many.
         std.debug.assert(m.reasons < max_reasons);
-        m.drops[m.reasons] = .{ .why = why, .count = 1 };
+        m.drops[m.reasons] = .{ .why = why, .count = count };
         m.reasons += 1;
     }
 };
@@ -126,11 +132,20 @@ pub const Link = struct {
 pub const Config = struct {
     limits: wire.Limits = .{},
     host_grace: i64 = 30_000,
+    /// With several relays in one process, one per thread, which this is: written into its rooms' IDs, so a guest's
+    /// connection can be handed to the relay that has its room.
+    shard: ?u8 = null,
 };
+
+/// The relay a room's ID says has it, if it says.
+pub fn shardOf(room: []const u8) ?u8 {
+    if (room.len < 2) return null;
+    return std.fmt.parseInt(u8, room[0..2], 16) catch null;
+}
 
 pub fn init(gpa: Allocator, random: std.Random, out: Out, config: Config) Relay {
     assert(config.limits.max_peers >= 2 and config.limits.max_peers <= max_peers);
-    return .{ .gpa = gpa, .random = random, .out = out, .limits = config.limits, .host_grace = config.host_grace };
+    return .{ .gpa = gpa, .random = random, .out = out, .limits = config.limits, .host_grace = config.host_grace, .shard = config.shard };
 }
 
 pub fn deinit(relay: *Relay) void {
@@ -676,7 +691,8 @@ fn makeRoom(relay: *Relay, h: wire.Hello) Allocator.Error!*Room {
     try relay.rooms.ensureUnusedCapacity(gpa, 1);
 
     // In the reference's order: the room's ID, then the host's, guests' and viewers' secrets.
-    const id = relay.makeSecret();
+    var id = relay.makeSecret();
+    if (relay.shard) |shard| id[0..2].* = std.fmt.hex(shard);
     const host_secret = relay.makeSecret();
     const guest_secret = relay.makeSecret();
     const view_secret = relay.makeSecret();

@@ -137,3 +137,40 @@ are fewer.
 **Next, by the profile:** fewer system calls. On Linux, io_uring submits a frame's sends to all its guests in one
 call, and receives likewise; macOS has nothing like it. Short of that, coalescing a connection's frames for a fraction
 of a millisecond trades a little latency for fewer `send`s.
+
+## A loop per core
+
+Each loop has its own thread, event queue, relay and rooms, sharing nothing as it runs. All watch the one listening
+socket; a room's ID names its loop, and a guest's connection that comes in on another loop is handed to that one,
+hello and all, through a lock-free queue and a pipe to wake it. Metrics are each loop's, copied out once a second and
+added up on scrape.
+
+**One loop versus 18** (this Mac's cores), at rising load, back to back:
+
+| Load | Loops | Changes delivered/s | p50 / p99 | Relay CPU s |
+| --- | --- | --- | --- | --- |
+| 100 rooms × 1,000/s | 1 | 298,851 | 1.9 / 2.7 ms | 9.1 |
+| | 18 | 298,972 | 2.0 / 2.9 ms | 11.1 |
+| 200 rooms × 1,000/s | 1 | 595,424 | 4.5 / 6.3 ms | 8.9 |
+| | 18 | 595,946 | 4.9 / 6.9 ms | 11.3 |
+| 400 rooms × 1,000/s | 1 | 1,178,681 | 16.4 / 30.0 ms | 8.3 |
+| | 18 | 1,178,359 | 17.9 / 27.6 ms | 11.5 |
+
+One loop didn't run out: at 1.18 million deliveries a second it used 73% of a core, and less CPU than at a quarter of
+the load, because the busier it is the more frames each connection gathers between turns, so each `send` carries
+several. What ran out was the machine: 75% of all 18 cores busy, 69% of it in the kernel, mostly the loopback work
+of the load generator's 1,600 connections and of the relay's sends, which on loopback do the receiving side's work
+too. So more loops can't be shown to help here; that wants load from other machines, at deployment. What can be shown
+is their cost when one loop would do: work spread thin, so fewer frames to a `send`, and on macOS every loop woken for
+every new connection (on Linux, `EPOLLEXCLUSIVE` wakes one).
+
+The standard scenarios with 18 loops:
+
+| Scenario | Changes delivered/s | p50 | p99 | Pointer updates/s | Pointer updates replaced | Relay CPU s | Relay RSS MB | Threads |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| throughput | 298,708 | 2,048 µs | 2,896 µs | 0 | 0 | 11.5 | 137 | 18 |
+| fan-out | 123,949 | 117 µs | 609 µs | 0 | 0 | 4.6 | 9 | 18 |
+| connections | 12,896 | 362 µs | 17,867 µs | 0 | 0 | 4.4 | 85 | 18 |
+| pointers | 6,868 | 38,968 µs | 285,870 µs | 177,941 (86%) | 356,808 | 11.6 | 20 | 18 |
+
+Same results, 20% to twice the CPU. `--threads` sets the loops; it defaults to one per core.
