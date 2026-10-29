@@ -384,3 +384,27 @@ The link isn't the limit: at most 5.4 Gbit/s out. Packets are. Every change is i
 these hosts sends 1,000 a second with no delay. Real hosts send a few a second, so a real relay is limited first by
 connections and their memory, not packets; this benchmark is a worst case for the network stack, and what it shows
 is the stack's cost, not the relay's.
+
+## Sixteen cores
+
+The relay VM resized to a D16ps_v6 (16 cores, 16 network queues), same load VMs and method as above.
+
+| Loops | Rooms | Delivered/s | p50 / p99 | Packets in / out | Relay machine: user / system / interrupts / idle |
+| --- | --- | --- | --- | --- | --- |
+| 4 | 2,000 | 6,006,937 | 9–12 / 28 ms | 1,694k / 620k | 0.4 / 2.2 / 2.3 / 11.2 |
+| 8 | 2,000 | 5,966,284 | 5–6 / 14–18 ms | 2,019k / 1,312k | 0.6 / 3.9 / 2.8 / 9.1 |
+| 8 | 2,400 | 7,204,240 | 6–10 / 46–156 ms | 2,305k / 1,140k | 0.6 / 3.7 / 3.6 / 8.2 |
+| 12 | 2,400 | 7,243,922 | 16–18 ms / 1.5–1.6 s | 2,388k / 1,184k | 0.6 / 4.0 / 5.2 / 7.4 |
+| 16 | 2,400 | 7,064,587 | 12–13 ms / 0.7–1.0 s | 2,607k / 1,469k | 0.9 / 5.5 / 6.1 / 4.7 |
+| 16 | 4,000 | 10,312,550 | 110–120 ms / 2.5 s | 2,571k / 1,214k | 0.7 / 4.7 / 6.4 / 5.3 |
+
+Capacity is about 7M deliveries/s, with 8 loops: 1.46× the 8-core VM's 4.8M for twice the cores. More loops than half
+the cores is worse, not better: 12 and 16 loops miss the latency bound at 2,400 rooms, where 8 meet it, with the
+machine still a third idle. Packets in level off near 2.6M a second however many loops there are.
+
+A profile at 16 loops and 3,200 rooms (`profiles/16-loops-3200-rooms.txt`) is nearly all kernel: `_raw_spin_unlock_irqrestore`
+8.5% (where the network's deferred work lands when interrupts are allowed again), the established-socket lookup for
+each packet in 4.3%, copies 5.5%, spin locks 2.8%. The relay's own code is about 5%. More loops add more threads
+contending for the same per-packet work, which is why the curve turns down.
+
+Half the cores is the right number of loops on both machine sizes: on 8 cores, 4 matched 8; on 16, 8 beat 16.
