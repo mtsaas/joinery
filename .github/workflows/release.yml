@@ -82,6 +82,11 @@ jobs:
         with:
           p12-file-base64: ${{ secrets.DEVELOPER_ID_CERT_P12 }}
           p12-password: ${{ secrets.DEVELOPER_ID_CERT_PASSWORD }}
+      # Apple's intermediate, so the signing chain is whole however the .p12 was exported.
+      - name: Developer ID intermediate certificate
+        run: |
+          curl -fsSL https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer -o "$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          security import "$RUNNER_TEMP/DeveloperIDG2CA.cer" -k signing_temp.keychain
       - name: Keys
         run: |
           mkdir -p "$RUNNER_TEMP/keys" build/release
