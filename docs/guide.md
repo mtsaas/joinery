@@ -141,7 +141,7 @@ Signing Joinery needs these repository secrets:
 | `DEVELOPER_ID_CERT_P12`, `DEVELOPER_ID_CERT_PASSWORD` | The Developer ID Application certificate and its key, exported from Keychain Access as a .p12, base64-encoded, and its password |
 | `APPLE_TEAM_ID` | The team it belongs to |
 | `NOTARY_API_KEY`, `NOTARY_API_KEY_ID`, `NOTARY_API_ISSUER` | An App Store Connect API key (the .p8's contents), its ID and its issuer, to notarize |
-| `SPARKLE_PRIVATE_KEY` | Sparkle's private key, from `generate_keys -x <file>` in Sparkle's tools. Joinery installs only updates signed with it: lose it and released copies can't be updated again |
+| `SPARKLE_PRIVATE_KEY` | Sparkle's private key, kept in the login keychain under the account `mtsaas-joinery`: `generate_keys --account mtsaas-joinery -x <file>`, in Sparkle's tools. Joinery installs only updates signed with it, so keep a copy somewhere safe: lose it and released copies can't be updated again |
 
 `scripts/package-app.sh` is what the workflow runs, with these in its environment.
 

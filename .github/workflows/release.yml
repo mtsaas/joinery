@@ -90,6 +90,7 @@ jobs:
           gh release view updates >/dev/null 2>&1 || gh release create updates --prerelease --latest=false \
             --title "Update feed" --notes "Where released copies of Joinery check for updates. Download the newest at Joinery.dmg."
           gh release download updates --pattern appcast.xml --dir build/release || echo "No feed yet; starting one."
+      - run: pipx install dmgbuild
       - name: Build, sign and notarize
         env:
           TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}

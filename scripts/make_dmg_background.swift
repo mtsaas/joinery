@@ -1,5 +1,5 @@
 // Draws the disk image's window background: an arrow from Joinery to Applications and a line saying what to do.
-// The icons sit on it where scripts/release.sh puts them; both use the numbers below.
+// The icons sit on it where scripts/dmg.py puts them; both use the numbers below.
 // Usage: swift scripts/make_dmg_background.swift <out.png> <scale>
 import AppKit
 

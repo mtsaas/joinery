@@ -9,6 +9,8 @@
 #   FEED_URL           where released copies look for updates
 #   DOWNLOAD_URL       where this release's disk image will be downloaded from, without the file name
 #
+# It needs dmgbuild (pipx install dmgbuild).
+#
 # Writes build/release/Joinery-$VERSION.dmg and build/release/appcast.xml, which starts from build/release/appcast.xml
 # if it's there: the feed as last published.
 set -eu
@@ -39,15 +41,12 @@ notarize() {
 ditto -c -k --keepParent "$app" "$out/Joinery.zip"
 notarize "$out/Joinery.zip" "$app"
 
-# ponytail: a plain disk image, the app and a link to Applications. scripts/make_dmg_background.swift's layout needs
-# Finder, which a CI runner can't be relied on to drive.
-stage="$out/stage"
-rm -rf "$stage"
-mkdir -p "$stage"
-ditto "$app" "$stage/Joinery.app"
-ln -s /Applications "$stage/Applications"
+# The disk image: the app, a link to Applications, and the background, laid out by dmgbuild (scripts/dmg.py), which
+# writes the window's layout itself rather than asking Finder to.
+swift scripts/make_dmg_background.swift "$out/background.png" 1
+swift scripts/make_dmg_background.swift "$out/background@2x.png" 2
 dmg="$out/updates/Joinery-$VERSION.dmg"
-hdiutil create -volname Joinery -srcfolder "$stage" -fs HFS+ -format ULFO -ov "$dmg" -quiet
+dmgbuild -s scripts/dmg.py -D app="$app" -D background="$out/background.png" Joinery "$dmg"
 codesign --sign "Developer ID Application" --timestamp "$dmg"
 notarize "$dmg" "$dmg"
 
