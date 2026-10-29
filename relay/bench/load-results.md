@@ -489,3 +489,46 @@ turn took, and a single busy turn of 25–36 ms set it off on loops 40% idle. An
 looked silent and was dropped. What bounds memory is what was there before it: each connection's outbox is a fixed
 size, a connection that fills it is closed and caught up from the snapshot when it's back, and a connection that's
 behind is held only the newest pointer update from each person.
+
+## Room size
+
+Rooms hold 32 people by default, a host and 31 guests. Each pointer update goes to everyone else in the room, so a
+room's traffic grows with the square of its size: a full room at five updates a second per guest is about 4,800
+deliveries a second, against 48 for a room of four. One 16-core relay, 8 loops, each host a change a second and each
+guest five pointer updates:
+
+| People a room | Rooms | People | Pointer updates delivered/s | p99 | Relay cores busy |
+| --- | --- | --- | --- | --- | --- |
+| 32 | 250 | 8,000 | 1.16M | 1.3 ms | 3.9 |
+| 32 | 500 | 16,000 | 2.3M | 6 ms | 6.9 |
+| 32 | 750 | 24,000 | 3.4M (96–100%) | 21–93 ms | 6.7 |
+| 32 | 1,000 | 32,000 | 3.7M (78–82%) | 0.4–0.6 s | 7.0, loops full |
+| 64 | 200 | 12,800 | 3.9M | 12 ms | 7.2 |
+| 128 | 50 | 6,400 | 4.0M | 11 ms | 6.6 |
+| 256 | 12 | 3,072 | 3.8M (97–100%) | 7 ms | 4.9 |
+
+Rooms up to 256 work (raised for these runs only; the limit stays 32), and what a relay holds is set by deliveries,
+about 4M a second, not people. Memory stays small, as the guest list is allocated once a room, sized to the limit:
+32 bytes a guest. Past 32 people, a connection that's behind can no longer hold one pointer update for each: its 32
+slots fill, and the rest are queued like anything else.
+
+## Batching, again
+
+`--batch-ms` holds a connection's queue until it has waited that long, so a `send` carries more. The earlier try
+held for 0.1–0.5 ms and caught nothing; at 2–5 ms it does.
+
+| Load | Batch | Delivered/s | p50 / p99 | Packets out | Relay cores busy |
+| --- | --- | --- | --- | --- | --- |
+| 3,200 rooms of 4, 1,000 changes/s each | 0 ms | 9,633,138 | 13–16 / 78–202 ms | 912k | 6.9 |
+| | 2 ms | 9,619,434 | 16–21 / 55–78 ms | 760k | 6.1 |
+| | 5 ms | 9,529,598 | 21 / 71–110 ms | 450k | 4.3 |
+| 750 rooms of 32 | 0 ms | 3.4M pointer updates | 13 / 21–93 ms | 1,430k | 6.7 |
+| | 2 ms | 3.5M | 10 / 19–202 ms | 1,175k | 5.5 |
+| | 5 ms | 3.4M | 9 / 15–16 ms | 905k | 4.3 |
+| 1,000 rooms of 32 | 0 ms | 3.7M (78–82%) | 262–286 / 404–572 ms | 1,452k | 7.0 |
+| | 5 ms | 4.6M (98–100%) | 19 / 51–286 ms | 726k | 4.0 |
+
+A 5 ms window does the same work with about 40% less of the relay's CPU, half the packets out, and took full rooms
+from 750 to 1,000 a relay. It costs up to 5 ms on every message, loaded or not. At 1,250 full rooms it fell behind
+again, though the relay was only 4.5 cores busy: the load VMs, handling 2.5M+ messages a second each, may be the
+limit there.

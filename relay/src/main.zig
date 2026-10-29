@@ -3,7 +3,6 @@
 //!
 //!     joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]
 //!                   [--threads <half the cores>] [--pin <first CPU>] [--batch-ms 0]
-//!                   [--max-peers 32]
 //!
 //! Prometheus metrics are at http://<metrics address>:<metrics port>/metrics, on this machine only unless the metrics
 //! address says otherwise.
@@ -41,8 +40,6 @@ pub fn main(init: std.process.Init) !void {
     var pin: ?usize = null;
     // How long a connection's queue waits for more before it's sent.
     var batch_ms: i64 = 0;
-    // The most people in a room, the host among them: up to 256.
-    var config: @import("relay/Relay.zig").Config = .{};
     var args = init.minimal.args.iterate();
     _ = args.skip();
     while (args.next()) |arg| {
@@ -57,9 +54,6 @@ pub fn main(init: std.process.Init) !void {
             metrics_port = std.fmt.parseInt(u16, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--threads")) {
             threads = std.fmt.parseInt(usize, value, 10) catch return usage();
-        } else if (std.mem.eql(u8, arg, "--max-peers")) {
-            config.limits.max_peers = std.fmt.parseInt(u32, value, 10) catch return usage();
-            if (config.limits.max_peers < 2 or config.limits.max_peers > 256) return usage();
         } else if (std.mem.eql(u8, arg, "--batch-ms")) {
             batch_ms = std.fmt.parseInt(i64, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--pin")) {
@@ -81,7 +75,7 @@ pub fn main(init: std.process.Init) !void {
     for (loops, 0..) |*loop, i| {
         loop.* = try init.gpa.create(Server);
         const listener = if (own_listeners and i > 0) try socket.listen(address, true) else shared_listener;
-        try loop.*.init(io, init.gpa, config, @intCast(i), listener, metrics_listener);
+        try loop.*.init(io, init.gpa, .{}, @intCast(i), listener, metrics_listener);
     }
     for (loops) |loop| {
         loop.loops = loops;
@@ -107,6 +101,6 @@ fn runLoop(loop: *Server, pin: ?usize) void {
 }
 
 fn usage() error{Usage} {
-    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n] [--max-peers 2-256]", .{});
+    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n]", .{});
     return error.Usage;
 }
