@@ -319,3 +319,28 @@ One loop, two load VMs, 3 s, `--rate 1000`:
 Under capacity it never triggers. Over it, the loop delivers 36% more and holds less, because it stops spending turns
 reading changes it can't yet pass on. The tail gets worse: a held host's changes wait out the hold in its socket
 buffer, so p99 rises. Overload still means latency; what this bounds is the relay's memory and its time.
+
+## Saturation by loop count, and the link
+
+Each loop count pushed past its limit (two load VMs, `--pin 0`, `--rate 1000`, 3 s). The relay's network is now in
+every run's report.
+
+| Loops | Rooms | Delivered/s | p50 / p99 | Cores busy | Relay network in / out |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 600 | 1,772,910 | 11 / 23–28 ms | 0.9 | 0.76 / 1.56 Gbit/s |
+| 1 | 1,000 | 2,734,100 | 0.10 / 2.1–2.3 s | 0.9 | 1.10 / 2.24 Gbit/s |
+| 1 | 1,400 | 2,656,621 | 0.12–0.14 / 2.3–2.5 s | 0.9 | 1.06 / 2.03 Gbit/s |
+| 2 | 1,000 | 2,895,200 | 14 / 28 ms | 1.7 | 1.22 / 2.51 Gbit/s |
+| 2 | 1,600 | 4,180,931 | 0.14–0.37 / 1.6–2.5 s | 1.7 | 1.60 / 3.46 Gbit/s |
+| 2 | 2,200 | 4,014,043 | 0.22–0.26 / 3.0 s | 1.7 | 1.74 / 3.23 Gbit/s |
+| 4 | 1,600 | 4,490,800 | 15 / 30 ms | 3.4 | 1.85 / 3.80 Gbit/s |
+| 4 | 2,400 | 4,130,697 | 0.44–0.62 / 2.7 s | 3.1 | 2.00 / 4.47 Gbit/s |
+
+One loop saturates at about 2.7M deliveries/s; two at about 4.2M (1.55×). Four loops weren't saturated at 1,600
+rooms, and past that the generators were the limit: above about 1,200 rooms each they report nothing (4 loops at
+3,200 rooms, all 8-loop runs), and their CPU is near full from 1,400 rooms in all. The thread-per-connection
+generator tops out near 1.5M changes/s from two VMs, so scaling past two loops isn't measured yet.
+
+The link isn't the limit. One saturated loop sent 2.0–2.2 Gbit/s, less than four loops did (3.8–4.5), and packets
+stayed under 1.5M/s in. An earlier result, 8 loops at 1,000 rooms delivering the same 2.96M/s as 1 loop at
+1,000 rooms, was the offered load, not either relay's limit.
