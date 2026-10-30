@@ -95,9 +95,9 @@ pub fn main(init: std.process.Init) !void {
     for (loops) |loop| {
         loop.loops = loops;
         loop.batch_ms = batch_ms;
-        loop.max_conns = std.math.divCeil(usize, max_connections, threads) catch unreachable;
     }
-    std.log.info("relaying on {f} with {d} loops, up to {d} rooms and {d} connections, metrics at http://{f}/metrics", .{ address, threads, max_rooms, max_connections, metrics_address });
+    const cap = Server.limitConnections(threads, max_connections);
+    std.log.info("relaying on {f} with {d} loops, up to {d} rooms and {d} connections, metrics at http://{f}/metrics", .{ address, threads, max_rooms, cap, metrics_address });
     for (loops[1..]) |loop| {
         const thread = try std.Thread.spawn(.{}, runLoop, .{ loop, pin });
         thread.detach();
