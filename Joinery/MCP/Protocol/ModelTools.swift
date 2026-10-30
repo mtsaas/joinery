@@ -3,7 +3,6 @@ import Foundation
 
 /// What an AI assistant can do to a model over MCP: read it, add, change and drop tables, and add and remove foreign
 /// keys. Each call works on a copy and either applies whole or not at all, so it's one change, and one undo.
-@MainActor
 enum ModelTools {
     struct Failure: LocalizedError {
         let message: String
@@ -13,7 +12,7 @@ enum ModelTools {
 
     // MARK: Definitions
 
-    private static let columnSchema: [String: Any] = [
+    nonisolated(unsafe) private static let columnSchema: [String: Any] = [
         "type": "object",
         "properties": [
             "name": ["type": "string"],
@@ -27,9 +26,9 @@ enum ModelTools {
         "required": ["name"],
     ]
 
-    private static let tableReference: [String: Any] = ["type": "string", "description": "The table's name."]
+    nonisolated(unsafe) private static let tableReference: [String: Any] = ["type": "string", "description": "The table's name."]
 
-    static let definitions: [[String: Any]] = [
+    nonisolated(unsafe) static let definitions: [[String: Any]] = [
         [
             "name": "get_model",
             "description": "The open data model: its schemas, and every table with its schema, its columns (type, primary key, nullable, unique), the foreign keys between them, and its notes and sample rows, if it has any. Columns not marked nullable are required. Also where everything is on the canvas, in points (y grows downward): each table's and schema's frame [x, y, width, height], and the bounds of it all. Read this before changing anything.",

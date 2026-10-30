@@ -4,11 +4,13 @@ Joinery needs macOS 26 and Xcode 26. Open `Joinery.xcodeproj` and press ⌘R; �
 installed app's bundle ID, so they open your real library; quit the installed copy first.
 
 From the command line, sign ad hoc and without the hardened runtime, which would refuse Sparkle's differently signed
-framework. About 50 seconds from clean, 15 after a change:
+framework, and with a bundle ID of its own: the test runner hangs if a copy with the same one is open. About 50 seconds
+from clean, 15 after a change:
 
 ```sh
-xcodebuild -project Joinery.xcodeproj -scheme Joinery test \
-  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= ENABLE_HARDENED_RUNTIME=NO
+xcodebuild -project Joinery.xcodeproj -scheme Joinery test -derivedDataPath /tmp/joinery-tests \
+  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= ENABLE_HARDENED_RUNTIME=NO \
+  PRODUCT_BUNDLE_IDENTIFIER=com.mtsaas.joinery.unittest
 ```
 
 The relay, in `relay/`, has its own [README](../relay/README.md).
@@ -25,7 +27,9 @@ Joinery/
     UI/            Share and Join panels, people, and others' pointers on the canvas
   Library/         The library of files and collections, the open data model, its editor and version history
   Canvas/          Canvas view, table drawing, routing, wire physics, zip tying
-  MCP/             The MCP server for AI assistants, and its data model tools
+  MCP/
+    Protocol/      The MCP server for AI assistants, but for its socket: HTTP, JSON-RPC, and the data model tools
+                   (MCPServer.swift is the Mac's socket and library tools)
   App/             App entry, menu commands, settings, debug hooks
   Debug/           Routing feedback mode, the frame-rate readout, made-up data models (Debug builds only)
   Examples/        The bundled example data models
@@ -35,10 +39,11 @@ docs/              guide.md, relay.md (the session protocol, and why it's correc
 scripts/           Builds, benchmarks and the release
 ```
 
-**The core stands alone.** `Document/` and `Collaboration/Protocol/` are plain state and state machines: Foundation,
-CoreGraphics and UniformTypeIdentifiers only, and nothing from the main actor, the network, the screen or the rest of
-the app. So the protocol can be simulated across every core with no network at all. `scripts/check_layers.sh` fails if
-anything in the core reaches outside it.
+**The core stands alone.** `Document/`, `Collaboration/Protocol/` and `MCP/Protocol/` are plain state and state
+machines: Foundation, CoreGraphics, CryptoKit and UniformTypeIdentifiers only, and nothing from the main actor, the
+network, the screen or the rest of the app. So the protocol can be simulated across every core with no network at all,
+and the core can be built for other platforms (CryptoKit's API is `swift-crypto` elsewhere). `scripts/check_layers.sh`,
+run in CI, fails if anything in the core reaches outside it.
 
 **Wires** work in two steps. `Routing` computes each wire's rest curve, Bézier segments from socket to socket through
 its zip ties. `WireSimulation` then springs a chain of points toward it, stiff at the ends and loose in the middle, only

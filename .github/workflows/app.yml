@@ -25,6 +25,8 @@ jobs:
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
+      - name: Keep the core portable
+        run: scripts/check_layers.sh
       - name: Build and test
         run: >
           xcodebuild test -project Joinery.xcodeproj -scheme Joinery -destination platform=macOS

@@ -219,7 +219,7 @@ enum DebugHooks {
                 // An assistant's tool call, as the MCP server would make it: "mcp create_tables {json}".
                 let json = words.dropFirst(2).joined(separator: " ")
                 let arguments = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:]
-                do { print("mcp:", try await MCPServer.call(words[1], arguments)) } catch { print("mcp failed:", error.localizedDescription) }
+                do { print("mcp:", try await MCP.call(words[1], arguments, host: MCPServer.shared)) } catch { print("mcp failed:", error.localizedDescription) }
             case "add-port" where words.count >= 4:
                 // The + on a group's edge clicked, and the new port maybe plugged in: "add-port hierarchy left 0.2 user_account.user_id".
                 let model = document.wrappedValue
