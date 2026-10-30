@@ -2,7 +2,9 @@
 
 An infinite canvas for sketching SQL data models on macOS, in the spirit of Freeform. Tables sit on the canvas. Each column has a socket on both sides, and you drag from one socket to another to add a foreign key. Foreign keys are drawn as springy wires, and you can zip-tie wires together into bundles.
 
-Requires macOS 26 and Xcode 26 or later. Open `Joinery.xcodeproj` and press ⌘R.
+Requires macOS 26 and Xcode 26 or later. Open `Joinery.xcodeproj` and press ⌘R. Joinery for Windows and Linux opens the
+same `.joinery` files, joins the same sessions and serves the same MCP tools; its library is `Joinery` in your Documents
+folder, and Ctrl takes the place of ⌘.
 
 ## Library
 

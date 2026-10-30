@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths-ignore: &ignore
       - relay/**
+      - desktop/**
       - infra/**
       - docs/**
       - '**.md'
@@ -14,6 +15,7 @@ on:
       - release-please-config.json
       - .github/workflows/relay.yml
       - .github/workflows/release.yml
+      - .github/workflows/desktop.yml
   pull_request:
     paths-ignore: *ignore
 

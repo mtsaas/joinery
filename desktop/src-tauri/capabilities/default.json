@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "The window's: the app's own commands, events, file dialogs and opening links.",
+  "description": "The window's: the app's own commands, events, file dialogs, opening links, and installing updates.",
   "windows": ["main"],
-  "permissions": ["core:default", "core:window:allow-close", "core:window:allow-destroy", "dialog:default", "opener:default"]
+  "permissions": ["core:default", "core:window:allow-close", "core:window:allow-destroy", "dialog:default", "opener:default", "updater:default", "process:allow-restart"]
 }

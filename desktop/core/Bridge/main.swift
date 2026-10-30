@@ -20,11 +20,11 @@ enum App {
     static var isComparing: Bool { preview != nil || workspace.baseline != nil }
 }
 
-/// Comparing, nothing's edited from the canvas: it's only there to look at.
+/// Showing an earlier version, nothing's edited from the canvas: it's only there to look at. A review stays editable:
+/// its diff follows the model as it changes.
 private func editable() throws(JSException) {
-    if App.isComparing {
-        throw JSException(message: App.preview != nil ? "Showing an earlier version: choose Done, or restore it, to edit."
-                                                     : "Reviewing a change: choose End Review to edit.")
+    if App.preview != nil {
+        throw JSException(message: "Showing an earlier version: choose Done, or restore it, to edit.")
     }
 }
 
@@ -92,15 +92,15 @@ private func failure(_ error: any Error) -> JSException {
 
 /// Zip-ties the wires a stroke crosses; returns the tie's ID, or "".
 @JS public func zipTie(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double) -> String {
-    guard !App.isComparing else { return "" }
+    guard App.preview == nil else { return "" }
     return App.scene.zipTie(App.workspace, from: CGPoint(x: x1, y: y1), to: CGPoint(x: x2, y: y2))?.uuidString ?? ""
 }
 
 /// The selection as a clip, to copy.
 @JS public func copy(_ selection: String) -> String { Edits.copy(object(selection), in: App.workspace) }
 
-@JS public func undo() { if !App.isComparing { App.workspace.undo() } }
-@JS public func redo() { if !App.isComparing { App.workspace.redo() } }
+@JS public func undo() { if App.preview == nil { App.workspace.undo() } }
+@JS public func redo() { if App.preview == nil { App.workspace.redo() } }
 
 @JS public func markBaseline() { App.workspace.markBaseline() }
 @JS public func endReview() {

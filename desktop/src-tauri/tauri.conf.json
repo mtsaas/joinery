@@ -47,5 +47,16 @@
         "installMode": "currentUser"
       }
     }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "REPLACE_WITH_THE_UPDATER_PUBLIC_KEY",
+      "endpoints": [
+        "https://github.com/mtsaas/joinery/releases/download/desktop-updates/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }
