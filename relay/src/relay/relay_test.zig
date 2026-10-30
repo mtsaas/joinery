@@ -202,6 +202,24 @@ test "a host's frame at the last seq drops it, and the room still takes guests" 
     try testing.expectEqual(null, h.bye(3));
 }
 
+test "past the most rooms, a host is told the relay is full, and rooms already open carry on" {
+    var h: Harness = undefined;
+    h.init(.{});
+    defer h.deinit();
+    h.relay.max_rooms = 1;
+    const room = h.host("Host", "Model");
+    h.receive(1, hello(.host, "", "", "", "Host", "Model"));
+    try testing.expectEqualStrings("The relay is full.", h.bye(1).?);
+    try testing.expectEqual(@as(usize, 1), h.relay.roomCount());
+    h.join(2, .guest, &room.guest_secret, "a");
+    try testing.expectEqual(null, h.bye(2));
+    // A room ending makes room for the next.
+    h.receive(0, makeFrame(.bye, 0, "Stopped sharing."));
+    h.receive(3, hello(.host, "", "", "", "Host", "Model"));
+    try testing.expectEqual(null, h.bye(3));
+    try testing.expectEqual(@as(usize, 1), h.relay.roomCount());
+}
+
 test "a connection the relay lets go of is in no room and not in the lobby, however it goes" {
     var h: Harness = undefined;
     h.init(.{});

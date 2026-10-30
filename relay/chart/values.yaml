@@ -9,6 +9,11 @@ image:
 threads: ""
 # How long, in ms, a connection's queue waits for more before it's sent. 5 does the same work with about 40% less CPU.
 batchMs: 5
+# What anyone can make the relay hold, without signing in. At worst a room holds its log and a snapshot, about 4 MiB,
+# and a connection a snapshot's worth of input, about 1 MiB: these keep that under the 2Gi limit below. Raise them with
+# it. Past them, hosts are told the relay is full and new connections are closed; sessions already open carry on.
+maxRooms: 256
+maxConnections: 768
 extraArgs: []
 
 # One relay, always. Rooms live in its memory, and a room's host and guests must reach the same relay, so a second

@@ -87,10 +87,11 @@ var public_cap: usize = std.math.maxInt(usize);
 /// Connections only scrapes can take, past the public cap.
 const metrics_room = 16;
 
-/// Sets the public cap from the descriptors the process may have, raising its soft limit to the hard one first, and
-/// returns it. Each loop keeps a listener, a wake pipe and an event queue; the rest of the headroom is the metrics
-/// listener, stdio, and `metrics_room`.
-pub fn limitConnections(loops: usize) usize {
+/// Sets the public cap to `max`, or lower if the descriptors the process may have run out first, raising its soft
+/// limit to the hard one first, and returns it. Each loop keeps a listener, a wake pipe and an event queue; the rest of
+/// the headroom is the metrics listener, stdio, and `metrics_room`.
+pub fn limitConnections(loops: usize, max: usize) usize {
+    public_cap = max;
     const posix = std.posix;
     if (posix.getrlimit(.NOFILE)) |limit| {
         var raised = limit;
@@ -106,7 +107,7 @@ pub fn limitConnections(loops: usize) usize {
                 nofile = @min(nofile, @as(u64, @intCast(per_process)));
             }
         }
-        public_cap = @intCast(@min(nofile, std.math.maxInt(usize)) -| (4 * loops + metrics_room + 32));
+        public_cap = @min(max, @as(usize, @intCast(@min(nofile, std.math.maxInt(usize)) -| (4 * loops + metrics_room + 32))));
     } else |_| {}
     return public_cap;
 }

@@ -66,6 +66,8 @@ limit) suit a few thousand people.
 | `image.pullPolicy` | `IfNotPresent` | |
 | `threads` | empty: half the node's cores | Event loops; set to about half the CPUs it's given |
 | `batchMs` | `5` | How long, in ms, a connection's queue waits for more before it's sent: the same work with about 40% less CPU |
+| `maxRooms` | `256` | Rooms held at once; past it, hosts are told the relay is full. At worst each holds about 4 MiB, so raise it with `resources.limits.memory` |
+| `maxConnections` | `768` | Connections held at once; past it, new ones are closed. At worst each holds about 1 MiB of input |
 | `extraArgs` | `[]` | More `joinery-relay` flags |
 | `service.type` | `ClusterIP` | |
 | `service.port` | `8787` | WebSockets |

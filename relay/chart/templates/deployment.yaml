@@ -49,6 +49,10 @@ spec:
             - {{ .Values.metrics.port | quote }}
             - --batch-ms
             - {{ .Values.batchMs | quote }}
+            - --max-rooms
+            - {{ .Values.maxRooms | quote }}
+            - --max-connections
+            - {{ .Values.maxConnections | quote }}
             {{- with .Values.threads }}
             - --threads
             - {{ . | quote }}
