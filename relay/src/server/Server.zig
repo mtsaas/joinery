@@ -197,11 +197,13 @@ fn adopt(server: *Server, fd: c.fd_t, kind: Conn.Kind) !void {
 
 /// Takes a connection into this loop's event queue and lists.
 fn watch(server: *Server, conn: *Conn) !void {
-    // Room for every connection in a turn's lists, so adding to them in a turn never allocates or fails.
-    try server.dirty.ensureTotalCapacity(server.gpa, server.conn_count + 1);
-    try server.waiting.ensureTotalCapacity(server.gpa, server.conn_count + 1);
-    try server.done.ensureTotalCapacity(server.gpa, server.conn_count + 1);
-    try server.leaving.ensureTotalCapacity(server.gpa, server.conn_count + 1);
+    // Room for every connection in a turn's lists, so adding to them in a turn never allocates or fails: those shut
+    // this turn too, which are in `done`, no longer counted, until it ends.
+    const most = server.conn_count + server.done.items.len + 1;
+    try server.dirty.ensureTotalCapacity(server.gpa, most);
+    try server.waiting.ensureTotalCapacity(server.gpa, most);
+    try server.done.ensureTotalCapacity(server.gpa, most);
+    try server.leaving.ensureTotalCapacity(server.gpa, most);
     try server.poller.add(conn.fd, @intFromPtr(conn));
     server.conn_count += 1;
     server.conns.append(&conn.node);
@@ -289,6 +291,11 @@ fn messages(server: *Server, conn: *Conn) usize {
             if (server.ownerOf(payload)) |owner| if (owner != server.index) {
                 websocket.unmask(payload, mask);
                 conn.owner = owner;
+                // Out of this relay now, not at the end of the turn: a tick before then could drop it too, telling
+                // it twice.
+                server.relay.closed(&conn.link, server.time);
+                server.counts.connections_open -= 1;
+                conn.in_relay = false;
                 conn.hot.state = .leaving;
                 server.leaving.appendAssumeCapacity(conn);
                 break;
@@ -313,7 +320,7 @@ fn messages(server: *Server, conn: *Conn) usize {
 fn lose(server: *Server, conn: *Conn, why: ?[]const u8) void {
     if (conn.hot.state == .gone) return;
     if (why) |w| log.info("connection {d} closed: {s}", .{ conn.link.id, w });
-    const tell = conn.in_relay and (conn.hot.state == .open or conn.hot.state == .lagging);
+    const tell = conn.in_relay;
     server.shut(conn);
     if (tell) server.relay.closed(&conn.link, server.time);
 }
@@ -362,22 +369,14 @@ fn markDirty(server: *Server, conn: *Conn) void {
 /// Appends bytes to a connection's outbox, or if it's full, gives up on it: it's too far behind.
 fn queue(server: *Server, conn: *Conn, bytes: []const u8) void {
     if (conn.hot.state != .open) return;
-    if (conn.hot.out_end + bytes.len > conn.hot.out.len) {
-        // Room at the start, where what's been sent was.
-        @memmove(conn.hot.out[0 .. conn.hot.out_end - conn.hot.out_start], conn.hot.out[conn.hot.out_start..conn.hot.out_end]);
-        conn.hot.out_end -= conn.hot.out_start;
-        conn.hot.out_start = 0;
-        if (conn.hot.out_end + bytes.len > conn.hot.out.len) {
-            log.info("connection {d} dropped: its outbox is full, so it's too far behind", .{conn.link.id});
-            server.counts.lagging += 1;
-            conn.hot.state = .lagging;
-            // Told to the relay at the end of the turn: this is inside one of its calls.
-            server.markDirty(conn);
-            return;
-        }
+    if (!conn.hot.push(bytes)) {
+        log.info("connection {d} dropped: its outbox is full, so it's too far behind", .{conn.link.id});
+        server.counts.lagging += 1;
+        conn.hot.state = .lagging;
+        // Told to the relay at the end of the turn: this is inside one of its calls.
+        server.markDirty(conn);
+        return;
     }
-    @memcpy(conn.hot.out[conn.hot.out_end..][0..bytes.len], bytes);
-    conn.hot.out_end += bytes.len;
     server.markDirty(conn);
 }
 
@@ -395,7 +394,14 @@ fn finishTurn(server: *Server) void {
         const conn = server.dirty.items[i];
         if (conn.hot.state == .lagging) server.lose(conn, null);
     }
-    for (server.dirty.items) |conn| {
+    // Losing one while sending tells the relay, which can queue more for others, listing them again, even those already
+    // sent to: each is taken off as it's done, so the list never holds more than one of each, and every one listed goes.
+    while (server.dirty.pop()) |conn| {
+        if (conn.hot.state == .lagging) {
+            server.lose(conn, null);
+            conn.hot.is_dirty = false;
+            continue;
+        }
         // Not yet waited the window: more may come for it to carry.
         if (conn.hot.state == .open and server.time - conn.hot.dirty_since < server.batch_ms) {
             server.waiting.appendAssumeCapacity(conn);
@@ -405,7 +411,6 @@ fn finishTurn(server: *Server) void {
         // After: sending queues what was held, which would list it again.
         conn.hot.is_dirty = false;
     }
-    server.dirty.clearRetainingCapacity();
     std.mem.swap(std.ArrayList(*Conn), &server.dirty, &server.waiting);
     for (server.leaving.items) |conn| server.handOver(conn);
     server.leaving.clearRetainingCapacity();
@@ -431,9 +436,10 @@ fn flush(server: *Server, conn: *Conn) void {
 
 /// Sends what's queued. Null if it couldn't all go: the socket's full, and the poller will say when it isn't.
 fn send(server: *Server, conn: *Conn) ?void {
-    while (conn.hot.out_start < conn.hot.out_end) {
+    while (conn.hot.out_len > 0) {
         const flags: u32 = if (builtin.os.tag == .linux) c.MSG.NOSIGNAL else 0;
-        const n = c.send(conn.fd, conn.hot.out[conn.hot.out_start..conn.hot.out_end].ptr, conn.hot.out_end - conn.hot.out_start, flags);
+        const pending = conn.hot.pending();
+        const n = c.send(conn.fd, pending.ptr, pending.len, flags);
         if (n < 0) {
             if (c.errno(n) == .AGAIN) {
                 // Told when it can take more.
@@ -447,10 +453,8 @@ fn send(server: *Server, conn: *Conn) ?void {
             server.lose(conn, null);
             return null;
         }
-        conn.hot.out_start += @intCast(n);
+        conn.hot.sent(@intCast(n));
     }
-    conn.hot.out_start = 0;
-    conn.hot.out_end = 0;
 }
 
 fn free(server: *Server, conn: *Conn) void {
@@ -477,9 +481,8 @@ fn ownerOf(server: *const Server, message: []const u8) ?u8 {
 fn handOver(server: *Server, conn: *Conn) void {
     server.poller.remove(conn.fd, conn.hot.wants_write);
     conn.hot.wants_write = false;
-    // Out of this relay's lobby, quietly: it hasn't joined anything here.
-    server.relay.closed(&conn.link, server.time);
-    server.counts.connections_open -= 1;
+    // Out of this relay already, from when it was marked to go.
+    assert(!conn.in_relay and conn.link.room == null);
     server.conns.remove(&conn.node);
     server.conn_count -= 1;
     const owner = server.loops[conn.owner];
@@ -508,9 +511,10 @@ fn takeHandedOver(server: *Server) void {
             continue;
         };
         server.counts.connections_open += 1;
+        conn.in_relay = true;
         server.relay.opened(&conn.link, server.time);
         conn.consume(server.messages(conn));
-        if (conn.hot.out_end > conn.hot.out_start) server.markDirty(conn);
+        if (conn.hot.out_len > 0) server.markDirty(conn);
     }
 }
 
@@ -555,11 +559,13 @@ fn holdPointer(server: *Server, conn: *Conn, peer: u32, frame: []const u8) void 
 fn close(ptr: *anyopaque, link: *Relay.Link) void {
     const server: *Server = @ptrCast(@alignCast(ptr));
     const conn: *Conn = @fieldParentPtr("link", link);
-    if (conn.hot.state != .open) return;
-    // The relay's let go of it already.
-    if (conn.in_relay) server.counts.connections_open -= 1;
+    // The relay's let go of it already, whatever state it's in, so it's never told it closed. Only a link it holds:
+    // `in_relay` is true from `opened` until it's closed or told closed.
+    assert(conn.in_relay);
+    server.counts.connections_open -= 1;
     conn.in_relay = false;
-    server.closeAfterSending(conn);
+    // Lagging, it's closed at the end of the turn.
+    if (conn.hot.state == .open) server.closeAfterSending(conn);
 }
 
 // Metrics

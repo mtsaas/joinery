@@ -267,8 +267,16 @@ fn matches(given: []const u8, expected: Secret) bool {
     return given.len == expected.len and std.crypto.timing_safe.eql(Secret, given[0..expected.len].*, expected);
 }
 
-fn attachHost(relay: *Relay, link: *Link, room: *Room) void {
+/// Takes a connection out of the lobby, which it must be in: removing it twice would break the list.
+fn leaveLobby(relay: *Relay, link: *Link) void {
+    assert(link.room == null and (link.node.prev != null or relay.lobby.first == &link.node));
     relay.lobby.remove(&link.node);
+    // So it's seen to be out, if it's ever mentioned again.
+    link.node = .{};
+}
+
+fn attachHost(relay: *Relay, link: *Link, room: *Room) void {
+    relay.leaveLobby(link);
     link.room = room;
     room.host = link;
     room.host_gone = null;
@@ -286,6 +294,7 @@ fn join(relay: *Relay, link: *Link, h: wire.Hello, room: *Room) void {
             if (g.client != client) continue;
             _ = room.guests.orderedRemove(i);
             relay.out.close(g.link);
+            g.link.room = null;
             break;
         }
     }
@@ -293,7 +302,7 @@ fn join(relay: *Relay, link: *Link, h: wire.Hello, room: *Room) void {
         return relay.refuse(link, "This session is full.");
     }
     const client = known orelse room.remember(h.client);
-    relay.lobby.remove(&link.node);
+    relay.leaveLobby(link);
     link.room = room;
     const peer = room.clients.items[client].peer;
     room.clients.items[client].name = .init(h.name);
@@ -308,6 +317,7 @@ fn join(relay: *Relay, link: *Link, h: wire.Hello, room: *Room) void {
         .sent = room.latest,
     };
     // Caught up from the log if it reaches back to what the guest has, from the snapshot if not.
+    room.checkSeqs();
     const log_start = if (room.log.first()) |frame| wire.seqOf(frame) else room.latest + 1;
     const role = if (g.can_edit) "edit" else "view";
     if (h.applied != null and h.applied.? + 1 >= log_start and h.applied.? <= room.latest) {
@@ -407,6 +417,7 @@ fn fromHost(relay: *Relay, room: *Room, header: wire.Header, frame: []u8) void {
                 for (room.guests.items) |g| relay.out.send(g.link, back);
             }
             room.trim();
+            room.checkSeqs();
         },
         .ops, .reject => {
             // Never the last seq, so `room.latest` stays below it and `room.latest + 1` fits.
@@ -432,6 +443,7 @@ fn fromHost(relay: *Relay, room: *Room, header: wire.Header, frame: []u8) void {
             }
             room.log.push(frame);
             room.latest = header.seq;
+            room.checkSeqs();
             relay.metrics.decisions += 1;
             for (room.guests.items) |*g| {
                 relay.out.send(g.link, frame);
@@ -518,7 +530,9 @@ fn bye(relay: *Relay, reason: []const u8) []const u8 {
 
 /// A connection's gone: others are told who's left.
 fn forget(relay: *Relay, link: *Link) void {
-    const room = link.room orelse return relay.lobby.remove(&link.node);
+    const room = link.room orelse return relay.leaveLobby(link);
+    // Let go of: mentioned again, it's not in the lobby, which `leaveLobby` catches.
+    link.room = null;
     var w = relay.frameWriter();
     if (room.host == link) {
         log.info("{f}: the host left room {s}; it ends unless the host is back in {d} s", .{ who(link), room.shortID(), @divFloor(relay.host_grace, 1000) });
@@ -528,7 +542,8 @@ fn forget(relay: *Relay, link: *Link) void {
         for (room.guests.items) |g| relay.out.send(g.link, left);
         return;
     }
-    const g = room.remove(link) orelse return;
+    // A link with a room is its host or one of its guests: every way out clears `link.room`.
+    const g = room.remove(link) orelse unreachable;
     log.info("{f}: {s} left room {s}", .{ who(link), room.clients.items[g.client].name.slice(), room.shortID() });
     room.trim();
     relay.sendToEveryone(room, null, w.finish(.left, 0, g.peer));
@@ -544,10 +559,12 @@ fn endWith(relay: *Relay, room: *Room, bye_frame: []const u8) void {
     if (room.host) |host| {
         relay.out.send(host, bye_frame);
         relay.out.close(host);
+        host.room = null;
     }
     for (room.guests.items) |g| {
         relay.out.send(g.link, bye_frame);
         relay.out.close(g.link);
+        g.link.room = null;
     }
     relay.free(room);
 }
@@ -670,6 +687,14 @@ pub const Room = struct {
         room.clients.appendAssumeCapacity(.{ .id = .init(id), .peer = room.next_peer });
         room.next_peer += 1;
         return room.clients.items.len - 1;
+    }
+
+    /// What catching up relies on: `latest` leaves room for the next seq, the snapshot isn't past it, and the log's
+    /// frames are consecutive and end at it.
+    fn checkSeqs(room: *const Room) void {
+        assert(room.latest < std.math.maxInt(u64));
+        if (room.snapshot) |snapshot| assert(wire.seqOf(snapshot) <= room.latest);
+        if (room.log.first()) |frame| assert(wire.seqOf(frame) + (room.log.count - 1) == room.latest);
     }
 
     /// The log keeps everything back to the older of the snapshot and the oldest guest's last change: frames no one
