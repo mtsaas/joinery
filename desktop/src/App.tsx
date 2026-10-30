@@ -1,8 +1,12 @@
 // The window: the library beside the canvas, the toolbar over it, and panels as they're opened.
 import { useEffect, useState } from "preact/hooks";
 import { core } from "./core.ts";
-import { Canvas, canvas, onZoom } from "./canvas/Canvas.tsx";
+import { Canvas, canvas, onZoom, redraw } from "./canvas/Canvas.tsx";
 import { CellEditor, type Editing } from "./canvas/CellEditor.tsx";
+import { cancelUntangle, currentUntangling, handleKey, onUntangle, refreshFocus, ui } from "./canvas/commands.ts";
+import { Designer } from "./canvas/Designer.tsx";
+import { Minimap } from "./canvas/Minimap.tsx";
+import { Palette } from "./canvas/Palette.tsx";
 import { ContextMenu, type Menu } from "./panels/ContextMenu.tsx";
 import { Panels } from "./panels/Panels.tsx";
 import { Sidebar } from "./panels/Sidebar.tsx";
@@ -12,6 +16,29 @@ export function App() {
   const state = useStore();
   const [editing, setEditing] = useState<Editing | null>(null);
   const [menu, setMenu] = useState<Menu | null>(null);
+  const [palette, setPalette] = useState(false);
+  const [designing, setDesigning] = useState<string | null>(null);
+  const [minimap, setMinimap] = useState(() => localStorage.getItem("showsMinimap") !== "0");
+
+  useEffect(() => {
+    Object.assign(ui, {
+      editCell: (table: string, column: string | null, part: "name" | "type" | null) => setEditing({ table, column, part }),
+      openDesigner: setDesigning,
+      openPalette: () => setPalette(true),
+      toggleMinimap: () => setMinimap((shown) => {
+        localStorage.setItem("showsMinimap", shown ? "0" : "1");
+        return !shown;
+      }),
+    });
+    const onKey = (e: KeyboardEvent) => void handleKey(e);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  // The canvas draws on its own, as things move; a change made elsewhere (a panel, the palette, an assistant) redraws it.
+  useEffect(() => {
+    refreshFocus();
+    redraw();
+  }, [state.revision]);
 
   return (
     <div class="window">
@@ -22,9 +49,14 @@ export function App() {
           <Canvas
             onEditCell={(table, column, part) => setEditing({ table, column, part })}
             onContextMenu={(hit, at) => setMenu({ hit, at })}
+            onOpenDesigner={setDesigning}
           />
           {editing && <CellEditor editing={editing} onDone={() => setEditing(null)} />}
           {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
+          {state.scene && minimap && <Minimap />}
+          {state.scene && designing && <Designer table={designing} onClose={() => setDesigning(null)} />}
+          {palette && <Palette onClose={() => setPalette(false)} />}
+          <UntangleBar />
           <Panels />
           {!state.scene && <Empty />}
           {state.scene?.reviewing && <ReviewBar summary={state.scene.summary} />}
@@ -73,6 +105,21 @@ function Toolbar() {
         </>
       )}
     </header>
+  );
+}
+
+/** While untangling: how far along, and how many crossings it's got down to. */
+function UntangleBar() {
+  const [, rerender] = useState(0);
+  useEffect(() => onUntangle(() => rerender((n) => n + 1)), []);
+  const untangling = currentUntangling();
+  if (!untangling) return null;
+  return (
+    <div class="review-bar untangle-bar" role="status">
+      <span>Untangling: {untangling.starting} crossings → {untangling.best}</span>
+      <progress value={untangling.progress} max={1} />
+      <button onClick={cancelUntangle}>Stop</button>
+    </div>
   );
 }
 

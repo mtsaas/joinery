@@ -2,6 +2,7 @@
 import { useEffect } from "preact/hooks";
 import { edit, type Point } from "../core.ts";
 import { canvas, clearSelection, deleteSelection, redraw } from "../canvas/Canvas.tsx";
+import { ui } from "../canvas/commands.ts";
 import type { Hit } from "../canvas/hit.ts";
 import { act, getState } from "../store.ts";
 import { colorNames } from "../theme.ts";
@@ -42,6 +43,10 @@ export function ContextMenu({ menu, onClose }: { menu: Menu; onClose: () => void
     items.push("-");
   }
   if (tables.length) {
+    if (h.kind === "header" || h.kind === "cell") {
+      const id = h.table.id;
+      items.push({ title: "Open in Designer", run: () => ui.openDesigner(id) });
+    }
     if (h.kind === "header") items.push({ title: "Add Column", run: () => edit("addColumn", { table: h.table.id, after: h.table.columns.at(-1)?.id ?? null }) });
     if (tables.length > 1) {
       items.push({ title: "Group as Schema", run: () => edit("group", { tables }) });

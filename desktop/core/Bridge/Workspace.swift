@@ -125,8 +125,23 @@ enum Events {
     }
 }
 
+/// `object` as JSON, or "null". Wrapped in an array, as JSONSerialization traps (taking the whole module with it) on a
+/// top-level value that isn't an array or a dictionary, such as `NSNull()`.
 func json(_ object: Any) -> String {
-    (try? JSONSerialization.data(withJSONObject: object)).map { String(decoding: $0, as: UTF8.self) } ?? "null"
+    guard let data = try? JSONSerialization.data(withJSONObject: [writable(object)]) else { return "null" }
+    return String(decoding: data.dropFirst().dropLast(), as: UTF8.self)
+}
+
+/// What JSONSerialization can write everywhere: off Apple's platforms CGFloat is a type of its own it can't, so it's
+/// made a Double; and a number that isn't finite, which it can't write anywhere, is null.
+private func writable(_ value: Any) -> Any {
+    switch value {
+    case let number as CGFloat: number.isFinite ? Double(number) : NSNull()
+    case let number as Double: number.isFinite ? number : NSNull()
+    case let array as [Any]: array.map(writable)
+    case let dictionary as [String: Any]: dictionary.mapValues(writable)
+    default: value
+    }
 }
 
 func object(_ text: String) -> [String: Any] {

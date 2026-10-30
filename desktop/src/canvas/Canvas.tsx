@@ -33,9 +33,11 @@ type Drag =
 
 const minZoom = 0.1, maxZoom = 3;
 
-export function Canvas({ onEditCell, onContextMenu }: {
+export function Canvas({ onEditCell, onContextMenu, onOpenDesigner }: {
   onEditCell?: (table: string, column: string | null, part: "name" | "type" | null) => void;
   onContextMenu?: (hit: Hit, at: Point) => void;
+  /** Double-clicking a table's grip opens it in the designer. */
+  onOpenDesigner?: (table: string) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -283,7 +285,8 @@ export function Canvas({ onEditCell, onContextMenu }: {
       if (!scene) return;
       const p = toCanvas(e);
       const h = hit(p);
-      if (h.kind === "header" && !h.grip) onEditCell?.(h.table.id, null, null);
+      if (h.kind === "header" && h.grip) onOpenDesigner?.(h.table.id);
+      else if (h.kind === "header") onEditCell?.(h.table.id, null, null);
       else if (h.kind === "cell" && h.part !== "key") onEditCell?.(h.table.id, h.column, h.part);
       else if (h.kind === "cell" && h.part === "key") {
         const column = h.table.columns[h.row];
