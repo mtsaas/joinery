@@ -15,6 +15,8 @@ struct TableDesigner: View {
     @Binding var command: CanvasController.DesignerCommand?
     /// Set while the focus is in a grid, so Tab is caught for it.
     @Binding var isInGrid: Bool
+    /// Only to look at, as when comparing versions.
+    var isReadOnly = false
     /// As wide as it can be, in the window as it is.
     var maxWidth: CGFloat = .infinity
     let close: () -> Void
@@ -45,9 +47,10 @@ struct TableDesigner: View {
                     .padding(.horizontal, Self.inset)
                     .padding(.bottom, Self.inset)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .disabled(isReadOnly)
                 }
                 .scrollEdgeEffectStyle(.soft, for: .top)
-                hints
+                if !isReadOnly { hints }
             }
             .frame(width: shownWidth)
             .frame(maxHeight: .infinity)
@@ -65,7 +68,7 @@ struct TableDesigner: View {
             .onChange(of: command) {
                 guard let command else { return }
                 self.command = nil
-                perform(command, in: table)
+                if !isReadOnly { perform(command, in: table) }
             }
         }
     }
@@ -118,6 +121,7 @@ struct TableDesigner: View {
             }
             .font(.title2.weight(.semibold))
             .textFieldStyle(.plain)
+            .disabled(isReadOnly)
             Spacer()
             Button(action: close) {
                 Image(systemName: "xmark")
@@ -151,18 +155,21 @@ struct TableDesigner: View {
             .overlay(RoundedRectangle(cornerRadius: Self.cardRadius).strokeBorder(.separator.opacity(0.5), lineWidth: 0.5))
     }
 
-    /// A row at the end of a card that adds another.
+    /// A row at the end of a card that adds another; none when read-only.
+    @ViewBuilder
     private func addRow(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: "plus.circle.fill")
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(.tint)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .contentShape(.rect)
+        if !isReadOnly {
+            Button(action: action) {
+                Label(title, systemImage: "plus.circle.fill")
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.tint)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
         }
-        .buttonStyle(.plain)
     }
 
     private func columns(_ table: Table) -> some View {
@@ -185,7 +192,7 @@ struct TableDesigner: View {
                     }
                 }
                 .padding(.horizontal, 6)
-                Divider()
+                if !isReadOnly { Divider() }
                 addRow("Add Column") { addColumn(after: table.columns.last?.id, focusing: DesignerField.name) }
             }
         }
@@ -280,7 +287,7 @@ struct TableDesigner: View {
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Divider()
+                if !isReadOnly { Divider() }
                 addRow("Add Row") { insertRow(at: table.samples.count, column: table.columns.first?.id) }
             }
             .clipShape(.rect(cornerRadius: Self.cardRadius))

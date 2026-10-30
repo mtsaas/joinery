@@ -89,7 +89,8 @@ Other assistants can use the same URL. Those that only run local commands can br
 | Tool | Does |
 | --- | --- |
 | `list_models`, `open_model`, `new_model` | Choose what to work on |
-| `start_review`, `mark_baseline`, `get_changes` | Review a schema change: see below |
+| `start_review` | Starts reviewing a schema change: see below |
+| `save_version`, `list_versions`, `compare`, `restore_version`, `delete_version` | Named versions, such as `main` and `draft 1`, and what changed between any two: see below |
 | `get_model` | Every table, column, type, key and foreign key, and where everything is: each table's and schema's frame, and the bounds of it all |
 | `create_tables` | Adds tables. A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole data model can be made in one call. They're placed in open space, clear of every table and schema: a schema's new tables as a compact block beside the rest of it, otherwise beside the tables they reference, otherwise beside everything |
 | `set_sample_data` | Fills a table's sample data (the spreadsheet in its designer) with rows of column name to value, replacing or appending. `create_tables` takes `sample_rows` and `notes` too, `alter_table` takes `notes`, and `get_model` returns both |
@@ -107,10 +108,24 @@ Ask an assistant to show how a pull request, branch or uncommitted change alters
 
 1. `start_review` makes an empty data model, named for the change, in a Reviews collection, and opens it.
 2. The assistant draws the tables the change touches as they were before it, with those their foreign keys join, using `create_tables`, then `arrange`.
-3. `mark_baseline` takes that as the before. It's kept in the package, as `baseline.json`.
+3. `save_version` saves that as the base, named for it, such as `main`.
 4. The assistant makes the change with the editing tools. A rename is made as a rename, so it shows as one.
-5. `get_changes` lists what changed since the baseline, for the assistant to check and sum up.
+5. `compare` from `main` to `current` (the data model as it is now) lists what changed, for the assistant to check and sum up, and shows it in the window.
 
-From the baseline on, the canvas shows the comparison bar: Before, Changes and After, read-only. The view follows the assistant's changes until you pan or zoom. End Review leaves the data model as it is after the change, to edit, and keeps the change in the version history as a review: picking it there shows the change as it was reviewed, Before, Changes and After, however much you've edited since. Reviews are never thinned out.
+When the change is updated later, such as new commits on the pull request, the assistant opens the same review, saves the state reviewed so far (`draft 1`), makes only what's new, and compares any pair: `main` to `draft 1`, `draft 1` to `current`, `main` to `current`.
+
+### Named versions
+
+A data model can keep any number of named versions, each the whole model as it was when saved under that name. They're only saved and deleted on purpose, never thinned out, and kept in the package, in `named-versions.json`, so they go where it goes.
+
+- `save_version` saves the model as it is under a name. A name already used isn't saved over unless asked.
+- `list_versions` lists them, oldest first, with what changed from each to the next, and how the model as it is now stands.
+- `compare` lists what changed from one to another, either side a version or `current`, and shows it in the window.
+- `restore_version` makes the model as a version is, to try something else from there. It can be undone, and it won't lose changes saved in no version unless told to.
+- `delete_version` deletes one; `get_model` with `version` reads one.
+
+While two are compared, the canvas shows the comparison bar: Before, Changes and After, and From and To menus to pick another pair. You can move tables, zip-tie wires and change table and group colors in whatever version is shown, and open tables in the designer to read them, but not change its schema; each change is kept in that version (in Changes, a table removed since belongs to the earlier version, and every other table to the later one). The same goes for versions picked from Version History. A comparison with now follows the assistant's changes as they're made, and the view follows them until you pan or zoom. Version History lists the named versions first; picking one compares it with now. The ⊗ button ends the comparison and goes back to editing the data model as it is. The named versions stay, and the change compared is kept in the version history too, as a review: picking it there shows the change as it was, however much you've edited since. Reviews are never thinned out.
+
+A review from before named versions, with its `baseline.json`, becomes a named version called `Before`, compared with now, when it's next opened.
 
 Building, testing and releasing Joinery are in [development.md](development.md).

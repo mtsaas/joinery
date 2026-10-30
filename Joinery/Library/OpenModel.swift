@@ -27,33 +27,105 @@ final class OpenModel {
         replica = Replica(model)
         // A file from before packages becomes one, to keep versions in.
         if !url.isPackage { try model.write(to: url) }
-        baseline = try? DataModel(contentsOf: baselineURL)
+        named = Self.readNamed(in: url)
         saveVersion("Opened")
     }
 
-    // MARK: Reviews
+    // MARK: Named versions
 
-    /// Reviewing a change, such as a pull request's: the model as it was before it, to compare with as it is. Kept in
-    /// the package, so the review survives quitting.
-    private(set) var baseline: DataModel?
-    private var baselineURL: URL { url.appending(path: "baseline.json") }
+    /// Its named versions, such as "main" and "draft 1", and which two are compared. Kept in the package, so a
+    /// comparison survives quitting.
+    private(set) var named = NamedVersions()
+    private static func namedURL(in url: URL) -> URL { url.appending(path: NamedVersions.fileName) }
+    /// Where a review's baseline was kept before named versions.
+    private static func baselineURL(in url: URL) -> URL { url.appending(path: "baseline.json") }
 
-    /// Takes the model as it is now as the baseline: what's changed from here is shown as changes.
-    func markBaseline() throws {
+    /// The package's named versions; a review's baseline from before them becomes one, compared with now.
+    private static func readNamed(in url: URL) -> NamedVersions {
+        if let data = try? Data(contentsOf: namedURL(in: url)), let named = try? NamedVersions(fileData: data) { return named }
+        let baseline = baselineURL(in: url)
+        guard let before = try? DataModel(contentsOf: baseline) else { return NamedVersions() }
+        let date = (try? baseline.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .now
+        let named = NamedVersions.migrating(baseline: before, at: date)
+        if (try? named.fileData.write(to: namedURL(in: url), options: .atomic)) != nil { try? FileManager.default.removeItem(at: baseline) }
+        return named
+    }
+
+    /// Changes the named versions or what's compared, and writes them into the package.
+    func setNamed(_ new: NamedVersions) throws {
+        guard new != named else { return }
         saveNow()
-        try model.fileData.write(to: baselineURL, options: .atomic)
-        baseline = model
+        let file = Self.namedURL(in: url)
+        if new.isEmpty {
+            if FileManager.default.fileExists(atPath: file.path) { try FileManager.default.removeItem(at: file) }
+        } else {
+            try new.fileData.write(to: file, options: .atomic)
+        }
+        named = new
+    }
+
+    /// Compares two versions in the window, or stops comparing with nil.
+    func compare(_ comparison: NamedVersions.Comparison?) {
+        var new = named
+        new.comparison = comparison
+        do {
+            try setNamed(new)
+        } catch {
+            Library.shared.failure = "Couldn't change what's compared: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: Layout while comparing
+
+    /// A version that can be laid out while it's shown: the model as it is, a named version, or one kept in the
+    /// version history (its file).
+    enum Laid: Equatable {
+        case current
+        case named(String)
+        case history(URL)
+    }
+
+    /// Lays `target` out as `shown` is, keeping it as it is but for that: where tables are, and the zip ties; with
+    /// `only`, just those tables. The model as it is changes undoably; a version's file is written over.
+    /// - Returns: The version as laid out now.
+    @discardableResult
+    func layOut(_ target: Laid, as shown: DataModel, only: Set<Table.ID>? = nil) -> DataModel? {
+        switch target {
+        case .current:
+            change(to: model.takingLayout(from: shown, only: only))
+            return model
+        case .named(let name):
+            if NamedVersions.isCurrent(name) { return layOut(.current, as: shown, only: only) }
+            guard let saved = named.version(named: name)?.model else { return nil }
+            let laid = saved.takingLayout(from: shown, only: only)
+            var new = named
+            new.update(name, to: laid)
+            do { try setNamed(new) } catch {
+                Library.shared.failure = "Couldn't keep the layout: \(error.localizedDescription)"
+                return nil
+            }
+            return laid
+        case .history(let url):
+            guard let saved = try? DataModel(contentsOf: url) else { return nil }
+            let laid = saved.takingLayout(from: shown, only: only)
+            do { try laid.fileData.write(to: url, options: .atomic) } catch {
+                Library.shared.failure = "Couldn't keep the layout: \(error.localizedDescription)"
+                return nil
+            }
+            return laid
+        }
     }
 
     /// Why a review's version was kept.
     static let reviewReason = "Reviewed change"
 
-    /// Ends the review: the model stays as it is, and the baseline is forgotten here, but kept in a version with the
-    /// model as it is, so the change can always be seen as it was reviewed.
-    func endReview() {
-        if let baseline, baseline != model { try? history.save(model, reason: Self.reviewReason, before: baseline) }
-        try? FileManager.default.removeItem(at: baselineURL)
-        baseline = nil
+    /// Stops comparing. The named versions stay, and the change compared is kept in the version history too, so it can
+    /// be seen there as it was reviewed.
+    func endComparison() {
+        if let (before, after) = named.compared(current: model), before != after {
+            try? history.save(after, reason: Self.reviewReason, before: before)
+        }
+        compare(nil)
     }
 
     var name: String { Library.name(of: url) }

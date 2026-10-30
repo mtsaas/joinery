@@ -65,15 +65,39 @@ struct ModelEditor: View {
     @State private var comparison = Comparison.changes
     @Environment(\.undoManager) private var undoManager
 
+    /// Lays out a version compared as `shown` is, and shows it as it is now if it's the version history's.
+    private func layOut(_ target: OpenModel.Laid, as shown: DataModel, only: Set<Table.ID>? = nil) {
+        guard let laid = open.layOut(target, as: shown, only: only), case .history(let url) = target, var preview else { return }
+        if url == preview.version.url { preview.model = laid } else { preview.before = laid }
+        self.preview = preview
+    }
+
     var body: some View {
-        // Compared with an earlier version, or in a review with how it was before the change, it can't be changed:
-        // it's only there to look at. A review's version shows its own change, before and after, not how it is now.
-        let (before, after) = preview.map { preview in preview.before.map { ($0, preview.model) } ?? (preview.model, open.model) }
-            ?? (open.baseline, open.model)
+        // Compared with an earlier version, or two named versions compared, only the layout can change, and each table
+        // moved is kept where it is in the version it's shown from. A review's version shows its own change, before
+        // and after, not how it is now.
+        let compared = open.named.compared(current: open.model)
+        let (before, after): (DataModel?, DataModel) = preview.map { preview in preview.before.map { ($0, preview.model) } ?? (preview.model, open.model) }
+            ?? (compared?.before, compared?.after ?? open.model)
         let diff = before.flatMap { comparison == .changes ? SchemaDiff(from: $0, to: after) : nil }
         let shown = before.map { comparison == .then ? $0 : diff?.model ?? after }
         let isComparing = before != nil
-        let model = Binding { shown ?? canvas.shown(open.model) } set: { if !isComparing { open.change(to: $0) } }
+        // The versions compared, to lay out: earlier and later.
+        let sides: (from: OpenModel.Laid, to: OpenModel.Laid)? = if let preview {
+            preview.before != nil ? (.history(preview.version.beforeURL), .history(preview.version.url)) : (.history(preview.version.url), .current)
+        } else if let named = open.named.comparison {
+            (.named(named.from), .named(named.to))
+        } else {
+            nil
+        }
+        let model = Binding { shown ?? canvas.shown(open.model) } set: { new in
+            guard isComparing, let sides else { return open.change(to: new) }
+            canvas.stopFitting()
+            if comparison == .then { return layOut(sides.from, as: new) }
+            layOut(sides.to, as: new)
+            // Tables removed since are only in the earlier version.
+            if comparison == .changes, let diff { layOut(sides.from, as: new, only: Set(diff.tables.filter { $0.value == .removed }.keys)) }
+        }
         CanvasView(model: model, canvas: canvas, diff: diff)
             .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { canvasOrigin = $0 }
             // Under the toolbar, which floats over it, but not the sidebar, so fitting the model fits what's visible.
@@ -120,10 +144,8 @@ struct ModelEditor: View {
                         .disabled(canvas.selectedTablesAndMembers(in: model.wrappedValue).isEmpty)
                     }
                     .help("Lay the selected tables out afresh, or every table with none selected; ⌘Z puts them back")
-                    .disabled(isComparing)
                     Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)
                         .help("Zip-tie tool: drag across wires to tie them (Z)")
-                        .disabled(isComparing)
                     Toggle("Focus", systemImage: "scope", isOn: Binding { canvas.isFocusing } set: { _ in
                         canvas.toggleFocus(in: model.wrappedValue)
                     })
@@ -163,27 +185,27 @@ struct ModelEditor: View {
                 if let preview, preview.before != nil {
                     let when = "\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened))"
                     ComparisonBar(comparison: $comparison, isReview: true, endsReview: false,
-                                  caption: diff.map { "Reviewed \(when): \($0.summary)" } ?? "\(comparison == .then ? "Before" : "After") the change reviewed \(when), read-only") {
+                                  caption: diff.map { "Reviewed \(when): \($0.summary)" } ?? "\(comparison == .then ? "Before" : "After") the change reviewed \(when)") {
                         self.preview = nil
                     }
                     .padding(.bottom, 20)
                 } else if let preview {
                     let when = "\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened))"
                     ComparisonBar(comparison: $comparison, isReview: false, endsReview: false,
-                                  caption: diff.map { "\(when) to now: \($0.summary)" } ?? "\(comparison == .then ? when : "Now"), read-only") {
+                                  caption: diff.map { "\(when) to now: \($0.summary)" } ?? (comparison == .then ? when : "Now")) {
                         self.preview = nil
                     }
                     .padding(.bottom, 20)
-                } else if open.baseline != nil {
-                    ComparisonBar(comparison: $comparison, isReview: true, endsReview: true,
-                                  caption: diff.map { "Review: \($0.summary)" } ?? "\(comparison == .then ? "Before" : "After") the change, read-only") {
-                        open.endReview()
+                } else if let compared = open.named.comparison {
+                    ComparisonBar(comparison: $comparison, isReview: true, endsReview: true, caption: nil,
+                                  versions: (open.named.names, Binding { compared } set: { open.compare($0) })) {
+                        open.endComparison()
                     }
                     .padding(.bottom, 20)
                 }
             }
-            // Comparing, it's only there to look at.
-            .onChange(of: isComparing, initial: true) { canvas.isReadOnly = isComparing }
+            // Comparing, it's only there to look at and lay out.
+            .onChange(of: isComparing, initial: true) { canvas.isLayoutOnly = isComparing }
             // Filled from empty, or changing while compared (by an assistant, in a review), it stays in view, unless
             // panned or zoomed since.
             .onChange(of: model.wrappedValue.bounds) { old, new in
@@ -298,25 +320,38 @@ private struct ComparisonBar: View {
     @Binding var comparison: Comparison
     /// Reviewing a change, before and after it, rather than looking at an earlier version.
     let isReview: Bool
-    /// The review open now, which Done ends, rather than one kept in the version history.
+    /// The comparison open now, which ending stops, rather than a version kept in the version history.
     let endsReview: Bool
-    let caption: String
+    let caption: String?
+    /// Comparing named versions: their names, and which two are compared, to pick others.
+    var versions: (names: [String], compared: Binding<NamedVersions.Comparison>)?
     let done: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: isReview ? "plus.forwardslash.minus" : "clock.arrow.circlepath")
+            if endsReview {
+                Button(action: done) {
+                    Label("End Comparison", systemImage: "xmark.circle.fill").labelStyle(.iconOnly)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Stop comparing, to edit the data model as it is now. The named versions stay, and the change compared is kept in the version history too")
+            } else {
+                Image(systemName: isReview ? "plus.forwardslash.minus" : "clock.arrow.circlepath")
+            }
             Picker("Compare", selection: $comparison) {
                 ForEach(Comparison.allCases, id: \.self) { Text($0.title(isReview: isReview)) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            Text(caption).monospacedDigit()
-            if endsReview {
-                Button("End Review", action: done)
-                    .help("Stop comparing: keep the data model as it is after the change, to edit. The change stays in the version history, to look at again")
-            } else {
+            if let versions {
+                versionPicker("From", versions.names, versions.compared.from)
+                Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                versionPicker("To", versions.names, versions.compared.to)
+            }
+            if let caption { Text(caption).monospacedDigit() }
+            if !endsReview {
                 Button("Done", action: done)
                     .keyboardShortcut(.cancelAction)
                     .help("Back to editing the data model as it is now (Escape)")
@@ -326,6 +361,18 @@ private struct ComparisonBar: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
         .glassEffect()
+    }
+
+    /// A menu of the named versions and now, the model as it is.
+    private func versionPicker(_ title: String, _ names: [String], _ selection: Binding<String>) -> some View {
+        Picker(title, selection: selection) {
+            ForEach(names, id: \.self) { Text($0) }
+            Divider()
+            Text("Now").tag(NamedVersions.current)
+        }
+        .labelsHidden()
+        .fixedSize()
+        .help(title == "From" ? "The earlier version compared" : "The later version compared")
     }
 }
 

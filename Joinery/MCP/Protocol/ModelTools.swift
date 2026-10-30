@@ -31,8 +31,8 @@ enum ModelTools {
     nonisolated(unsafe) static let definitions: [[String: Any]] = [
         [
             "name": "get_model",
-            "description": "The open data model: its schemas, and every table with its schema, its columns (type, primary key, nullable, unique), the foreign keys between them, and its notes and sample rows, if it has any. Columns not marked nullable are required. Also where everything is on the canvas, in points (y grows downward): each table's and schema's frame [x, y, width, height], and the bounds of it all. Read this before changing anything.",
-            "inputSchema": ["type": "object", "properties": [String: Any]()],
+            "description": "The open data model: its schemas, and every table with its schema, its columns (type, primary key, nullable, unique), the foreign keys between them, and its notes and sample rows, if it has any. Columns not marked nullable are required. Also where everything is on the canvas, in points (y grows downward): each table's and schema's frame [x, y, width, height], and the bounds of it all. Read this before changing anything. With version, a named version instead (see list_versions), without changing anything.",
+            "inputSchema": ["type": "object", "properties": ["version": ["type": "string", "description": "A named version to read instead of the model as it is."]]],
             "annotations": ["readOnlyHint": true],
         ],
         [

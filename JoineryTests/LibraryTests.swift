@@ -157,12 +157,16 @@ struct LibraryTests {
         library.selection = examples.models.first { Library.name(of: $0) == "Storefront" }
         let open = try #require(library.open)
         let before = open.model
-        try open.markBaseline()
+        var named = open.named
+        named.save(before, as: "main")
+        named.comparison = .init(from: "main", to: NamedVersions.current)
+        try open.setNamed(named)
         var after = before
         after.tables[0].name = "renamed_by_the_change"
         open.change(to: after, byAssistant: true)
-        open.endReview()
-        #expect(open.baseline == nil)
+        open.endComparison()
+        #expect(open.named.comparison == nil)
+        #expect(open.named.names == ["main"], "the versions stay")
 
         // Edited since, the reviewed version still holds the change, both sides of it.
         var edited = after
@@ -197,5 +201,93 @@ struct LibraryTests {
         try history.save(model, reason: "While editing")
         // Ten days old, only the day's earliest stays, and the one saved with ⌘S, though it isn't the earliest.
         #expect(history.versions.map(\.reason) == ["While editing", "Saved", "Opened"])
+    }
+
+    @Test func namedVersionsAndTheirComparisonAreKeptInThePackage() throws {
+        let library = freshLibrary()
+        let examples = try #require(library.collections.first { $0.name == Library.examplesName })
+        let url = try #require(examples.models.first { Library.name(of: $0) == "Storefront" })
+        library.selection = url
+        let open = try #require(library.open)
+        var named = open.named
+        named.save(open.model, as: "main")
+        named.comparison = .init(from: "main", to: NamedVersions.current)
+        try open.setNamed(named)
+        let reopened = try OpenModel(url: url)
+        #expect(reopened.named == named)
+        #expect(reopened.named.compared(current: reopened.model)?.before == open.model)
+        // Nothing left, the file goes.
+        try open.setNamed(NamedVersions())
+        #expect(!FileManager.default.fileExists(atPath: url.appending(path: NamedVersions.fileName).path))
+    }
+
+    @Test func layingOutAVersionKeepsTheLayoutInItAndNothingElse() throws {
+        let library = freshLibrary()
+        let examples = try #require(library.collections.first { $0.name == Library.examplesName })
+        let url = try #require(examples.models.first { Library.name(of: $0) == "Storefront" })
+        library.selection = url
+        let open = try #require(library.open)
+        var named = open.named
+        named.save(open.model, as: "main")
+        try open.setNamed(named)
+        let saved = try #require(open.named.version(named: "main"))
+        let now = open.model
+
+        // Moving a table, coloring it and renaming it, as shown: only the move and color count, and only there.
+        var shown = saved.model
+        shown.tables[0].position.x += 300
+        shown.tables[0].color = shown.tables[0].color == .red ? .blue : .red
+        shown.tables[0].name = "renamed"
+        let laid = try #require(open.layOut(.named("Main"), as: shown))
+        #expect(laid.tables[0].position == shown.tables[0].position && laid.tables[0].color == shown.tables[0].color)
+        #expect(laid.tables[0].name == saved.model.tables[0].name)
+        let version = try #require(open.named.version(named: "main"))
+        #expect(version.model == laid && version.date == saved.date && open.named.names == ["main"])
+        #expect(open.model == now)
+        #expect(try OpenModel(url: url).named.version(named: "main") == version, "kept in the package")
+
+        // A group's color too.
+        var grouped = laid
+        grouped.groups.append(TableGroup(name: "sales", color: .green))
+        grouped.tables[0].group = grouped.groups[0].id  // A group with no tables isn't kept.
+        var recolored = grouped
+        recolored.groups[0].color = .pink
+        #expect(grouped.takingLayout(from: recolored).groups.first?.color == .pink)
+
+        // With `only`, just those tables.
+        var both = laid
+        both.tables[0].position.y += 50
+        both.tables[1].position.y += 50
+        let one = try #require(open.layOut(.named("main"), as: both, only: [both.tables[1].id]))
+        #expect(one.tables[0].position == laid.tables[0].position && one.tables[1].position == both.tables[1].position)
+
+        // A version in the version history: its file.
+        let old = try #require(open.history.versions.first)
+        var moved = try DataModel(contentsOf: old.url)
+        moved.tables[0].position.y += 120
+        open.layOut(.history(old.url), as: moved)
+        #expect(try DataModel(contentsOf: old.url).tables[0].position == moved.tables[0].position)
+        #expect(open.model == now)
+
+        // Now, the model as it is, undoably.
+        open.layOut(.named(NamedVersions.current), as: moved)
+        #expect(open.model.tables[0].position == moved.tables[0].position)
+    }
+
+    @Test func aReviewsBaselineFromBeforeNamedVersionsBecomesOne() throws {
+        let library = freshLibrary()
+        let examples = try #require(library.collections.first { $0.name == Library.examplesName })
+        let url = try #require(examples.models.first { Library.name(of: $0) == "Storefront" })
+        _ = try OpenModel(url: url)  // Made a package, as opening any model from before packages does.
+        var before = try DataModel(contentsOf: url)
+        before.tables.removeLast()
+        before.repair()  // As reading it back does: no keys to the table gone.
+        try before.fileData.write(to: url.appending(path: "baseline.json"))
+        let open = try OpenModel(url: url)
+        #expect(open.named.names == [NamedVersions.migratedName])
+        #expect(open.named.comparison == .init(from: NamedVersions.migratedName, to: NamedVersions.current))
+        #expect(open.named.compared(current: open.model)?.before == before)
+        #expect(!FileManager.default.fileExists(atPath: url.appending(path: "baseline.json").path))
+        #expect(try OpenModel(url: url).named == open.named, "and it stays one")
     }
 }

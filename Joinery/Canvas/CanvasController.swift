@@ -209,19 +209,20 @@ final class CanvasController {
     var offset = CGPoint.zero
     /// Until the person pans or zooms, the view keeps the whole model fitted as the window resizes.
     private(set) var isFitted = true
+
+    /// The person is arranging things, so the view stays put rather than fitting what they move.
+    func stopFitting() { isFitted = false }
     private(set) var viewSize = CGSize.zero
     var selection: Set<Item> = []
-    /// Showing something that can't be changed, such as a comparison: dragging pans, and nothing is picked or edited.
-    var isReadOnly = false {
+    /// Showing something only its layout can change in, such as versions compared: tables move and wires are tied, but
+    /// no cell is edited, the designer only shows tables, and the palette and wheel leave out what would change the
+    /// schema. (Other edits are dropped by whatever keeps the layout.)
+    var isLayoutOnly = false {
         didSet {
-            guard isReadOnly else { return }
+            guard isLayoutOnly else { return }
             selection = []
             cell = nil
             isEditingCell = false
-            designing = nil
-            wheel = nil
-            isTying = false
-            showsPalette = false
             focus = nil
         }
     }

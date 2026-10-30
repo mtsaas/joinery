@@ -1063,6 +1063,11 @@ struct JoineryTests {
             var model = DataModel()
             func callLibraryTool(_ name: String, _ arguments: [String: Any]) async throws -> String { "library: \(name)" }
             func edit(_ change: (inout DataModel) throws -> String) async throws -> String { try change(&model) }
+            func withVersions(_ body: (inout VersionState) throws -> String) async throws -> String {
+                var state = VersionState(model: model, named: NamedVersions())
+                defer { model = state.model }
+                return try body(&state)
+            }
         }
         let host = Host()
         func post(_ json: String, origin: String? = nil) async throws -> String {
@@ -1087,19 +1092,19 @@ struct JoineryTests {
         }
         let initialized = try await result("initialize")
         #expect((initialized["capabilities"] as? [String: Any])?["prompts"] != nil)
-        #expect((initialized["instructions"] as? String)?.contains("mark_baseline") == true)
+        #expect((initialized["instructions"] as? String)?.contains("save_version") == true)
         let tools = try #require(try await result("tools/list")["tools"] as? [[String: Any]])
-        for name in ["start_review", "mark_baseline", "get_changes"] {
-            let description = try #require(tools.first { $0["name"] as? String == name }?["description"] as? String)
-            #expect(description.contains("Step"))
-        }
+        let names = tools.compactMap { $0["name"] as? String }
+        #expect(Set(VersionTools.names).isSubset(of: names))
+        #expect(!names.contains("mark_baseline") && !names.contains("get_changes"))
+        #expect((tools.first { $0["name"] as? String == "start_review" }?["description"] as? String)?.contains("save_version") == true)
         let prompts = try #require(try await result("prompts/list")["prompts"] as? [[String: Any]])
         #expect(prompts.map { $0["name"] as? String } == ["review_schema_changes"])
         let prompt = try await result("prompts/get", ["name": "review_schema_changes", "arguments": ["change": "PR 482"]])
         let messages = try #require(prompt["messages"] as? [[String: Any]])
         let text = try #require((messages.first?["content"] as? [String: Any])?["text"] as? String)
         // Every step, in order.
-        let steps = ["PR 482", "start_review", "create_tables", "arrange", "mark_baseline", "alter_table", "get_changes"]
+        let steps = ["PR 482", "start_review", "create_tables", "arrange", "save_version", "alter_table", "compare", "list_versions"]
         let positions = steps.map { text.range(of: $0)?.lowerBound }
         #expect(!positions.contains(nil) && positions.compactMap { $0 } == positions.compactMap { $0 }.sorted())
     }
@@ -1113,12 +1118,61 @@ struct JoineryTests {
         _ = try ModelTools.call("alter_table", ["table": "orders", "change_columns": [["name": "total", "type": "numeric", "rename_to": "amount"]],
                                                 "add_columns": [["name": "note", "type": "text?"]]], on: &after)
         _ = try ModelTools.call("create_tables", ["tables": [["name": "refunds", "columns": [["name": "order_id", "type": "uuid", "references": "orders"]]]]], on: &after)
-        let report = SchemaDiff(from: before, to: after).report
+        let report = SchemaDiff(from: before, to: after).report(from: "main", to: "current")
+        #expect(report.hasPrefix("main → current: "))
         #expect(report.contains("- refunds: order_id uuid"))
         #expect(report.contains("  ~ total integer → amount numeric"))
         #expect(report.contains("  + note text nullable"))
         #expect(report.contains("- refunds.order_id → orders.id"))
-        #expect(SchemaDiff(from: before, to: before).report == "No changes since the baseline.")
+        #expect(SchemaDiff(from: before, to: before).report(from: "main", to: "current") == "No changes from main to current.")
+    }
+
+    /// A pull request reviewed, then updated: main, the first draft and now, each compared with the others.
+    @Test func namedVersionsCompareAnyTwo() throws {
+        var state = VersionState(model: DataModel(), named: NamedVersions())
+        func call(_ name: String, _ arguments: [String: Any] = [:]) throws -> String { try VersionTools.call(name, arguments, on: &state) }
+        func edit(_ name: String, _ arguments: [String: Any]) throws { _ = try ModelTools.call(name, arguments, on: &state.model) }
+
+        #expect(throws: ModelTools.Failure.self) { try call("save_version", ["name": "main"]) }  // Nothing to save yet.
+        try edit("create_tables", ["tables": [
+            ["name": "orders", "columns": [["name": "id", "type": "uuid", "primary_key": true], ["name": "total", "type": "integer"]]],
+        ]])
+        _ = try call("save_version", ["name": "main"])
+        try edit("alter_table", ["table": "orders", "change_columns": [["name": "total", "rename_to": "amount"]]])
+        _ = try call("save_version", ["name": "Draft 1"])
+        try edit("create_tables", ["tables": [["name": "refunds", "columns": [["name": "order_id", "type": "uuid", "references": "orders"]]]]])
+
+        // Across a draft, the rename is still a rename, not a column dropped and another added.
+        let whole = try call("compare", ["from": "MAIN", "to": "current"])
+        #expect(whole.hasPrefix("main → current: 1 table added, 1 column changed"))
+        #expect(whole.contains("~ total integer → amount integer"))
+        #expect(state.named.comparison == .init(from: "main", to: "current"))
+        #expect(try call("compare", ["from": "main", "to": "draft 1"]).hasPrefix("main → Draft 1: 1 column changed"))
+        #expect(try call("compare", ["from": "draft 1", "to": "current"]).hasPrefix("Draft 1 → current: 1 table added, 1 key added"))
+
+        let listed = try call("list_versions")
+        #expect(listed.contains("- main: saved"))
+        #expect(listed.contains("- Draft 1: saved") && listed.contains("from main: 1 column changed"))
+        #expect(listed.contains("since Draft 1, 1 table added"))
+
+        // Mistakes say what there is.
+        let unknown = #expect(throws: ModelTools.Failure.self) { try call("compare", ["from": "draft 2", "to": "current"]) }
+        #expect(unknown?.message == "There's no version called “draft 2”. Versions, oldest first: main, Draft 1.")
+        #expect(throws: ModelTools.Failure.self) { try call("save_version", ["name": "main"]) }
+        #expect(throws: ModelTools.Failure.self) { try call("save_version", ["name": "Current"]) }
+
+        // Restoring would lose refunds, saved in no version, unless told to.
+        #expect(throws: ModelTools.Failure.self) { try call("restore_version", ["name": "main"]) }
+        _ = try call("save_version", ["name": "draft 2"])
+        #expect(try call("list_versions").contains("current (the data model as it is now): the same as draft 2."))
+        _ = try call("restore_version", ["name": "main"])
+        #expect(state.model.tables.map(\.name) == ["orders"])
+        #expect(try call("get_model", ["version": "draft 2"]).contains("refunds"))
+
+        _ = try call("compare", ["from": "main", "to": "current"])
+        _ = try call("delete_version", ["name": "main"])
+        #expect(state.named.names == ["Draft 1", "draft 2"])
+        #expect(state.named.comparison == nil, "it compared with main")
     }
 
     // MARK: Replication and undo
