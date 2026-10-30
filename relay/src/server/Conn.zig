@@ -8,7 +8,7 @@ const Relay = @import("../relay/Relay.zig");
 const wire = @import("../relay/wire.zig");
 const Pointers = @import("Pointers.zig");
 
-/// What every send to it touches, together: 48 bytes, so usually one cache line, two at most. Not aligned to one: the
+/// What every send to it touches, together: 56 bytes, so usually one cache line, two at most. Not aligned to one: the
 /// allocator gives over-aligned things a page each.
 hot: Hot,
 link: Relay.Link,
@@ -38,6 +38,9 @@ pub const Hot = struct {
     out: []u8,
     out_start: usize = 0,
     out_len: usize = 0,
+    /// How far into `out` it's written since its pages were last given back: what it holds in memory, as pages are
+    /// only taken as they're touched.
+    out_touched: usize = 0,
     state: enum {
         open,
         /// The relay's closed it: what's queued goes, then the socket.
@@ -58,9 +61,16 @@ pub const Hot = struct {
         assert(@sizeOf(Hot) <= std.atomic.cache_line);
     }
 
+    /// What `out_touched` would be with `n` more bytes queued: past the end, they wrap, and it's touched all of it.
+    pub fn reach(hot: *const Hot, n: usize) usize {
+        const end = (hot.out_start + hot.out_len) % hot.out.len;
+        return @max(hot.out_touched, @min(end + n, hot.out.len));
+    }
+
     /// Queues bytes after what's there. False if they don't fit: it's too far behind.
     pub fn push(hot: *Hot, bytes: []const u8) bool {
         if (hot.out_len + bytes.len > hot.out.len) return false;
+        hot.out_touched = hot.reach(bytes.len);
         const end = (hot.out_start + hot.out_len) % hot.out.len;
         const first = @min(bytes.len, hot.out.len - end);
         @memcpy(hot.out[end..][0..first], bytes[0..first]);
@@ -102,6 +112,10 @@ pub fn outSize(limits: wire.Limits) usize {
     // would make this zero, as docs/relay.md has it.
     return 2 * (@as(usize, limits.max_snapshot) + limits.log_bytes);
 }
+
+/// The front of each outbox that's kept once it's all sent: more than a turn's frames for a connection that keeps up,
+/// so only one that fell behind costs a system call to give its pages back. Still counted against the budget.
+pub const out_kept = 16 * 1024;
 
 test "the outbox wraps round its end, and turns away what doesn't fit" {
     var buffer: [8]u8 = undefined;

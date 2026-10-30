@@ -23,14 +23,15 @@ zig build -Doptimize=ReleaseSafe      # zig-out/bin/joinery-relay
 ```
 
 Flags: `--address`, `--port` (8787), `--metrics-address`, `--metrics-port` (9187), `--threads` (event loops: half the
-cores), `--batch-ms` (how long a queue waits for more before it's sent: 5), `--max-rooms` (256) and `--max-connections` (768),
-which keep what anyone can make it hold under 2 GiB at worst (raise them with its memory), and on Linux `--pin <cpu>` (loop i on CPU
-pin + i, which halves the tail latency). Prometheus metrics are at `/metrics` on their own port, which only this machine
+cores), `--batch-ms` (how long a queue waits for more before it's sent: 5), `--max-rooms` (256), `--max-connections`
+(768) and `--max-outbox-mib` (128: what's queued for connections that don't read, all together), which keep what anyone
+can make it hold under 2 GiB at worst (raise them with its memory), and on Linux `--pin <cpu>` (loop i on CPU pin + i,
+which halves the tail latency). Prometheus metrics are at `/metrics` on their own port, which only this machine
 can reach unless `--metrics-address` says otherwise.
 
 ## How much one relay holds
 
-On a 16-core Arm VM with 64 GB (Azure D16ps_v6), with the defaults but `--max-rooms` and `--max-connections` raised, and `--pin 0`. Every host sends a change a second
+On a 16-core Arm VM with 64 GB (Azure D16ps_v6), with the defaults but `--max-rooms`, `--max-connections` and `--max-outbox-mib` raised, and `--pin 0`. Every host sends a change a second
 and every guest five pointer updates a second:
 
 | Rooms | People | Delivered a second | Latency | Relay used |

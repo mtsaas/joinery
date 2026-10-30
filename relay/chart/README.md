@@ -68,6 +68,7 @@ limit) suit a few thousand people.
 | `batchMs` | `5` | How long, in ms, a connection's queue waits for more before it's sent: the same work with about 40% less CPU |
 | `maxRooms` | `256` | Rooms held at once; past it, hosts are told the relay is full. At worst each holds about 4 MiB, so raise it with `resources.limits.memory` |
 | `maxConnections` | `768` | Connections held at once; past it, new ones are closed. At worst each holds about 1 MiB of input |
+| `maxOutboxMiB` | `128` | What all the connections' outboxes hold at once, in MiB; past it, the connection queued to is dropped as too far behind, and catches up when it comes back. Sized with the two above for 2Gi |
 | `extraArgs` | `[]` | More `joinery-relay` flags |
 | `service.type` | `ClusterIP` | |
 | `service.port` | `8787` | WebSockets |

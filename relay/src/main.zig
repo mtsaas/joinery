@@ -3,7 +3,7 @@
 //!
 //!     joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]
 //!                   [--threads <half the cores>] [--pin <first CPU>] [--batch-ms 5]
-//!                   [--max-rooms 256] [--max-connections 768]
+//!                   [--max-rooms 256] [--max-connections 768] [--max-outbox-mib 128]
 //!
 //! Prometheus metrics are at http://<metrics address>:<metrics port>/metrics, on this machine only unless the metrics
 //! address says otherwise.
@@ -48,6 +48,8 @@ pub fn main(init: std.process.Init) !void {
     // the memory the relay's given.
     var max_rooms: usize = 256;
     var max_connections: usize = 768;
+    // And what connections that don't read can make it hold, queued for them, all together: what's left of 2 GiB.
+    var max_outbox_mib: usize = 128;
     var args = init.minimal.args.iterate();
     _ = args.skip();
     while (args.next()) |arg| {
@@ -68,6 +70,8 @@ pub fn main(init: std.process.Init) !void {
             max_rooms = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--max-connections")) {
             max_connections = std.fmt.parseInt(usize, value, 10) catch return usage();
+        } else if (std.mem.eql(u8, arg, "--max-outbox-mib")) {
+            max_outbox_mib = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--pin")) {
             pin = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else return usage();
@@ -95,6 +99,8 @@ pub fn main(init: std.process.Init) !void {
     for (loops) |loop| {
         loop.loops = loops;
         loop.batch_ms = batch_ms;
+        // ponytail: an even share each, like the rooms.
+        loop.out_budget = (max_outbox_mib *| (1 << 20)) / threads;
     }
     const cap = Server.limitConnections(threads, max_connections);
     std.log.info("relaying on {f} with {d} loops, up to {d} rooms and {d} connections, metrics at http://{f}/metrics", .{ address, threads, max_rooms, cap, metrics_address });
@@ -117,6 +123,6 @@ fn runLoop(loop: *Server, pin: ?usize) void {
 }
 
 fn usage() error{Usage} {
-    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n] [--max-rooms n] [--max-connections n]", .{});
+    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n] [--max-rooms n] [--max-connections n] [--max-outbox-mib n]", .{});
     return error.Usage;
 }
