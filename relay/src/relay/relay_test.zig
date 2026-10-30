@@ -175,3 +175,30 @@ test "a guest coming back on a new connection keeps its peer, and its old connec
     try testing.expectEqual(@as(usize, 1), room.guests.items.len);
     try testing.expectEqual(peer, room.guests.items[0].peer);
 }
+
+test "a host's frame at the last seq drops it, and the room still takes guests" {
+    const last = std.math.maxInt(u64);
+    var h: Harness = undefined;
+    h.init(.{});
+    defer h.deinit();
+
+    // A snapshot at the last seq: before, an ops frame or a guest's hello after it overflowed `room.latest + 1`.
+    h.receive(0, hello(.host, "", "", "", "Host", "Model"));
+    const room = h.links[0].room.?;
+    h.receive(0, makeFrame(.snapshot, last, "snapshot"));
+    try testing.expectEqualSlices(*Relay.Link, &.{&h.links[0]}, h.closed.items);
+    try testing.expectEqual(@as(u64, 0), room.latest);
+    h.receive(0, makeFrame(.ops, 1, "ops"));
+    h.receive(1, hello(.guest, &room.id, &room.guest_secret, "a", "Guest", ""));
+    try testing.expectEqual(null, h.bye(1));
+
+    // A decision at the last seq, right after a snapshot one short of it.
+    h.receive(2, hello(.host, "", "", "", "Host", "Model"));
+    const other = h.links[2].room.?;
+    h.receive(2, makeFrame(.snapshot, last - 1, "snapshot"));
+    h.receive(2, makeFrame(.ops, last, "ops"));
+    try testing.expectEqualSlices(*Relay.Link, &.{&h.links[2]}, h.closed.items);
+    try testing.expectEqual(last - 1, other.latest);
+    h.receive(3, hello(.guest, &other.id, &other.guest_secret, "b", "Guest", ""));
+    try testing.expectEqual(null, h.bye(3));
+}
