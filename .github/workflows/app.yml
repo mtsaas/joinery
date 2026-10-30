@@ -1,0 +1,31 @@
+name: App
+
+# Everything but the relay and the files release-please bumps.
+on:
+  push:
+    branches: [main]
+    paths-ignore: &ignore
+      - relay/**
+      - infra/**
+      - docs/**
+      - '**.md'
+      - version.txt
+      - .release-please-manifest.json
+      - release-please-config.json
+      - .github/workflows/relay.yml
+      - .github/workflows/release.yml
+  pull_request:
+    paths-ignore: *ignore
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and test
+        run: >
+          xcodebuild test -project Joinery.xcodeproj -scheme Joinery -destination platform=macOS
+          -derivedDataPath build/derived CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=
