@@ -23,14 +23,15 @@ zig build -Doptimize=ReleaseSafe      # zig-out/bin/joinery-relay
 ```
 
 Flags: `--address`, `--port` (8787), `--metrics-address`, `--metrics-port` (9187), `--threads` (event loops: half the
-cores), `--batch-ms` (how long a queue waits for more before it's sent: 5), `--outbox-mib` (the most all
-connections that are behind hold between them, before the one behind longest is closed: 512), and on Linux `--pin <cpu>` (loop i on CPU
+cores), `--batch-ms` (how long a queue waits for more before it's sent: 5), `--max-rooms` (256), `--max-connections` (768)
+and `--outbox-mib` (what connections that are behind hold between them, before the one behind longest is closed: 128),
+which keep what anyone can make it hold under 2 GiB at worst (raise them with its memory), and on Linux `--pin <cpu>` (loop i on CPU
 pin + i, which halves the tail latency). Prometheus metrics are at `/metrics` on their own port, which only this machine
 can reach unless `--metrics-address` says otherwise.
 
 ## How much one relay holds
 
-On a 16-core Arm VM with 64 GB (Azure D16ps_v6), with the defaults and `--pin 0`. Every host sends a change a second
+On a 16-core Arm VM with 64 GB (Azure D16ps_v6), with the defaults but `--max-rooms` and `--max-connections` raised, and `--pin 0`. Every host sends a change a second
 and every guest five pointer updates a second:
 
 | Rooms | People | Delivered a second | Latency | Relay used |

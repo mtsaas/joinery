@@ -49,6 +49,12 @@ spec:
             - {{ .Values.metrics.port | quote }}
             - --batch-ms
             - {{ .Values.batchMs | quote }}
+            - --max-rooms
+            - {{ .Values.maxRooms | quote }}
+            - --max-connections
+            - {{ .Values.maxConnections | quote }}
+            - --outbox-mib
+            - {{ .Values.outboxMib | quote }}
             {{- with .Values.threads }}
             - --threads
             - {{ . | quote }}
@@ -70,6 +76,8 @@ spec:
               path: /metrics
               port: metrics
             periodSeconds: 20
+            # A scrape on a busy relay can take more than the default second.
+            timeoutSeconds: 5
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
