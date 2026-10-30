@@ -35,6 +35,7 @@ concurrency:
   cancel-in-progress: ${{ !inputs.tag }}
 
 env:
+  SWIFT_URL: https://download.swift.org/swift-6.4.2-release/ubuntu2404/swift-6.4.2-RELEASE/swift-6.4.2-RELEASE-ubuntu24.04.tar.gz
   SWIFT_SDK: swift-6.4.2-RELEASE_wasm
   WASM_SDK_URL: https://download.swift.org/swift-6.4.2-release/wasm-sdk/swift-6.4.2-RELEASE/swift-6.4.2-RELEASE_wasm.artifactbundle.tar.gz
   WASM_SDK_CHECKSUM: 83baca83553f8c443cda7b84800912e6e709c3acd2e7ebf277794ca5836c0da5
@@ -44,10 +45,15 @@ env:
 jobs:
   # The same Swift core as the Mac app's, compiled to WebAssembly with the bridge in desktop/core.
   core:
-    runs-on: ubuntu-latest
-    container: swift:6.4.2-noble
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # swift.org's toolchain, which (unlike Xcode's) builds for WebAssembly.
+      - name: Swift
+        run: |
+          sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libedit2 libpython3-dev libsqlite3-0 libxml2-dev libz3-dev pkg-config tzdata zlib1g-dev
+          curl -fsSL "$SWIFT_URL" | sudo tar -xz -C /opt
+          echo "/opt/swift-6.4.2-RELEASE-ubuntu24.04/usr/bin" >> "$GITHUB_PATH"
       - uses: actions/cache@v4
         with:
           path: .build/wasm
