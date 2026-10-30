@@ -70,6 +70,8 @@ spec:
               path: /metrics
               port: metrics
             periodSeconds: 20
+            # A scrape on a busy relay can take more than the default second.
+            timeoutSeconds: 5
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

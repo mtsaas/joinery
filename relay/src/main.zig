@@ -82,7 +82,8 @@ pub fn main(init: std.process.Init) !void {
         loop.loops = loops;
         loop.batch_ms = batch_ms;
     }
-    std.log.info("relaying on {f} with {d} loops, metrics at http://{f}/metrics", .{ address, threads, metrics_address });
+    const cap = Server.limitConnections(threads);
+    std.log.info("relaying on {f} with {d} loops, up to {d} connections, metrics at http://{f}/metrics", .{ address, threads, cap, metrics_address });
     for (loops[1..]) |loop| {
         const thread = try std.Thread.spawn(.{}, runLoop, .{ loop, pin });
         thread.detach();
