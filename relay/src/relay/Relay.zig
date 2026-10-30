@@ -263,7 +263,7 @@ fn matches(given: []const u8, expected: Secret) bool {
 }
 
 fn attachHost(relay: *Relay, link: *Link, room: *Room) void {
-    relay.lobby.remove(&link.node);
+    relay.leaveLobby(link);
     link.room = room;
     room.host = link;
     room.host_gone = null;
@@ -281,6 +281,7 @@ fn join(relay: *Relay, link: *Link, h: wire.Hello, room: *Room) void {
             if (g.client != client) continue;
             _ = room.guests.orderedRemove(i);
             relay.out.close(g.link);
+            g.link.room = null;
             break;
         }
     }
@@ -288,7 +289,7 @@ fn join(relay: *Relay, link: *Link, h: wire.Hello, room: *Room) void {
         return relay.refuse(link, "This session is full.");
     }
     const client = known orelse room.remember(h.client);
-    relay.lobby.remove(&link.node);
+    relay.leaveLobby(link);
     link.room = room;
     const peer = room.clients.items[client].peer;
     room.clients.items[client].name = .init(h.name);
@@ -511,9 +512,13 @@ fn bye(relay: *Relay, reason: []const u8) []const u8 {
     return w.finish(.bye, 0, 0);
 }
 
-/// A connection's gone: others are told who's left.
+/// A connection's gone: others are told who's left. Nothing, for one the relay has let go of already.
 fn forget(relay: *Relay, link: *Link) void {
-    const room = link.room orelse return relay.lobby.remove(&link.node);
+    const room = link.room orelse {
+        if (link.node.prev != null or relay.lobby.first == &link.node) relay.leaveLobby(link);
+        return;
+    };
+    link.room = null;
     var w = relay.frameWriter();
     if (room.host == link) {
         log.info("{f}: the host left room {s}; it ends unless the host is back in {d} s", .{ who(link), room.shortID(), @divFloor(relay.host_grace, 1000) });
@@ -529,6 +534,12 @@ fn forget(relay: *Relay, link: *Link) void {
     relay.sendToEveryone(room, null, w.finish(.left, 0, g.peer));
 }
 
+/// Out of the lobby, with its node cleared so `forget` can tell it's not in it.
+fn leaveLobby(relay: *Relay, link: *Link) void {
+    relay.lobby.remove(&link.node);
+    link.node = .{};
+}
+
 fn end(relay: *Relay, room: *Room, reason: []const u8) void {
     relay.endWith(room, relay.bye(reason));
 }
@@ -539,10 +550,12 @@ fn endWith(relay: *Relay, room: *Room, bye_frame: []const u8) void {
     if (room.host) |host| {
         relay.out.send(host, bye_frame);
         relay.out.close(host);
+        host.room = null;
     }
     for (room.guests.items) |g| {
         relay.out.send(g.link, bye_frame);
         relay.out.close(g.link);
+        g.link.room = null;
     }
     relay.free(room);
 }

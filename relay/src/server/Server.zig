@@ -466,6 +466,8 @@ fn ownerOf(server: *const Server, message: []const u8) ?u8 {
 
 /// Gives a connection to the loop that has its room. From here on, this loop doesn't touch it.
 fn handOver(server: *Server, conn: *Conn) void {
+    // Dropped by the relay since it asked to go, as silent: closed, not handed on.
+    if (!conn.in_relay) return server.shut(conn);
     server.poller.remove(conn.fd, conn.hot.wants_write);
     conn.hot.wants_write = false;
     // Out of this relay's lobby, quietly: it hasn't joined anything here.
@@ -546,11 +548,10 @@ fn holdPointer(server: *Server, conn: *Conn, peer: u32, frame: []const u8) void 
 fn close(ptr: *anyopaque, link: *Relay.Link) void {
     const server: *Server = @ptrCast(@alignCast(ptr));
     const conn: *Conn = @fieldParentPtr("link", link);
-    if (conn.hot.state != .open) return;
-    // The relay's let go of it already.
+    // The relay's let go of it, whatever its state, lagging or leaving too: it's not told it's closed.
     if (conn.in_relay) server.counts.connections_open -= 1;
     conn.in_relay = false;
-    server.closeAfterSending(conn);
+    if (conn.hot.state == .open) server.closeAfterSending(conn);
 }
 
 // Metrics
@@ -579,4 +580,76 @@ fn respondMetrics(server: *Server, conn: *Conn, found: bool) void {
     server.queue(conn, std.fmt.bufPrint(&head, "HTTP/1.1 200 OK\r\ncontent-type: text/plain; version=0.0.4; charset=utf-8\r\ncontent-length: {d}\r\nconnection: close\r\n\r\n", .{body.buffered().len}) catch unreachable);
     server.queue(conn, body.buffered());
     server.closeAfterSending(conn);
+}
+
+test "connections the relay closes while lagging or leaving aren't told of to it again" {
+    const gpa = std.testing.allocator;
+    const pages = std.heap.page_allocator;
+    var server: Server = undefined;
+    server.gpa = gpa;
+    server.time = 0;
+    server.batch_ms = 0;
+    server.counts = .{};
+    server.conns = .{};
+    server.conn_count = 0;
+    server.dirty = .empty;
+    server.waiting = .empty;
+    server.done = .empty;
+    server.leaving = .empty;
+    const lists = [_]*std.ArrayList(*Conn){ &server.dirty, &server.waiting, &server.done, &server.leaving };
+    defer for (lists) |list| list.deinit(gpa);
+    var prng: std.Random.DefaultPrng = .init(1);
+    server.relay = .init(gpa, prng.random(), .{ .ptr = &server, .vtable = &.{ .send = relaySend, .close = close } }, .{});
+    defer server.relay.deinit();
+    // Host, guest, and one leaving for another loop. No sockets: sends to fd -1 fail, as if each had gone.
+    var conns: [3]*Conn = undefined;
+    for (&conns, 0..) |*conn, i| {
+        conn.* = try gpa.create(Conn);
+        conn.*.* = .{ .hot = .{ .out = try Relay.reserve(u8, pages, 4096) }, .link = .{ .id = i }, .fd = -1, .kind = .websocket, .in = try Relay.reserve(u8, pages, 16), .since = 0, .in_relay = true };
+        for (lists) |list| try list.ensureTotalCapacity(gpa, conns.len);
+        server.conns.append(&conn.*.node);
+        server.conn_count += 1;
+        server.counts.connections_open += 1;
+        server.relay.opened(&conn.*.link, 0);
+    }
+    const host, const guest, const leaving = conns;
+
+    var buffer: [512]u8 = undefined;
+    var w: wire.FrameWriter = .{ .buffer = &buffer };
+    w.byte(@backingInt(wire.Role.host));
+    for ([_][]const u8{ "", "", "" }) |blob| w.blob(blob);
+    w.varint(0);
+    w.varint(wire.room_version);
+    for ([_][]const u8{ "Host", "Model" }) |blob| w.blob(blob);
+    server.relay.received(&host.link, w.finish(.hello, 0, 0), 0);
+    const room = host.link.room.?;
+    w = .{ .buffer = &buffer };
+    w.raw("snapshot");
+    server.relay.received(&host.link, w.finish(.snapshot, 0, 0), 0);
+    w = .{ .buffer = &buffer };
+    w.byte(@backingInt(wire.Role.guest));
+    for ([_][]const u8{ &room.id, &room.guest_secret, "a" }) |blob| w.blob(blob);
+    w.varint(0);
+    w.varint(wire.room_version);
+    for ([_][]const u8{ "Guest", "" }) |blob| w.blob(blob);
+    server.relay.received(&guest.link, w.finish(.hello, 0, 0), 0);
+
+    // The host's outbox nearly full, so its own bye overflows it while the room ends.
+    host.hot.out_end = host.hot.out.len - 8;
+    w = .{ .buffer = &buffer };
+    w.raw("Stopped sharing.");
+    server.relay.received(&host.link, w.finish(.bye, 0, 0), 0);
+    try std.testing.expectEqual(@as(usize, 0), server.relay.roomCount());
+    try std.testing.expect(host.hot.state == .lagging and !host.in_relay);
+    try std.testing.expect(guest.hot.state == .closing and !guest.in_relay);
+
+    // Dropped as silent before the end of the turn it asked to go to another loop in.
+    leaving.hot.state = .leaving;
+    server.leaving.appendAssumeCapacity(leaving);
+    server.relay.tick(Relay.timeout + 1);
+    try std.testing.expect(!leaving.in_relay);
+
+    server.finishTurn();
+    try std.testing.expectEqual(@as(usize, 0), server.conn_count);
+    try std.testing.expectEqual(@as(u64, 0), server.counts.connections_open);
 }

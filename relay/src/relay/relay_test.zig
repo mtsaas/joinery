@@ -202,3 +202,36 @@ test "a host's frame at the last seq drops it, and the room still takes guests" 
     h.receive(3, hello(.guest, &other.id, &other.guest_secret, "b", "Guest", ""));
     try testing.expectEqual(null, h.bye(3));
 }
+
+test "a connection the relay's let go of is told of as closed for nothing" {
+    var h: Harness = undefined;
+    h.init(.{});
+    defer h.deinit();
+    const room = h.host("Host", "Model");
+    h.join(1, .guest, &room.guest_secret, "a");
+    h.join(2, .guest, &room.guest_secret, "b");
+
+    // A dropped guest: no second `left`.
+    h.receive(2, &.{0});
+    try testing.expectEqual(&h.links[2], h.closed.items[0]);
+    h.forget();
+    h.relay.closed(&h.links[2], 0);
+    try testing.expectEqual(@as(usize, 0), h.sent.items.len);
+
+    // A link turned away from the lobby, which has changed since: not taken out of it again, which would put the
+    // one after it back.
+    h.receive(5, hello(.guest, "nope", "", "c", "Guest", ""));
+    h.receive(6, hello(.guest, "nope", "", "c", "Guest", ""));
+    h.relay.closed(&h.links[5], 0);
+    try testing.expectEqual(@as(usize, 4), h.relay.lobby.len());
+
+    // A room that's ended: its links no longer point at it, so closing them reads none of its freed memory.
+    h.receive(0, makeFrame(.bye, 0, "Stopped sharing."));
+    try testing.expectEqual(@as(usize, 0), h.relay.roomCount());
+    try testing.expectEqual(null, h.links[0].room);
+    try testing.expectEqual(null, h.links[1].room);
+    h.forget();
+    h.relay.closed(&h.links[0], 0);
+    h.relay.closed(&h.links[1], 0);
+    try testing.expectEqual(@as(usize, 0), h.sent.items.len);
+}
