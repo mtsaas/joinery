@@ -2,7 +2,7 @@
 //! docs/relay.md.
 //!
 //!     joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]
-//!                   [--threads <half the cores>] [--pin <first CPU>] [--batch-ms 5]
+//!                   [--threads <half the cores>] [--pin <first CPU>] [--batch-ms 5] [--outbox-mib 512]
 //!
 //! Prometheus metrics are at http://<metrics address>:<metrics port>/metrics, on this machine only unless the metrics
 //! address says otherwise.
@@ -41,6 +41,9 @@ pub fn main(init: std.process.Init) !void {
     // How long a connection's queue waits for more before it's sent: 5 ms did the same work with 40% less CPU and
     // took a relay from 750 full rooms to 1,000, for a wait well under a frame (bench/load-results.md).
     var batch_ms: i64 = 5;
+    // The most all the outboxes together hold for connections that are behind: well under the chart's 2 GiB, which
+    // also has to hold the rooms' logs.
+    var outbox_mib: usize = 512;
     var args = init.minimal.args.iterate();
     _ = args.skip();
     while (args.next()) |arg| {
@@ -57,6 +60,8 @@ pub fn main(init: std.process.Init) !void {
             threads = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--batch-ms")) {
             batch_ms = std.fmt.parseInt(i64, value, 10) catch return usage();
+        } else if (std.mem.eql(u8, arg, "--outbox-mib")) {
+            outbox_mib = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--pin")) {
             pin = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else return usage();
@@ -81,6 +86,7 @@ pub fn main(init: std.process.Init) !void {
     for (loops) |loop| {
         loop.loops = loops;
         loop.batch_ms = batch_ms;
+        loop.out_budget = (outbox_mib << 20) / threads;
     }
     std.log.info("relaying on {f} with {d} loops, metrics at http://{f}/metrics", .{ address, threads, metrics_address });
     for (loops[1..]) |loop| {
@@ -102,6 +108,6 @@ fn runLoop(loop: *Server, pin: ?usize) void {
 }
 
 fn usage() error{Usage} {
-    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n]", .{});
+    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n] [--outbox-mib n]", .{});
     return error.Usage;
 }
