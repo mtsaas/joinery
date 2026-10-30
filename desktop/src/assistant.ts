@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { core } from "./core.ts";
 import { isApp, library } from "./library.ts";
-import { act, getState, nameOf, newModel, open, reload } from "./store.ts";
+import { act, getState, nameOf, newModel, open, reload, settings } from "./store.ts";
 import { share } from "./session.ts";
 
 export let mcpStatus = isApp ? "Starting…" : "Needs the app";
@@ -73,11 +73,23 @@ export async function startAssistants() {
     act(() => {});
     await invoke("mcp_respond", { id: event.payload.id, response });
   });
+  await setAssistantsEnabled(settings.mcpEnabled);
+  void library;
+}
+
+/** Starts or stops the MCP server, as Settings' switch says; on unless turned off. */
+export async function setAssistantsEnabled(enabled: boolean) {
+  settings.mcpEnabled = enabled;
+  if (!isApp) return;
   try {
-    await invoke("mcp_start");
-    mcpStatus = "Running at http://127.0.0.1:8723/mcp";
+    if (enabled) {
+      await invoke("mcp_start");
+      mcpStatus = "Running at http://127.0.0.1:8723/mcp";
+    } else {
+      await invoke("mcp_stop");
+      mcpStatus = "Off";
+    }
   } catch (error) {
     mcpStatus = String(error);
   }
-  void library;
 }

@@ -6,9 +6,9 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
@@ -23,29 +23,45 @@ fn waiting() -> &'static Mutex<HashMap<u64, Sender<Vec<u8>>>> {
     WAITING.get_or_init(Default::default)
 }
 
-static STARTED: OnceLock<Result<(), String>> = OnceLock::new();
+/// While listening, what tells the listener to stop.
+static RUNNING: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 
-/// Starts listening, once; says why it couldn't, usually something else on the port.
+/// Starts listening, unless it is; says why it couldn't, usually something else on the port.
 #[tauri::command]
 pub fn mcp_start(app: AppHandle) -> Result<(), String> {
-    STARTED
-        .get_or_init(|| {
-            let listener = TcpListener::bind(("127.0.0.1", port())).map_err(|e| {
-                if e.kind() == std::io::ErrorKind::AddrInUse {
-                    format!("Port {} is in use by another app, perhaps another copy of Joinery.", port())
-                } else {
-                    e.to_string()
-                }
-            })?;
-            std::thread::spawn(move || {
-                for stream in listener.incoming().flatten() {
-                    let app = app.clone();
-                    std::thread::spawn(move || serve(stream, app));
-                }
-            });
-            Ok(())
-        })
-        .clone()
+    let mut running = RUNNING.lock().unwrap();
+    if running.is_some() {
+        return Ok(());
+    }
+    let listener = TcpListener::bind(("127.0.0.1", port())).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AddrInUse {
+            format!("Port {} is in use by another app, perhaps another copy of Joinery.", port())
+        } else {
+            e.to_string()
+        }
+    })?;
+    let stop = Arc::new(AtomicBool::new(false));
+    *running = Some(stop.clone());
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let app = app.clone();
+            std::thread::spawn(move || serve(stream, app));
+        }
+    });
+    Ok(())
+}
+
+/// Stops listening, as Settings turns it off: the port's free for anything else.
+#[tauri::command]
+pub fn mcp_stop() {
+    if let Some(stop) = RUNNING.lock().unwrap().take() {
+        stop.store(true, Ordering::Relaxed);
+        // The listener waits for a connection; this one lets it see it's to stop.
+        let _ = TcpStream::connect(("127.0.0.1", port()));
+    }
 }
 
 #[derive(Clone, serde::Serialize)]

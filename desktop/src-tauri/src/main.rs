@@ -4,11 +4,13 @@
 
 mod library;
 mod mcp;
+mod menu;
 
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| Ok(menu::install(app)?))
         .invoke_handler(tauri::generate_handler![
             library::list_library,
             library::read_model,
@@ -27,8 +29,12 @@ fn main() {
             library::list_versions,
             library::read_version,
             library::save_version,
+            library::export_model,
+            library::rename_collection,
+            library::trash_collection,
             mcp::mcp_start,
             mcp::mcp_respond,
+            mcp::mcp_stop,
         ])
         .run(tauri::generate_context!())
         .expect("Joinery couldn't start");

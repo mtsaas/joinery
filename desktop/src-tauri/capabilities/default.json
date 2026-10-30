@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "The window's: the app's own commands, events, file dialogs and opening links.",
   "windows": ["main"],
-  "permissions": ["core:default", "dialog:default", "opener:default"]
+  "permissions": ["core:default", "core:window:allow-close", "core:window:allow-destroy", "dialog:default", "opener:default"]
 }

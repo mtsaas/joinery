@@ -54,6 +54,11 @@ export interface Scene {
   tables: Table[];
   groups: Group[];
   reviewing: boolean;
+  /** Showing a version or reviewing a change: read-only, a side or both at once. */
+  comparing: boolean;
+  side: "then" | "changes" | "now";
+  /** A version picked in the history is shown. */
+  previewing: boolean;
   summary: string | null;
   canUndo: boolean;
   canRedo: boolean;
@@ -100,7 +105,7 @@ export interface Frame {
 
 export type CoreEvent =
   | { type: "changed" }
-  | { type: "version"; reason: string; before?: string }
+  | { type: "version"; reason: string; before?: string; model: string }
   | { type: "baseline"; model: string }
   | { type: "connect"; socket: string }
   | { type: "send"; data: string }

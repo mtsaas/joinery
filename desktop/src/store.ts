@@ -2,7 +2,7 @@
 // this keeps what's drawn from it and acts on the core's events (saving, versions, the relay).
 import { useLayoutEffect, useReducer } from "preact/hooks";
 import { core, drain, scene as readScene, type CoreEvent, type Peer, type Scene } from "./core.ts";
-import { library, type Listing } from "./library.ts";
+import { library, type Listing, type Version } from "./library.ts";
 
 export interface Session {
   role: "host" | "guest";
@@ -29,13 +29,15 @@ export interface State {
   showsSettings: boolean;
   showsShare: boolean;
   showsJoin: boolean;
+  /** The version picked in the history, shown on the canvas instead of the model (panels/History.tsx). */
+  preview: Version | null;
   /** Bumped whenever the scene changes, for the canvas to redraw. */
   revision: number;
 }
 
 let state: State = {
   listing: { root: "", models: [], collections: [] }, path: null, name: "", scene: null, session: null, notice: null,
-  failure: null, showsHistory: false, showsSettings: false, showsShare: false, showsJoin: false, revision: 0,
+  failure: null, showsHistory: false, showsSettings: false, showsShare: false, showsJoin: false, preview: null, revision: 0,
 };
 const listeners = new Set<() => void>();
 
@@ -82,9 +84,10 @@ export async function open(path: string) {
     await saveNow();
     if (state.session) leave();
     const { model, baseline } = await library.read(path);
+    core.endPreview();
     core.openModel(model, baseline);
     await library.markOpened(path);
-    set({ path, name: nameOf(path), showsHistory: false });
+    set({ path, name: nameOf(path), showsHistory: false, preview: null });
     localStorage.setItem("lastOpened", path);
     await saveVersion("Opened");
     handle(drain());
@@ -146,10 +149,11 @@ export async function saveNow() {
   }
 }
 
-export async function saveVersion(reason: string, before: string | null = null): Promise<boolean> {
+/** Keeps `model` (by default the model as it is now) as a version; with `before`, a review's. */
+export async function saveVersion(reason: string, before: string | null = null, model = core.modelFile()): Promise<boolean> {
   if (!state.path) return false;
   try {
-    return await library.saveVersion(state.path, reason, core.modelFile(), before);
+    return await library.saveVersion(state.path, reason, model, before);
   } catch (error) {
     fail(`Couldn't save a version: ${error instanceof Error ? error.message : error}`);
     return false;
@@ -181,8 +185,8 @@ export function handle(events: CoreEvent[]) {
         changed = true;
         break;
       case "version":
-        // Before the change: the model as it was is what's still on disk and in the core's last save.
-        void saveVersion(event.reason, event.before ?? null);
+        // The model as it was when the core asked: by now, the change that asked has been made.
+        void saveVersion(event.reason, event.before ?? null, event.model);
         break;
       case "baseline":
         if (state.path) void library.setBaseline(state.path, event.model);
