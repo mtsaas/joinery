@@ -287,12 +287,7 @@ struct CanvasView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { note in
             if note.object as AnyObject? === canvas { openSettings() }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .pickFromWheel)) { note in
-            guard note.object as AnyObject? === canvas, let wheel = canvas.wheel,
-                  let direction = note.userInfo?["direction"] as? CommandWheel.Direction else { return }
-            canvas.wheel = nil
-            wheelContents(wheel).slots[direction]?.action()
-        }
+        .onReceive(NotificationCenter.default.publisher(for: .pickFromWheel)) { debugPickFromWheel($0) }
         .onReceive(NotificationCenter.default.publisher(for: .click)) { note in
             if note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint { click(at: point) }
         }
@@ -363,9 +358,7 @@ struct CanvasView: View {
                 })
             }
         }
-        // The selection's color: each table's, and each group's (not its tables').
-        let groups = canvas.selectedGroups
-        let loose = groups.isEmpty ? tables : Set(model.tables.filter { tables.contains($0.id) && !($0.group.map(groups.contains) ?? false) }.map(\.id))
+        let (loose, groups) = colorTargets
         if !loose.isEmpty || !groups.isEmpty {
             let what = [(loose.count, "table"), (groups.count, "group")].filter { $0.0 > 0 }
                 .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }.formatted()
@@ -486,6 +479,25 @@ struct CanvasView: View {
         canvas.wheel = .init(center: center, point: point, target: target)
     }
 
+    #if DEBUG
+    /// A command or color on the open wheel, picked by a debug script.
+    private func debugPickFromWheel(_ note: Notification) {
+        guard note.object as AnyObject? === canvas, let wheel = canvas.wheel else { return }
+        canvas.wheel = nil
+        if let color = note.userInfo?["color"] as? TableColor { return wheelContents(wheel).color?.set(color) ?? () }
+        guard let direction = note.userInfo?["direction"] as? CommandWheel.Direction else { return }
+        wheelContents(wheel).slots[direction]?.action()
+    }
+    #endif
+
+    /// What recoloring the selection colors: each selected group, and each selected table not in one of them (a group's
+    /// tables keep their own colors).
+    private var colorTargets: (tables: Set<Table.ID>, groups: Set<TableGroup.ID>) {
+        let tables = canvas.selectedTables, groups = canvas.selectedGroups
+        let loose = model.tables.filter { tables.contains($0.id) && !($0.group.map(groups.contains) ?? false) }.map(\.id)
+        return (Set(loose), groups)
+    }
+
     /// What the wheel offers. With two or more tables or ties selected, aligning, each way pointing where things go:
     /// left edges to the west, top edges to the north. Otherwise, what suits what was right-clicked.
     private func wheelContents(_ wheel: CanvasController.Wheel) -> (slots: [CommandWheel.Direction: PaletteCommand],
@@ -519,9 +531,10 @@ struct CanvasView: View {
                                                    symbol: "distribute.vertical.center") { model.distribute(tables, horizontally: false) }
             }
             extras = [groupSelection, untangle, copyMarkdown, deleteSelection]
-            // The selected tables' color, all at once.
-            if let first = model.tables.first(where: { tables.contains($0.id) }) {
-                color = (first.color, { color in model.recolor(tables: tables, groups: [], color) })
+            // The selection's color, all at once.
+            let (loose, groups) = colorTargets
+            if let current = model.groups.first(where: { groups.contains($0.id) })?.color ?? model.tables.first(where: { loose.contains($0.id) })?.color {
+                color = (current, { color in model.recolor(tables: loose, groups: groups, color) })
             }
             return (slots, extras, color)
         }
