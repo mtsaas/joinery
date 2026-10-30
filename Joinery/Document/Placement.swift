@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Putting tables somewhere open: for tables an AI assistant makes or moves, so they never land on others or inside a

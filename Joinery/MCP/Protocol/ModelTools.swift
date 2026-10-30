@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// What an AI assistant can do to a model over MCP: read it, add, change and drop tables, and add and remove foreign
@@ -316,6 +318,15 @@ enum ModelTools {
         return "Created \(names.joined(separator: ", "))" + (keys > 0 ? " with \(keys) foreign key\(keys == 1 ? "" : "s")." : ".")
     }
 
+    /// Whether JSON's `true` or `false` made this, rather than 1 or 0.
+    private static func isBool(_ number: NSNumber) -> Bool {
+        #if canImport(Darwin)
+        CFGetTypeID(number) == CFBooleanGetTypeID()
+        #else
+        ["c", "B"].contains(String(cString: number.objCType))
+        #endif
+    }
+
     /// Rows of column name to value, as a table's sample rows, in place of those there or after them.
     private static func setSamples(_ rows: [[String: Any]], of id: Table.ID, appending: Bool, in model: inout DataModel) throws {
         guard let index = model.tables.firstIndex(where: { $0.id == id }) else { return }
@@ -328,7 +339,7 @@ enum ModelTools {
                 }
                 let value: String? = switch entry.value {
                 case let text as String: text
-                case let number as NSNumber where CFGetTypeID(number) == CFBooleanGetTypeID(): number.boolValue ? "true" : "false"
+                case let number as NSNumber where isBool(number): number.boolValue ? "true" : "false"
                 case let number as NSNumber: number.stringValue
                 default: nil
                 }

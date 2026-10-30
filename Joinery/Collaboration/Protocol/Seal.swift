@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 
 /// Bodies sealed with the room key, which the relay never has (see `docs/relay.md`): AES-256-GCM, the body written as
 /// nonce, ciphertext and tag, with the header authenticated alongside. The relay writes the header's `peer`, so that's

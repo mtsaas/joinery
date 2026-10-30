@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// A database design: tables placed on the canvas, the foreign keys between their columns, and the zip ties that
