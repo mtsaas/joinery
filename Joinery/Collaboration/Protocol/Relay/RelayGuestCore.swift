@@ -1,8 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// A guest's side of a relayed session, without the network or the app, as `ClientCore` is for a local one. See
-/// `docs/relay.md`.
+/// A guest's side of a relayed session, without the network or the app. See `docs/relay.md`.
 ///
 /// It keeps `confirmed`, the host's document as of decision `seq`, and `pending`, the changes made here the host hasn't
 /// decided on yet; what's shown is the one with the other on top. Every decision the host makes is in the relay's log in

@@ -1,8 +1,7 @@
 import CryptoKit
 import Foundation
 
-/// The host's side of a relayed session, without the network or the app, as `HostCore` is for a local one. See
-/// `docs/relay.md`.
+/// The host's side of a relayed session, without the network or the app. See `docs/relay.md`.
 ///
 /// It's the authority, as before: it keeps the document, takes each guest's changes exactly once and in order, and
 /// numbers every decision, made or turned down, `seq` 1, 2, 3…, publishing each to the relay with the document's digest

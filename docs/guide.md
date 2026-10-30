@@ -12,14 +12,11 @@ Data models live in a library you browse as in Freeform. The sidebar has All Dat
 - **New:** ⌘N or the toolbar's compose button makes a data model, in the collection being shown, and opens it. ⇧⌘N or the folder button makes a collection, which you can name straight away.
 - **Rename, duplicate, favorite, move, delete:** right-click a data model or collection. You can also drag data models onto a collection in the sidebar. Delete moves the clicked data model to the Trash, from where it can be put back. Favorites and when a data model was last opened are kept on the file itself, so they follow it through renames and moves.
 - **Saving and undo:** changes save themselves, half a second after you stop and whenever you switch data models. Undo (⌘Z) covers the open data model.
-- **Version history:** the clock button opens a popover of earlier versions, by day. Arrow through them and each shows on the canvas, read-only; Restore This Version brings one back (undoably). ⌘S saves a version whenever you like; those are never thinned out. Versions aren't kept for every change. They're kept when you open a data model (so each day's work is there to go back to), before an AI assistant's first change in a while, before deleting tables or rearranging many (layouts, untangling), and hourly while editing. Everything from the last two days is kept, then one a day for a month, then one a week. They live in the `.joinery` package, so they go wherever the file goes. While a version shows, the bar at the bottom of the canvas switches between Then, Changes and Now. Changes, the default, draws both at once, as a code diff would:
-  - Tables added have a green ring; tables removed are put back where they were, with a dashed red ring and their names struck through.
-  - Columns added are green, marked +. Columns removed are red and struck through.
-  - A changed column shows twice, as it was (struck through) and then as it is, marked ~ in orange.
-  - Foreign keys added are green; removed ones are dashed red.
-  - Everything unchanged fades, and the bar sums it up.
-  - It stays when the popover closes, until Done (or Escape). Until then the canvas is read-only: dragging pans it, and nothing can be selected or changed.
-  - Columns and tables are matched by ID, so a rename shows as a change. Moving tables isn't a change.
+- **Version history:** the clock button lists earlier versions, by day. Arrow through them and each shows on the canvas, read-only, until Done or Escape; Restore This Version brings one back, undoably. Versions are kept when you open a data model, before an AI assistant's first change in a while, before deleting or rearranging tables, hourly while editing, when a review ends, and whenever you press ⌘S. Everything from the last two days stays, then one a day for a month, then one a week; reviews and ⌘S versions are never thinned out. They live in the `.joinery` package, so they go wherever the file goes. The bar at the bottom switches between Then, Changes and Now. Changes draws both at once, as a code diff would:
+  - Tables and columns added are green; removed ones are put back where they were, dashed red and struck through.
+  - A changed column shows twice, as it was (struck through) and as it is, marked ~ in orange.
+  - Foreign keys added are green; removed ones are dashed red. Everything unchanged fades.
+  - Things are matched by ID, so a rename shows as a change. Moving tables isn't one.
 - **Opening and importing:** double-clicking a `.joinery` file in Finder, or File ▸ Import Data Model… (⌘O), copies it into the library and opens it.
 - **Examples:** a new library starts with an Examples collection containing Chinook, Northwind, Sakila, the Stack Overflow data dump, and Storefront. File ▸ Add Examples puts back any you've deleted. `scripts/make_examples.py` generates them.
 
@@ -67,18 +64,15 @@ ties and bend points square to them.
 
 Share a data model live and others can edit it with you, each in their own Joinery.
 
-- **Share:** the people button at the top right of the editor. Start Sharing connects to a relay and gives two links: one to edit, one only to watch.
-- **The relay** passes changes between everyone and can't read them: everything is encrypted end to end, with a key only the links carry. Settings ▸ Sharing picks which relay: Joinery's, or one you run (`relay/`, `zig build run`). Links name their relay, so people joining needn't set anything.
-- **From an AI assistant:** the `start_sharing` MCP tool starts sharing and returns both links.
-- **Joining:** paste the link into Join in the library's toolbar. Like remote access, the data model is open only while the session is: it isn't added to the library, and it closes when you leave or the host stops sharing.
-- **Seeing each other:** everyone's pointer shows with their name, and what they've selected is ringed in their color. The share button shows who's here.
-- **Undo:** ⌘Z undoes only your own changes, even when others have changed things since.
-- **Conflicts:** if your change refers to something that's just been deleted, it's taken back and you're told.
-- **Dropped connections:** Joinery reconnects on its own, sooner at first. Edits made meanwhile are sent then, each made once, and the copy catches up to the host's. The host reconnects too; if it's gone more than 30 seconds, the session ends.
-- **Checking copies:** each change carries a checksum of the host's copy. If a copy ever differs, it fetches the host's copy afresh.
-- **The host's copy** is the one that's saved, with its version history. Stopping sharing, or closing the data model, ends the session.
+- **Share:** the people button at the top right of the editor. Start Sharing connects to a relay and gives two links: one to edit, one only to watch. The `start_sharing` MCP tool does the same for an AI assistant.
+- **The relay** passes changes between everyone and can't read them: everything is encrypted end to end, with a key only the links carry. Settings ▸ Sharing says which relay to use, such as `wss://relay.example.com`; left empty, it's one on this Mac (`http://localhost:8787`). Run your own from the container image or Helm chart in `relay/`. Links name their relay, so people joining needn't set anything.
+- **Joining:** paste the link into Join in the library's toolbar. The data model is open only while the session is: it isn't added to the library, and it closes when you leave or the host stops sharing.
+- **Seeing each other:** everyone's pointer shows with their name, what they've selected is ringed in their color, and tables they drag move as they drag them.
+- **Undo** undoes only your own changes. If your change refers to something that's just been deleted, it's taken back and you're told.
+- **Dropped connections:** Joinery reconnects on its own and sends what was edited meanwhile, each change made once. A host gone more than 30 seconds ends the session.
+- **The host's copy** is the one that's saved, with its version history.
 
-`docs/relay.md` describes the protocol and the relay. A link is the only thing between the internet and your data model, so share it as you would a password.
+A link is the only thing between the internet and your data model, so share it as you would a password. `docs/relay.md` describes the protocol.
 
 ## AI assistants (MCP)
 
@@ -117,101 +111,6 @@ Ask an assistant to show how a pull request, branch or uncommitted change alters
 4. The assistant makes the change with the editing tools. A rename is made as a rename, so it shows as one.
 5. `get_changes` lists what changed since the baseline, for the assistant to check and sum up.
 
-From the baseline on, the canvas shows the comparison bar: Before, Changes and After, as Version history compares, read-only. The view follows the assistant's changes until you pan or zoom. End Review forgets the baseline and leaves the data model as it is after the change, to edit.
+From the baseline on, the canvas shows the comparison bar: Before, Changes and After, read-only. The view follows the assistant's changes until you pan or zoom. End Review leaves the data model as it is after the change, to edit, and keeps the change in the version history as a review: picking it there shows the change as it was reviewed, Before, Changes and After, however much you've edited since. Reviews are never thinned out.
 
-## Releases and updates
-
-Releases are made by [release-please](https://github.com/googleapis/release-please) from commit messages in the
-[Conventional Commits](https://www.conventionalcommits.org) style: `fix:` for a fix, `feat:` for a feature, with
-`(relay)` or a change under `relay/` for the relay. It keeps a release pull request open for each of Joinery and the
-relay; merging one makes the release.
-
-- **Joinery** (`joinery-v…`): the release workflow builds it signed with a Developer ID, has Apple notarize it, and
-  attaches the disk image to the release. It adds it to Sparkle's update feed, `appcast.xml`, on the `updates` release,
-  where `Joinery.dmg` is always the newest. Released copies check that feed and offer each new version; Joinery ▸
-  Check for Updates… checks at once. Copies built in Xcode don't check.
-- **The relay** (`relay-v…`): the image `ghcr.io/mtsaas/joinery-relay` and the Helm chart
-  `oci://ghcr.io/mtsaas/charts/joinery-relay`, both at the release's version. Every push to `main` also publishes the
-  image as `:main`.
-
-Signing Joinery needs these repository secrets:
-
-| Secret | What |
-| --- | --- |
-| `DEVELOPER_ID_CERT_P12`, `DEVELOPER_ID_CERT_PASSWORD` | The Developer ID Application certificate and its key, exported from Keychain Access as a .p12, base64-encoded, and its password |
-| `APPLE_TEAM_ID` | The team it belongs to |
-| `NOTARY_API_KEY`, `NOTARY_API_KEY_ID`, `NOTARY_API_ISSUER` | An App Store Connect API key (the .p8's contents), its ID and its issuer, to notarize |
-| `SPARKLE_PRIVATE_KEY` | Sparkle's private key, kept in the login keychain under the account `mtsaas-joinery`: `generate_keys --account mtsaas-joinery -x <file>`, in Sparkle's tools. Joinery installs only updates signed with it, so keep a copy somewhere safe: lose it and released copies can't be updated again |
-
-`scripts/package-app.sh` is what the workflow runs, with these in its environment.
-
-## Frame rate (Debug builds)
-
-The bottom-left corner shows frames per second while anything moves, and what the last frame cost: routing the wires and drawing them. `JOINERY_SCRIPT="shake <table> <seconds>"` drags a table about and prints the frame rate and how long each whole update took.
-
-## Scale test
-
-`scripts/scale-test.sh` builds an optimized copy with the debug hooks. For data models of 10 to 200 made-up tables (the same each run), it drags a table about, zoomed to fit and at 50%, with wires running under tables and then avoiding them. It prints frames per second, our own work per frame (routing and drawing wires), and the whole view update each move causes. Give it other sizes as `scripts/scale-test.sh <derived-data-dir> "300:450 500:800"`.
-
-`scripts/routing-bench.sh [-Onone] [model.joinery …]` times routing alone, as a whole and per frame of dragging a table, on big made-up models and any files given, with groups' shared wires bundled into ports. Unoptimized, as a Debug build used to be, routing is 15 to 30 times slower (about 100 ms to route 160 tables and 500 keys afresh, avoiding tables, against 3 ms), so the app's Debug configuration is optimized (`-O`) too, keeping the debug hooks; set it back to `-Onone` in the target's build settings to step through code in the debugger.
-
-At 200 tables and 300 foreign keys, with wires avoiding tables, a drag holds 120 fps, and our work plus the view update takes about 6 ms of the 8.3 ms a frame allows.
-
-## Routing feedback (Debug builds)
-
-To show how a cable *should* run, use Debug ▸ Routing Feedback Mode (⌥⌘R, also in the ⌘K palette).
-
-1. Click a cable. A grey copy appears with points along it; its sockets and ties stay fixed.
-2. Drag the points to where the cable should go. The area between the grey line and the real cable is shaded. Click the grey line to add a point; right-click a point to remove it.
-3. Optionally add a note, then press Return to save or Esc to discard.
-
-Each saved correction records:
-- **Replay data:** the whole data model as it was, which foreign key, and whether wires were avoiding tables.
-- **The routing that produced the line:** `Routing.version` and its parameters.
-- **Both lines:** the routed line and the expected one, plus your control points and note.
-
-Corrections are kept inside the library. Debug ▸ Export Routing Feedback… writes them all to one JSON file. `scripts/score-feedback.sh routing-feedback.json` then replays every case against the current routing and reports how far each lands from the expected line, then and now.
-
-## Layout
-
-```
-Joinery/
-  Document/        The core: the data model, its edits, layout and geometry, files, and the replica its changes are ops on
-  Collaboration/
-    Protocol/      The core of live sessions: the host's and client's protocol as state machines, messages, digests
-    Transport/     Sessions on the network: the WebSocket, the host and client that connect the protocol to it and the app
-    UI/            Share and Join panels, people, and others' pointers on the canvas
-  Library/         The library of files and collections, the sidebar, the open data model and its editor
-  Canvas/          Canvas view, table drawing, routing, wire physics, zip tying
-  MCP/             The MCP server for AI assistants, and its data model tools
-  App/             App entry, menu commands, debug hooks
-  Debug/           Routing feedback mode, frame-rate readout, made-up data models for the scale test (Debug builds only)
-  Examples/        The bundled example data models
-JoineryTests/      Swift Testing: the data model, routing and physics, undo, sessions (with a simulation of the protocol)
-docs/              collaboration.md: the session protocol, and why it's correct
-scripts/           build.sh (unsandboxed CLI build), check_layers.sh, make_icon.swift, make_examples.py, score-feedback.sh
-```
-
-**The core stands alone.** `Document/` and `Collaboration/Protocol/` are plain state and state machines:
-- They use only Foundation, CoreGraphics and UniformTypeIdentifiers.
-- They don't use the main actor, the network or the screen, or anything else in the app.
-
-Everything else is built on them: the canvas draws a `DataModel`, `OpenModel` turns edits into `Replica` ops for undo, and the session's transport carries `HostCore` and `ClientCore` messages over WebSockets. Because the core touches nothing outside itself, the protocol can be simulated across every CPU core with no network at all. `scripts/check_layers.sh` fails if anything in the core reaches outside it.
-
-The wires work in two steps. `Routing` computes each wire's rest curve: Bézier segments from socket to socket that pass through the wire's zip ties. `WireSimulation` then springs a chain of points toward that curve. The ends of each wire are stiff and the middle is loose, and neighboring points pull on each other, so a wobble travels along the wire. The simulation runs only while something is moving.
-
-It stays fast as data models grow:
-- **Routing:** each wire's route is reused until its ends, ties or nearby tables move, so dragging a table reroutes only its own wires and those near it. Wires that do need bending around tables are spread across the cores.
-- **Tables:** all tables are drawn directly in one layer (`TableLayer`), not as views. Only tables in view are drawn, shapes of one color are filled together, and text is laid out once per string and drawn with Core Text, so it's sharp at any zoom.
-
-## Checking from the command line
-
-Debug builds have hooks for checking the app from the command line (see `App/DebugHooks.swift`):
-
-```sh
-scripts/build.sh /tmp/joinery-dd
-JOINERY_LIBRARY=/tmp/joinery-library JOINERY_OPEN=Sakila JOINERY_SCRIPT="tie 320 -20 320 140" JOINERY_SNAPSHOT=/tmp/out.png \
-  /tmp/joinery-dd/Build/Products/Debug/Joinery.app/Contents/MacOS/Joinery
-```
-
-To run the tests, use ⌘U in Xcode, or `xcodebuild -project Joinery.xcodeproj -scheme Joinery test`.
+Building, testing and releasing Joinery are in [development.md](development.md).

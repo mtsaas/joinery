@@ -7,7 +7,7 @@ import Foundation
 ///
 /// What's nested in a `DataModel` is flat here: a column names its `table`, a port its `group`. What's in order there
 /// (tables, columns, wires, ties, groups, ports) has an `order` key that sorts it among the rest of its kind (and
-/// parent), so two people inserting at once both keep theirs. See `docs/collaboration.md`.
+/// parent), so two people inserting at once both keep theirs. See `docs/relay.md`.
 struct Replica: Equatable {
     typealias Entity = [String: JSON]
 

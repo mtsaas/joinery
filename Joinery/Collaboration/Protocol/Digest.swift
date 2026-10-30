@@ -6,7 +6,7 @@ import Foundation
 ///
 /// Each entity is hashed as its canonical JSON (`JSON.canonical`: what JavaScript's `JSON.stringify` writes, with keys
 /// sorted), in UTF-8, by two 32-bit FNV-1a hashes with different starting values. Sums wrap at 2³². Written as 16 hex
-/// digits, the first hash's sum then the second's. See docs/collaboration.md.
+/// digits, the first hash's sum then the second's. See docs/relay.md.
 struct Digest: Equatable, CustomStringConvertible {
     private(set) var first: UInt32 = 0
     private(set) var second: UInt32 = 0

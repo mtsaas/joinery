@@ -13,8 +13,8 @@ import Testing
 /// end, with the network let settle, every copy must be the host's, and every change every guest made must have been
 /// decided, made or turned down, exactly once.
 ///
-/// Unlike `SessionSimulation`, nothing's lost, repeated or garbled on a connection that stays up: TCP rules that out,
-/// and from step 3, encryption turns a garbled frame into one that's refused, which a cut connection already covers.
+/// Nothing's lost, repeated or garbled on a connection that stays up: TCP rules that out, and encryption turns a garbled
+/// frame into one that's refused, which a cut connection already covers.
 struct RelaySimulation {
     @Test(arguments: 1...400 as ClosedRange<UInt64>)
     func everyCopyComesBackToTheHosts(seed: UInt64) throws {
