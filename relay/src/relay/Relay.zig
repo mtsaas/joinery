@@ -376,6 +376,8 @@ fn fromHost(relay: *Relay, room: *Room, header: wire.Header, frame: []u8) void {
             // as of its latest change, all of which has come first.
             const fits = if (room.awaiting_snapshot) header.seq >= room.latest else header.seq == room.latest;
             if (!fits) return relay.drop(host, "a snapshot out of order");
+            // The last seq leaves no room for the next, and `room.latest + 1` must fit.
+            if (header.seq == std.math.maxInt(u64)) return relay.drop(host, "a snapshot at the last seq");
             const snapshot = room.snapshot_buffer[0..frame.len];
             @memcpy(snapshot, frame);
             room.snapshot = snapshot;
@@ -402,7 +404,10 @@ fn fromHost(relay: *Relay, room: *Room, header: wire.Header, frame: []u8) void {
             room.trim();
         },
         .ops, .reject => {
-            if (room.awaiting_snapshot or header.seq != room.latest + 1) return relay.drop(host, "a decision out of order");
+            // Never the last seq, so `room.latest` stays below it and `room.latest + 1` fits.
+            if (room.awaiting_snapshot or header.seq == std.math.maxInt(u64) or header.seq != room.latest + 1) {
+                return relay.drop(host, "a decision out of order");
+            }
             // Room for it: frames the snapshot covers go, and with them any guest still behind them, which comes back
             // and catches up from the snapshot. Frames past the snapshot can't go, so the host comes back with a new
             // one.
