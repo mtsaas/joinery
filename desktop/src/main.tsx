@@ -6,6 +6,7 @@ import { setEditNext } from "./canvas/CellEditor.tsx";
 import { loadCore } from "./core.ts";
 import { exampleModels, library } from "./library.ts";
 import { fail, open, reload, getState } from "./store.ts";
+import { checkForUpdates } from "./updates.ts";
 
 async function start() {
   const root = document.getElementById("app")!;
@@ -24,6 +25,7 @@ async function start() {
   const first = models.find((m) => m.path === last) ?? models[0];
   if (first) await open(first.path);
   setEditNext(() => {});
+  void checkForUpdates();
 }
 
 // For checking the app from a browser's console, and for tests that drive it.
