@@ -9,13 +9,15 @@ struct VersionHistory: View {
 
     struct Preview: Equatable {
         let version: History.Version
-        let model: DataModel
+        var model: DataModel
         /// A review's: how it was before the change `model` is after. Shown as that change, not compared with now.
         var before: DataModel?
     }
 
     private enum Item: Hashable {
         case now
+        /// A named version, compared with now.
+        case named(String)
         case version(History.Version)
     }
 
@@ -34,6 +36,27 @@ struct VersionHistory: View {
             }
             .padding(.vertical, 2)
             .tag(Item.now)
+            if !open.named.versions.isEmpty {
+                Section("Named") {
+                    ForEach(open.named.versions.reversed(), id: \.name) { version in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(version.name).lineLimit(1)
+                                Spacer()
+                                Text(version.date, format: .dateTime.month().day().hour().minute())
+                                    .foregroundStyle(.secondary)
+                                    .monospacedDigit()
+                            }
+                            Text("To now: " + SchemaDiff(from: version.model, to: open.model).summary)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        .padding(.vertical, 2)
+                        .tag(Item.named(version.name))
+                    }
+                }
+            }
             ForEach(days, id: \.day) { day in
                 Section(Self.title(of: day.day)) {
                     ForEach(day.versions) { row($0) }
@@ -120,8 +143,13 @@ struct VersionHistory: View {
     }
 
     private func show(_ item: Item?) {
-        guard case .version(let version) = item, let model = models[version.url] else { return preview = nil }
-        preview = Preview(version: version, model: model, before: befores[version.url])
+        if case .named(let name) = item {
+            preview = nil
+            return open.compare(NamedVersions.Comparison(from: name, to: NamedVersions.current))
+        }
+        // Read afresh: it may have been laid out since.
+        guard case .version(let version) = item, let model = try? DataModel(contentsOf: version.url) else { return preview = nil }
+        preview = Preview(version: version, model: model, before: version.isReview ? try? DataModel(contentsOf: version.beforeURL) : nil)
     }
 
     private func restore(_ version: History.Version) {

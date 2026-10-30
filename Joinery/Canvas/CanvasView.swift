@@ -82,7 +82,7 @@ struct CanvasView: View {
             #if DEBUG
             if let edit = canvas.feedback { feedbackHandles(edit) }
             #endif
-            if canvas.isSpaceHeld || canvas.isReadOnly { panSurface }
+            if canvas.isSpaceHeld { panSurface }
         }
         .coordinateSpace(.canvas)
         .clipped()
@@ -126,7 +126,8 @@ struct CanvasView: View {
         }
         .overlay(alignment: .trailing) {
             if let id = canvas.designing {
-                TableDesigner(model: $model, id: id, command: $canvas.designerCommand, isInGrid: $canvas.isDesignerInGrid, maxWidth: canvas.viewSize.width - 24) {
+                TableDesigner(model: $model, id: id, command: $canvas.designerCommand, isInGrid: $canvas.isDesignerInGrid,
+                              isReadOnly: canvas.isLayoutOnly, maxWidth: canvas.viewSize.width - 24) {
                     withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil }
                 }
                     .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { canvas.designerFrame = $0 }
@@ -146,7 +147,8 @@ struct CanvasView: View {
         .overlay {
             if let wheel = canvas.wheel {
                 let contents = wheelContents(wheel)
-                CommandWheel(center: wheel.center, slots: contents.slots, extras: contents.extras, color: contents.color) {
+                CommandWheel(center: wheel.center, slots: contents.slots.filter { isAllowed($0.value) }, extras: contents.extras.filter(isAllowed),
+                             color: contents.color) {
                     canvas.wheel = nil
                 }
             }
@@ -157,7 +159,7 @@ struct CanvasView: View {
                 Color.black.opacity(0.001)
                     .onTapGesture { canvas.showsPalette = false }
                     .overlay(alignment: .top) {
-                        CommandPalette(commands: paletteCommands, highlight: $canvas.paletteHighlight) {
+                        CommandPalette(commands: paletteCommands.filter(isAllowed), highlight: $canvas.paletteHighlight) {
                             canvas.showsPalette = false
                         }
                         .padding(.top, 96)
@@ -178,8 +180,7 @@ struct CanvasView: View {
         .onChange(of: canvas.showsPalette) { if !canvas.showsPalette { isCanvasFocused = true } }
         // Opening a model puts the keys straight to work on it: T, Z and the rest, without a click first.
         .onAppear { isCanvasFocused = true }
-        // Read-only, keys such as T and Delete have nothing to do.
-        .focusable(!canvas.isReadOnly)
+        .focusable()
         .focused($isCanvasFocused)
         .focusEffectDisabled()
         // Key presses reach these even while a cell has focus, so each checks that none does. (`isCanvasFocused` won't
@@ -299,6 +300,18 @@ struct CanvasView: View {
     // MARK: Command palette
 
     /// New Table first, then what applies to the selection, tools and view, then every table to jump to.
+    /// Commands that change the schema, not just the layout: left out while only the layout can change, as when
+    /// comparing versions.
+    private static let schemaCommands: Set<String> = [
+        "new-table", "add-column", "rename", "group", "ungroup", "ungroup-tables", "ungroup-table", "delete", "rename-group",
+        "rename-column", "edit-type", "insert-column", "delete-column", "delete-port", "remove-port", "delete-key", "bundle",
+        "remove-ports",
+    ]
+
+    private func isAllowed(_ command: PaletteCommand) -> Bool {
+        !canvas.isLayoutOnly || !Self.schemaCommands.contains(command.id)
+    }
+
     private var paletteCommands: [PaletteCommand] {
         var commands = [PaletteCommand(id: "new-table", title: "New Table", symbol: "plus.rectangle", shortcut: "T") {
             canvas.addTable(to: &model)
@@ -1583,7 +1596,7 @@ struct CanvasView: View {
 
     /// Starts editing `cell`, its text replaced by `replacement` (typing over it) or kept.
     private func begin(_ cell: CanvasController.Cell, replacingWith replacement: String?, selectingAll: Bool = false) {
-        guard cell.part != .key else { return }
+        guard cell.part != .key, !canvas.isLayoutOnly else { return }
         commitDraft()
         canvas.cell = cell
         canvas.draft = replacement ?? text(of: cell)

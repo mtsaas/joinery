@@ -460,3 +460,44 @@ private extension Array where Element: Hashable {
         return filter { seen.insert($0).inserted }
     }
 }
+
+extension DataModel {
+    /// This model laid out as `other` is: where its tables are and their colors, the zip ties on its wires, and its
+    /// groups' colors and where their ports sit. Only the layout: its tables, columns and foreign keys stay as they
+    /// are. With `only`, just those tables move. Colors count as layout: they're how it looks, not what it is.
+    func takingLayout(from other: DataModel, only: Set<Table.ID>? = nil) -> DataModel {
+        var laid = self
+        let tables = Dictionary(other.tables.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for index in laid.tables.indices where only?.contains(laid.tables[index].id) ?? true {
+            guard let table = tables[laid.tables[index].id] else { continue }
+            laid.tables[index].position = table.position
+            laid.tables[index].color = table.color
+        }
+        guard only == nil else { return laid }
+        let colors = Dictionary(other.groups.map { ($0.id, $0.color) }, uniquingKeysWith: { first, _ in first })
+        for index in laid.groups.indices { laid.groups[index].color = colors[laid.groups[index].id] ?? laid.groups[index].color }
+        // A tie holds wires and groups' buses, which are named for their ports.
+        let wires = Set(laid.relationships.map(\.id) + laid.groups.flatMap(\.ports).map(\.id))
+        laid.zipTies = other.zipTies.compactMap { tie in
+            var tie = tie
+            tie.relationships.removeAll { !wires.contains($0) }
+            return tie.relationships.isEmpty ? nil : tie
+        }
+        let threaded = Dictionary(other.relationships.map { ($0.id, $0.zipTies) }, uniquingKeysWith: { first, _ in first })
+        for index in laid.relationships.indices {
+            laid.relationships[index].zipTies = threaded[laid.relationships[index].id] ?? []
+        }
+        let ports = Dictionary(other.groups.flatMap(\.ports).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for group in laid.groups.indices {
+            for index in laid.groups[group].ports.indices {
+                guard let port = ports[laid.groups[group].ports[index].id] else { continue }
+                laid.groups[group].ports[index].side = port.side
+                laid.groups[group].ports[index].along = port.along
+                laid.groups[group].ports[index].zipTies = port.zipTies
+            }
+        }
+        // Ties on wires or buses this model hasn't come off them.
+        laid.repair()
+        return laid
+    }
+}

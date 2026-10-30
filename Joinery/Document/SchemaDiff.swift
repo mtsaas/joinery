@@ -105,14 +105,14 @@ struct SchemaDiff: Equatable {
 
 extension SchemaDiff {
     /// The changes listed, for an AI assistant to check against what it meant to change and to sum up: tables added,
-    /// removed and changed, column by column, then foreign keys.
-    var report: String {
-        guard !isEmpty else { return "No changes since the baseline." }
+    /// removed and changed, column by column, then foreign keys. `from` and `to` name the two sides.
+    func report(from: String, to: String) -> String {
+        guard !isEmpty else { return "No changes from \(from) to \(to)." }
         func describe(_ column: Column) -> String {
             [column.name, column.type.rawValue, column.isNullable ? "nullable" : nil, column.isPrimaryKey ? "primary key" : nil,
              column.isUnique ? "unique" : nil].compactMap { $0 }.joined(separator: " ")
         }
-        var lines = ["Since the baseline: \(summary)."]
+        var lines = ["\(from) → \(to): \(summary)."]
         func section(_ title: String, _ items: [String]) {
             guard !items.isEmpty else { return }
             lines.append("\n\(title):")

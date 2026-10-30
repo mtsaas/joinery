@@ -114,18 +114,7 @@ final class MCPServer: @MainActor MCPHost {
                 .replacingOccurrences(of: "/", with: "-").trimmingCharacters(in: .whitespacesAndNewlines)
             library.newModel(in: try library.reviewsCollection(), named: title.isEmpty ? "Review" : title)
             guard let open = library.open else { throw ModelTools.Failure("Couldn't start a review: \(library.failure ?? "no data model opened").") }
-            return "Opened \(open.name), a new, empty data model in Reviews. Next, draw the schema as it was before the change with create_tables, arrange it, then call mark_baseline."
-        case "mark_baseline", "get_changes":
-            guard let open = library.open else { throw ModelTools.Failure("No data model is open in Joinery. Use start_review first.") }
-            if name == "mark_baseline" {
-                guard !open.model.tables.isEmpty else {
-                    throw ModelTools.Failure("The data model is empty. Draw the schema as it was before the change with create_tables first.")
-                }
-                try open.markBaseline()
-                return "Took the \(open.model.tables.count) tables in \(open.name) as the baseline: Joinery now shows changes from here as a diff. Next, make the change with alter_table, create_tables, drop_tables, add_foreign_key and remove_foreign_key."
-            }
-            guard let baseline = open.baseline else { throw ModelTools.Failure("There's no baseline to compare with: call mark_baseline first.") }
-            return SchemaDiff(from: baseline, to: open.model).report
+            return "Opened \(open.name), a new, empty data model in Reviews. Next, draw the schema as it was before the change with create_tables, arrange it, then save it with save_version, named for the base, such as main."
         case "start_sharing":
             guard let open = library.open else { throw ModelTools.Failure("No data model is open in Joinery. Use open_model or new_model first.") }
             if open.session != nil, !(open.session is SessionHost) {
@@ -144,6 +133,17 @@ final class MCPServer: @MainActor MCPHost {
         default:
             throw ModelTools.Failure("There's no tool called \(name).")
         }
+    }
+
+    @MainActor func withVersions(_ body: (inout VersionState) throws -> String) async throws -> String {
+        guard let open = Library.shared.open else {
+            throw ModelTools.Failure("No data model is open in Joinery. Use open_model, new_model or start_review first.")
+        }
+        var state = VersionState(model: open.model, named: open.named)
+        let result = try body(&state)
+        try open.setNamed(state.named)
+        open.change(to: state.model, byAssistant: true)
+        return result
     }
 
     @MainActor func edit(_ change: (inout DataModel) throws -> String) async throws -> String {
