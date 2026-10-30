@@ -66,6 +66,11 @@ JOINERY_LIBRARY=/tmp/joinery-library JOINERY_OPEN=Sakila JOINERY_SCRIPT="tie 320
 `scripts/build.sh` builds an unsandboxed, ad-hoc-signed Debug copy with its own bundle ID, so it can read sample files
 and write snapshots, and never touches the real library.
 
+`scripts/smoke.sh` smoke-tests both apps: it builds each, opens Storefront in a throwaway library, has an AI assistant
+add a table over MCP, checks it was applied and saved, and snapshots the canvas into `/tmp/joinery-smoke`. Run
+`scripts/smoke.sh mac` or `scripts/smoke.sh desktop` for one. The desktop app's debug builds take `JOINERY_OPEN` and
+`JOINERY_SNAPSHOT` as the Mac's do (`desktop/src-tauri/src/debug.rs`), and CI runs its half on Windows and Linux.
+
 ## Performance
 
 - **Frame rate:** Debug builds show frames per second while anything moves, and what the last frame cost.

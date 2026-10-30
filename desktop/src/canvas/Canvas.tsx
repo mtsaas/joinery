@@ -19,6 +19,8 @@ export interface CanvasHandle {
   zoomTo(zoom: number, around?: Point): void;
   fit(): void;
   redraw(): void;
+  /** Draws now, without waiting for a frame: webviews skip frames while the window's hidden. */
+  drawNow(): void;
 }
 
 /** The canvas's state, outside Preact: it changes every frame. */
@@ -30,6 +32,7 @@ export const canvas: CanvasHandle = {
   zoomTo: () => {},
   fit: () => {},
   redraw: () => {},
+  drawNow: () => {},
 };
 
 /** The wires, ports and ties as last drawn. */
@@ -94,6 +97,7 @@ export function Canvas({ onEditCell, onContextMenu, onOpenDesigner }: {
       if (!raf) raf = requestAnimationFrame(render);
     }
     canvas.redraw = request;
+    canvas.drawNow = () => { cancelAnimationFrame(raf); render(performance.now()); };
 
     /** What fades: in focus mode, tables not joined to those in focus; the wires shown over the rest are the selection's. */
     function highlight(scene: Scene) {

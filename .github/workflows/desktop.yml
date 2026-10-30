@@ -130,7 +130,7 @@ jobs:
       - name: Examples
         run: rm -rf examples && cp -R ../Joinery/Examples examples
       - if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -152,6 +152,18 @@ jobs:
           fi
           # Windows signing goes here: bundle.windows.signCommand in the same config, once there's a certificate.
           npx tauri build --bundles ${{ matrix.bundles }} --config "$config"
+      # A debug copy opens Storefront, takes an edit over MCP, saves it and snapshots the canvas (scripts/smoke.sh).
+      - name: Smoke test
+        env:
+          JOINERY_SMOKE_CORE: prebuilt
+          JOINERY_SMOKE_OUT: build/smoke
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a' || '' }} ../scripts/smoke.sh desktop
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ runner.os }}
+          path: build/smoke/*.*
+          retention-days: 7
       - name: Collect
         run: |
           mkdir -p ../build/desktop

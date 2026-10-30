@@ -9,6 +9,7 @@ import { installMenu } from "./menu.ts";
 import { exampleModels, library } from "./library.ts";
 import { act, fail, open, reload, getState } from "./store.ts";
 import { checkForUpdates } from "./updates.ts";
+import { runDebugHooks } from "./debug.ts";
 
 async function start() {
   const root = document.getElementById("app")!;
@@ -29,6 +30,7 @@ async function start() {
   if (first) await open(first.path);
   setEditNext(() => {});
   void checkForUpdates();
+  await runDebugHooks();
 }
 
 // For checking the app from a browser's console, and for tests that drive it.

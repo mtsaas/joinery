@@ -2,6 +2,7 @@
 // WebAssembly. This shell keeps the library on disk and listens for AI assistants.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod debug;
 mod library;
 mod mcp;
 mod menu;
@@ -37,6 +38,8 @@ fn main() {
             mcp::mcp_start,
             mcp::mcp_respond,
             mcp::mcp_stop,
+            debug::debug_hooks,
+            debug::debug_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("Joinery couldn't start");
