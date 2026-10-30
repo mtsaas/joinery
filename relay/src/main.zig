@@ -3,6 +3,7 @@
 //!
 //!     joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]
 //!                   [--threads <half the cores>] [--pin <first CPU>] [--batch-ms 5]
+//!                   [--max-rooms 256] [--max-connections 768]
 //!
 //! Prometheus metrics are at http://<metrics address>:<metrics port>/metrics, on this machine only unless the metrics
 //! address says otherwise.
@@ -10,6 +11,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const Server = @import("server/Server.zig");
+const Relay = @import("relay/Relay.zig");
 const socket = @import("server/socket.zig");
 
 pub const std_options: std.Options = .{ .logFn = log };
@@ -41,6 +43,11 @@ pub fn main(init: std.process.Init) !void {
     // How long a connection's queue waits for more before it's sent: 5 ms did the same work with 40% less CPU and
     // took a relay from 750 full rooms to 1,000, for a wait well under a frame (bench/load-results.md).
     var batch_ms: i64 = 5;
+    // What anyone can make the relay hold, without signing in, sized for 2 GiB at worst: a room up to its log's ring
+    // and a snapshot, about 4 MiB, and a connection up to a snapshot's worth of input, about 1 MiB. Raise them with
+    // the memory the relay's given.
+    var max_rooms: usize = 256;
+    var max_connections: usize = 768;
     var args = init.minimal.args.iterate();
     _ = args.skip();
     while (args.next()) |arg| {
@@ -57,6 +64,10 @@ pub fn main(init: std.process.Init) !void {
             threads = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--batch-ms")) {
             batch_ms = std.fmt.parseInt(i64, value, 10) catch return usage();
+        } else if (std.mem.eql(u8, arg, "--max-rooms")) {
+            max_rooms = std.fmt.parseInt(usize, value, 10) catch return usage();
+        } else if (std.mem.eql(u8, arg, "--max-connections")) {
+            max_connections = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--pin")) {
             pin = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else return usage();
@@ -76,13 +87,17 @@ pub fn main(init: std.process.Init) !void {
     for (loops, 0..) |*loop, i| {
         loop.* = try init.gpa.create(Server);
         const listener = if (own_listeners and i > 0) try socket.listen(address, true) else shared_listener;
-        try loop.*.init(io, init.gpa, .{}, @intCast(i), listener, metrics_listener);
+        // ponytail: each loop gets an even share, as the kernel spreads connections evenly; one loop can turn hosts
+        // away while another has room. A count shared across loops if that matters.
+        const config: Relay.Config = .{ .max_rooms = std.math.divCeil(usize, max_rooms, threads) catch unreachable };
+        try loop.*.init(io, init.gpa, config, @intCast(i), listener, metrics_listener);
     }
     for (loops) |loop| {
         loop.loops = loops;
         loop.batch_ms = batch_ms;
+        loop.max_conns = std.math.divCeil(usize, max_connections, threads) catch unreachable;
     }
-    std.log.info("relaying on {f} with {d} loops, metrics at http://{f}/metrics", .{ address, threads, metrics_address });
+    std.log.info("relaying on {f} with {d} loops, up to {d} rooms and {d} connections, metrics at http://{f}/metrics", .{ address, threads, max_rooms, max_connections, metrics_address });
     for (loops[1..]) |loop| {
         const thread = try std.Thread.spawn(.{}, runLoop, .{ loop, pin });
         thread.detach();
@@ -102,6 +117,6 @@ fn runLoop(loop: *Server, pin: ?usize) void {
 }
 
 fn usage() error{Usage} {
-    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n]", .{});
+    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n] [--max-rooms n] [--max-connections n]", .{});
     return error.Usage;
 }

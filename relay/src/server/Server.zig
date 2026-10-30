@@ -65,6 +65,9 @@ dirty: std.ArrayList(*Conn) = .empty,
 waiting: std.ArrayList(*Conn) = .empty,
 /// How long a connection's queue waits for more before it's sent, so a `send` carries more: 0 sends every turn.
 batch_ms: i64 = 0,
+/// The most connections this loop holds; past it, new ones are closed as they come. Each can come to hold a
+/// snapshot's worth of input, so this bounds the memory connections can take.
+max_conns: usize = std.math.maxInt(usize),
 /// Connections to let go of at the end of this turn, once nothing more can mention them.
 done: std.ArrayList(*Conn) = .empty,
 /// The network's side of the metrics.
@@ -163,6 +166,12 @@ fn accept(server: *Server, listener: c.fd_t, kind: Conn.Kind) void {
     while (true) {
         const fd = c.accept(listener, null, null);
         if (fd < 0) return;
+        // Scrapes always get in, so the metrics still say what's going on.
+        if (kind != .metrics and server.conn_count >= server.max_conns) {
+            _ = c.close(fd);
+            server.counts.refused += 1;
+            continue;
+        }
         server.adopt(fd, kind) catch {
             _ = c.close(fd);
             log.warn("turned a connection away: out of memory", .{});

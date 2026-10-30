@@ -16,7 +16,7 @@ echo "| Scenario | Changes delivered/s | p50 | p99 | Pointer updates/s | Pointer
 echo "| --- | --- | --- | --- | --- | --- | --- | --- | --- |"
 for scenario in "${scenarios[@]}"; do
   name=${scenario%%|*}; args=${scenario#*|}
-  ./zig-out/bin/joinery-relay --port 8796 --metrics-port 9196 > /tmp/load-relay.log 2>&1 &
+  ./zig-out/bin/joinery-relay --port 8796 --metrics-port 9196 --max-rooms 100000 --max-connections 100000 > /tmp/load-relay.log 2>&1 &
   relay=$!
   sleep 0.5
   out=$(zig build load -- --port 8796 $args --seconds 10 2>&1)

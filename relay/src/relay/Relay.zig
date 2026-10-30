@@ -27,6 +27,8 @@ out: Out,
 limits: wire.Limits,
 /// A room whose host has been gone this long ends, in ms.
 host_grace: i64,
+/// The most rooms it holds at once; a host's hello past it is told the relay is full.
+max_rooms: usize,
 shard: ?u8,
 rooms: std.StringHashMapUnmanaged(*Room) = .empty,
 /// The same rooms, to visit each on a tick.
@@ -132,6 +134,9 @@ pub const Link = struct {
 pub const Config = struct {
     limits: wire.Limits = .{},
     host_grace: i64 = 30_000,
+    /// Each room can come to hold its whole log and snapshot, several MiB, so this is what bounds the memory anyone
+    /// can make the relay commit, without signing in.
+    max_rooms: usize = std.math.maxInt(usize),
     /// With several relays in one process, one per thread, which this is: written into its rooms' IDs, so a guest's
     /// connection can be handed to the relay that has its room.
     shard: ?u8 = null,
@@ -145,7 +150,7 @@ pub fn shardOf(room: []const u8) ?u8 {
 
 pub fn init(gpa: Allocator, random: std.Random, out: Out, config: Config) Relay {
     assert(config.limits.max_peers >= 2 and config.limits.max_peers <= max_peers);
-    return .{ .gpa = gpa, .random = random, .out = out, .limits = config.limits, .host_grace = config.host_grace, .shard = config.shard };
+    return .{ .gpa = gpa, .random = random, .out = out, .limits = config.limits, .host_grace = config.host_grace, .max_rooms = config.max_rooms, .shard = config.shard };
 }
 
 pub fn deinit(relay: *Relay) void {
@@ -681,6 +686,9 @@ pub const Room = struct {
 };
 
 fn makeRoom(relay: *Relay, h: wire.Hello) Allocator.Error!*Room {
+    // Memory's only taken as it's written, so running out shows up as the kernel ending the process, not as an
+    // allocation failing: the count is what turns hosts away first.
+    if (relay.rooms.count() >= relay.max_rooms) return error.OutOfMemory;
     const gpa = relay.gpa;
     const limits = relay.limits;
     const log_capacity = Log.capacity(limits.log_bytes, limits.max_frame);

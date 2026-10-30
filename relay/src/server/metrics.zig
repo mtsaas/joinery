@@ -16,6 +16,8 @@ pub const Counts = struct {
     bytes_out: u64 = 0,
     /// Connections closed for falling too far behind to queue for.
     lagging: u64 = 0,
+    /// Connections closed as they came, the loop holding as many as it may.
+    refused: u64 = 0,
     /// Pointer updates a connection was behind on, replaced by newer ones from the same person before they went.
     pointers_replaced: u64 = 0,
 };
@@ -50,6 +52,7 @@ pub fn write(w: *Io.Writer, total: Published, loops: usize, started: i64) Io.Wri
         .{ .name = "log_bytes", .kind = "gauge", .help = "Bytes of frames held in rooms' logs.", .value = g.log_bytes },
         .{ .name = "connections", .kind = "gauge", .help = "WebSocket connections open.", .value = counts.connections_open },
         .{ .name = "connections_total", .kind = "counter", .help = "WebSocket connections accepted.", .value = counts.connections },
+        .{ .name = "refused_total", .kind = "counter", .help = "Connections closed as they came, the relay holding as many as it may.", .value = counts.refused },
         .{ .name = "lagging_total", .kind = "counter", .help = "Connections closed for falling too far behind.", .value = counts.lagging },
         .{ .name = "pointers_replaced_total", .kind = "counter", .help = "Pointer updates replaced by newer ones before a connection that was behind was sent them.", .value = counts.pointers_replaced },
         .{ .name = "frames_received_total", .kind = "counter", .help = "Frames received.", .value = counts.frames_in },
