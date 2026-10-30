@@ -10,6 +10,8 @@ struct VersionHistory: View {
     struct Preview: Equatable {
         let version: History.Version
         let model: DataModel
+        /// A review's: how it was before the change `model` is after. Shown as that change, not compared with now.
+        var before: DataModel?
     }
 
     private enum Item: Hashable {
@@ -18,8 +20,9 @@ struct VersionHistory: View {
     }
 
     @State private var versions: [History.Version] = []
-    /// Versions read so far; they never change.
+    /// Versions read so far, and reviews' befores; they never change.
     @State private var models: [URL: DataModel] = [:]
+    @State private var befores: [URL: DataModel] = [:]
     @State private var selection: Item? = .now
     @FocusState private var isFocused: Bool
 
@@ -71,7 +74,7 @@ struct VersionHistory: View {
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
             }
-            Text("Kept when you open it, before AI assistants' changes, before deleting or rearranging tables, and hourly while editing. Older ones thin out to one a day, then one a week. Restoring can be undone.")
+            Text("Kept when you open it, before AI assistants' changes, before deleting or rearranging tables, hourly while editing, and when a review ends, showing its change. Older ones thin out to one a day, then one a week; reviews and those saved with ⌘S stay. Restoring can be undone.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -96,7 +99,9 @@ struct VersionHistory: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
-            Text(models[version.url].map { Self.change(to: $0, from: open.model) } ?? "Can't be read")
+            Text(models[version.url].map { model in
+                befores[version.url].map { "Review: " + SchemaDiff(from: $0, to: model).summary } ?? Self.change(to: model, from: open.model)
+            } ?? "Can't be read")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
@@ -110,12 +115,13 @@ struct VersionHistory: View {
         versions = open.history.versions
         for version in versions where models[version.url] == nil {
             models[version.url] = try? DataModel(contentsOf: version.url)
+            if version.isReview { befores[version.url] = try? DataModel(contentsOf: version.beforeURL) }
         }
     }
 
     private func show(_ item: Item?) {
         guard case .version(let version) = item, let model = models[version.url] else { return preview = nil }
-        preview = Preview(version: version, model: model)
+        preview = Preview(version: version, model: model, before: befores[version.url])
     }
 
     private func restore(_ version: History.Version) {

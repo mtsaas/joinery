@@ -67,11 +67,12 @@ struct ModelEditor: View {
 
     var body: some View {
         // Compared with an earlier version, or in a review with how it was before the change, it can't be changed:
-        // it's only there to look at.
-        let base = preview?.model ?? open.baseline
-        let diff = base.flatMap { comparison == .changes ? SchemaDiff(from: $0, to: open.model) : nil }
-        let shown = base.map { comparison == .then ? $0 : diff?.model ?? open.model }
-        let isComparing = base != nil
+        // it's only there to look at. A review's version shows its own change, before and after, not how it is now.
+        let (before, after) = preview.map { preview in preview.before.map { ($0, preview.model) } ?? (preview.model, open.model) }
+            ?? (open.baseline, open.model)
+        let diff = before.flatMap { comparison == .changes ? SchemaDiff(from: $0, to: after) : nil }
+        let shown = before.map { comparison == .then ? $0 : diff?.model ?? after }
+        let isComparing = before != nil
         let model = Binding { shown ?? canvas.shown(open.model) } set: { if !isComparing { open.change(to: $0) } }
         CanvasView(model: model, canvas: canvas, diff: diff)
             .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { canvasOrigin = $0 }
@@ -159,15 +160,22 @@ struct ModelEditor: View {
             .modifier(PresenceSharing(open: open, canvas: canvas, canvasOrigin: canvasOrigin))
             // At the bottom, clear of the version history's popover.
             .overlay(alignment: .bottom) {
-                if let preview {
+                if let preview, preview.before != nil {
                     let when = "\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened))"
-                    ComparisonBar(comparison: $comparison, isReview: false,
+                    ComparisonBar(comparison: $comparison, isReview: true, endsReview: false,
+                                  caption: diff.map { "Reviewed \(when): \($0.summary)" } ?? "\(comparison == .then ? "Before" : "After") the change reviewed \(when), read-only") {
+                        self.preview = nil
+                    }
+                    .padding(.bottom, 20)
+                } else if let preview {
+                    let when = "\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened))"
+                    ComparisonBar(comparison: $comparison, isReview: false, endsReview: false,
                                   caption: diff.map { "\(when) to now: \($0.summary)" } ?? "\(comparison == .then ? when : "Now"), read-only") {
                         self.preview = nil
                     }
                     .padding(.bottom, 20)
                 } else if open.baseline != nil {
-                    ComparisonBar(comparison: $comparison, isReview: true,
+                    ComparisonBar(comparison: $comparison, isReview: true, endsReview: true,
                                   caption: diff.map { "Review: \($0.summary)" } ?? "\(comparison == .then ? "Before" : "After") the change, read-only") {
                         open.endReview()
                     }
@@ -199,7 +207,8 @@ private struct ZoomMenu: View {
     let bounds: CGRect?
 
     var body: some View {
-        Menu(Self.percent(canvas.zoom)) {
+        // A text label: the toolbar shows a title string icon-only, which here left just the chevron.
+        Menu {
             Button("Zoom In") { canvas.zoom(by: 1.25) }
             Button("Zoom Out") { canvas.zoom(by: 0.8) }
             Button("Zoom to Fit") { canvas.zoomToFit(bounds) }
@@ -207,6 +216,8 @@ private struct ZoomMenu: View {
             ForEach([0.5, 1, 2] as [CGFloat], id: \.self) { level in
                 Button(Self.percent(level)) { canvas.zoom(by: level / canvas.zoom) }
             }
+        } label: {
+            Text(Self.percent(canvas.zoom))
         }
         .monospacedDigit()
         .fixedSize()
@@ -287,6 +298,8 @@ private struct ComparisonBar: View {
     @Binding var comparison: Comparison
     /// Reviewing a change, before and after it, rather than looking at an earlier version.
     let isReview: Bool
+    /// The review open now, which Done ends, rather than one kept in the version history.
+    let endsReview: Bool
     let caption: String
     let done: () -> Void
 
@@ -300,9 +313,9 @@ private struct ComparisonBar: View {
             .labelsHidden()
             .fixedSize()
             Text(caption).monospacedDigit()
-            if isReview {
+            if endsReview {
                 Button("End Review", action: done)
-                    .help("Stop comparing: keep the data model as it is after the change, to edit, and forget how it was before")
+                    .help("Stop comparing: keep the data model as it is after the change, to edit. The change stays in the version history, to look at again")
             } else {
                 Button("Done", action: done)
                     .keyboardShortcut(.cancelAction)

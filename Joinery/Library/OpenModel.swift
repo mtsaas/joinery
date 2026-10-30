@@ -45,8 +45,13 @@ final class OpenModel {
         baseline = model
     }
 
-    /// Ends the review: the model stays as it is, and the baseline is forgotten.
+    /// Why a review's version was kept.
+    static let reviewReason = "Reviewed change"
+
+    /// Ends the review: the model stays as it is, and the baseline is forgotten here, but kept in a version with the
+    /// model as it is, so the change can always be seen as it was reviewed.
     func endReview() {
+        if let baseline, baseline != model { try? history.save(model, reason: Self.reviewReason, before: baseline) }
         try? FileManager.default.removeItem(at: baselineURL)
         baseline = nil
     }
@@ -128,7 +133,7 @@ final class OpenModel {
         scheduleSave()
     }
 
-    /// Another person's change, taken by a session this hosts (`HostCore`), and the tidying after it. Undo here is left
+    /// Another person's change, taken by a session this hosts (`RelayHostCore`), and the tidying after it. Undo here is left
     /// alone: it undoes only changes made here.
     func applyFromSession(_ ops: [Replica.Op]) {
         _ = replica.apply(ops)

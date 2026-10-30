@@ -96,6 +96,7 @@ struct SchemaDiff: Equatable {
             let added = count(changes, .added), removed = count(changes, .removed)
             if added > 0 { parts.append(plural(added, noun) + " added") }
             if removed > 0 { parts.append((added > 0 ? "\(removed)" : plural(removed, noun)) + " removed") }
+            if noun == "table", !oldNames.isEmpty { parts.append(plural(oldNames.count, "table") + " renamed") }
             if noun == "table", changedColumns > 0 { parts.append(plural(changedColumns, "column") + " changed") }
         }
         return parts.isEmpty ? "No changes" : parts.joined(separator: ", ")

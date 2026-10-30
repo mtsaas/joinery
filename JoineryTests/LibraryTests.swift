@@ -151,6 +151,36 @@ struct LibraryTests {
         #expect(library.open?.history.versions.dropFirst().map(\.url.lastPathComponent) == versions, "and one for opening it")
     }
 
+    @Test func aReviewKeepsItsChangeInTheVersionHistory() throws {
+        let library = freshLibrary()
+        let examples = try #require(library.collections.first { $0.name == Library.examplesName })
+        library.selection = examples.models.first { Library.name(of: $0) == "Storefront" }
+        let open = try #require(library.open)
+        let before = open.model
+        try open.markBaseline()
+        var after = before
+        after.tables[0].name = "renamed_by_the_change"
+        open.change(to: after, byAssistant: true)
+        open.endReview()
+        #expect(open.baseline == nil)
+
+        // Edited since, the reviewed version still holds the change, both sides of it.
+        var edited = after
+        edited.tables[1].name = "edited_after"
+        open.change(to: edited)
+        let review = try #require(open.history.versions.first { $0.isReview })
+        #expect(review.reason == OpenModel.reviewReason)
+        #expect(try DataModel(contentsOf: review.url) == after)
+        #expect(try DataModel(contentsOf: review.beforeURL) == before)
+        #expect(SchemaDiff(from: try DataModel(contentsOf: review.beforeURL), to: try DataModel(contentsOf: review.url)).summary == "1 table renamed")
+
+        // Kept as the rest thin out.
+        let history = open.history
+        let reviewDate = review.date
+        try history.save(edited, reason: "While editing", now: reviewDate.addingTimeInterval(40 * 24 * 3600))
+        #expect(history.versions.contains { $0.isReview })
+    }
+
     @Test func savingAVersionKeepsItForGood() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "JoineryTests-\(UUID().uuidString).joinery", directoryHint: .isDirectory)
         try DataModel().write(to: folder)
