@@ -108,6 +108,9 @@ final class Workspace {
         lastVersion = .now
         var event: [String: Any] = ["type": "version", "reason": reason]
         if let before, let data = try? before.fileData { event["before"] = String(decoding: data, as: UTF8.self) }
+        // The model as it is now, before the change that asked for the version: by the time the shell saves it, the
+        // change has been made.
+        if let data = try? model.fileData { event["model"] = String(decoding: data, as: UTF8.self) }
         Events.post(event)
     }
 }

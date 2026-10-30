@@ -4,14 +4,16 @@ import { startAssistants } from "./assistant.ts";
 import "./session.ts";
 import { setEditNext } from "./canvas/CellEditor.tsx";
 import { loadCore } from "./core.ts";
+import { installMenu } from "./menu.ts";
 import { exampleModels, library } from "./library.ts";
-import { fail, open, reload, getState } from "./store.ts";
+import { act, fail, open, reload, getState } from "./store.ts";
 
 async function start() {
   const root = document.getElementById("app")!;
   root.textContent = "Loading…";
   await loadCore();
   render(<App />, root);
+  await installMenu();
   await startAssistants();
   await reload();
   // A first run starts with the examples, as the Mac app does.
@@ -27,7 +29,7 @@ async function start() {
 }
 
 // For checking the app from a browser's console, and for tests that drive it.
-Object.assign(window, { joinery: { getState, core: () => import("./core.ts").then((m) => m.core) } });
+Object.assign(window, { joinery: { getState, act, library, core: () => import("./core.ts").then((m) => m.core) } });
 
 start().catch((error) => {
   fail(error);

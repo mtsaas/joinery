@@ -3,6 +3,7 @@ import { useEffect, useState } from "preact/hooks";
 import { core } from "./core.ts";
 import { Canvas, canvas, onZoom } from "./canvas/Canvas.tsx";
 import { CellEditor, type Editing } from "./canvas/CellEditor.tsx";
+import { ComparisonBar } from "./panels/ComparisonBar.tsx";
 import { ContextMenu, type Menu } from "./panels/ContextMenu.tsx";
 import { Panels } from "./panels/Panels.tsx";
 import { Sidebar } from "./panels/Sidebar.tsx";
@@ -27,7 +28,7 @@ export function App() {
           {menu && <ContextMenu menu={menu} onClose={() => setMenu(null)} />}
           <Panels />
           {!state.scene && <Empty />}
-          {state.scene?.reviewing && <ReviewBar summary={state.scene.summary} />}
+          <ComparisonBar />
           {state.notice && <div class="notice">{state.notice}</div>}
           {state.failure && (
             <div class="failure" role="alert">
@@ -80,15 +81,6 @@ function Empty() {
   return (
     <div class="empty">
       <p>Open a data model from the library, or make a new one.</p>
-    </div>
-  );
-}
-
-function ReviewBar({ summary }: { summary: string | null }) {
-  return (
-    <div class="review-bar">
-      <span>Reviewing: {summary ?? "No changes"}</span>
-      <button onClick={() => act(() => core.endReview())}>End Review</button>
     </div>
   );
 }

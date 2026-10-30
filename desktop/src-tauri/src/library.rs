@@ -306,13 +306,66 @@ pub fn set_baseline(path: String, model: String) -> Result<()> {
     }
 }
 
-/// A `.joinery` file or folder from elsewhere, copied into the library.
+/// What's imported from `source`: a `.joinery` package or file, or, picked inside a package (a file dialog can't pick
+/// a folder as a file), its `model.json` stands for the package.
+fn import_source(source: &Path) -> PathBuf {
+    match source.parent() {
+        Some(package) if source.file_name().is_some_and(|n| n == "model.json") && is_model(package) => package.to_path_buf(),
+        _ => source.to_path_buf(),
+    }
+}
+
+/// A `.joinery` file or folder from elsewhere, copied into the library, in `collection` if given.
 #[tauri::command]
-pub fn import_model(source: String) -> Result<String> {
-    let from = PathBuf::from(&source);
-    let copy = unique(&root(), &name_of(&from), Some("joinery"));
+pub fn import_model(source: String, collection: Option<String>) -> Result<String> {
+    let from = import_source(Path::new(&source));
+    if !from.exists() {
+        return Err(format!("There's nothing at {source}."));
+    }
+    let copy = unique(&folder_of(collection)?, &name_of(&from), Some("joinery"));
     copy_all(&from, &copy).map_err(err)?;
     Ok(relative(&copy))
+}
+
+/// A copy of a model, its versions and all, saved outside the library at `destination`, to send.
+#[tauri::command]
+pub fn export_model(path: String, destination: String) -> Result<()> {
+    let from = resolve(&path)?;
+    let mut to = PathBuf::from(&destination);
+    if !is_model(&to) {
+        to.set_extension("joinery");
+    }
+    if to.exists() {
+        // The dialog asked before replacing it.
+        if to.is_dir() { fs::remove_dir_all(&to) } else { fs::remove_file(&to) }.map_err(err)?;
+    }
+    copy_all(&from, &to).map_err(err)
+}
+
+/// Renames a collection; its models' marks go with them.
+#[tauri::command]
+pub fn rename_collection(name: String, to: String) -> Result<String> {
+    let from = resolve(&name)?;
+    let cleaned = clean(&to);
+    if cleaned == name {
+        return Ok(name);
+    }
+    let target = unique(&root(), &cleaned, None);
+    fs::rename(&from, &target).map_err(err)?;
+    let new = relative(&target);
+    let mut m = marks();
+    let prefix = format!("{name}/");
+    let moved = |path: &String| path.strip_prefix(&prefix).map(|rest| format!("{new}/{rest}"));
+    m.favorites = m.favorites.iter().map(|p| moved(p).unwrap_or_else(|| p.clone())).collect();
+    m.opened = m.opened.iter().map(|(p, t)| (moved(p).unwrap_or_else(|| p.clone()), *t)).collect();
+    save_marks(&m)?;
+    Ok(new)
+}
+
+/// A collection and the models in it, to the Recycle Bin.
+#[tauri::command]
+pub fn trash_collection(name: String) -> Result<()> {
+    trash::delete(resolve(&name)?).map_err(err)
 }
 
 #[tauri::command]
@@ -471,6 +524,46 @@ mod tests {
         assert!(resolve("../secrets").is_err());
         assert!(resolve("/etc/passwd").is_err());
         assert!(resolve("Examples/Sakila.joinery").is_ok());
+    }
+
+    /// Creating, collections renamed with their marks, exporting a copy and importing it back, on disk.
+    #[test]
+    fn models_move_between_collections_and_out_and_back() {
+        let dir = std::env::temp_dir().join(format!("joinery-library-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        std::env::set_var("JOINERY_LIBRARY", &dir);
+        let model = r#"{"tables":[]}"#.to_string();
+        let path = create_model(Some("Work".into()), "Shop".into(), model.clone()).unwrap();
+        assert_eq!(path, "Work/Shop.joinery");
+        set_favorite(path.clone(), true).unwrap();
+        save_version(path.clone(), "Opened".into(), model.clone(), None).unwrap();
+
+        let renamed = rename_collection("Work".into(), "Clients".into()).unwrap();
+        assert_eq!(renamed, "Clients");
+        let listing = list_library().unwrap();
+        assert_eq!(listing.collections, vec!["Clients".to_string()]);
+        assert!(listing.models.iter().any(|m| m.path == "Clients/Shop.joinery" && m.favorite));
+
+        let outside = dir.with_extension("export");
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        let exported = outside.join("Shop copy");
+        export_model("Clients/Shop.joinery".into(), exported.to_string_lossy().into()).unwrap();
+        let package = outside.join("Shop copy.joinery");
+        assert!(package.join("model.json").exists() && package.join("Versions").is_dir());
+
+        let imported = import_model(package.join("model.json").to_string_lossy().into(), None).unwrap();
+        assert_eq!(imported, "Shop copy.joinery");
+        assert_eq!(read_model(imported).unwrap().model, model);
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn a_packages_model_json_imports_the_package() {
+        assert_eq!(import_source(Path::new("/x/Shop.joinery/model.json")), PathBuf::from("/x/Shop.joinery"));
+        assert_eq!(import_source(Path::new("/x/Shop.joinery")), PathBuf::from("/x/Shop.joinery"));
+        assert_eq!(import_source(Path::new("/x/model.json")), PathBuf::from("/x/model.json"));
     }
 
     #[test]

@@ -12,6 +12,20 @@ enum App {
     nonisolated(unsafe) static let workspace = Workspace()
     nonisolated(unsafe) static let scene = Scene()
     nonisolated(unsafe) static let sessions = Sessions(workspace: workspace)
+    /// A version picked in the history, shown instead of the model: compared with it now, or a review's, its change.
+    /// `after` nil is the model as it is.
+    nonisolated(unsafe) static var preview: (before: DataModel, after: DataModel?)?
+    /// Comparing, which side is shown: "then", "changes" or "now".
+    nonisolated(unsafe) static var side = "changes"
+    static var isComparing: Bool { preview != nil || workspace.baseline != nil }
+}
+
+/// Comparing, nothing's edited from the canvas: it's only there to look at.
+private func editable() throws(JSException) {
+    if App.isComparing {
+        throw JSException(message: App.preview != nil ? "Showing an earlier version: choose Done, or restore it, to edit."
+                                                     : "Reviewing a change: choose End Review to edit.")
+    }
 }
 
 private func failure(_ error: any Error) -> JSException {
@@ -59,22 +73,56 @@ private func failure(_ error: any Error) -> JSException {
 
 /// Makes an edit (see `Edits`), as one change and one undo. Returns `{"result": …}`.
 @JS public func edit(_ name: String, arguments: String) throws(JSException) -> String {
+    try editable()
     do { return try Edits.edit(name, object(arguments), in: App.workspace) } catch { throw failure(error) }
 }
 
 /// Zip-ties the wires a stroke crosses; returns the tie's ID, or "".
 @JS public func zipTie(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double) -> String {
-    App.scene.zipTie(App.workspace, from: CGPoint(x: x1, y: y1), to: CGPoint(x: x2, y: y2))?.uuidString ?? ""
+    guard !App.isComparing else { return "" }
+    return App.scene.zipTie(App.workspace, from: CGPoint(x: x1, y: y1), to: CGPoint(x: x2, y: y2))?.uuidString ?? ""
 }
 
 /// The selection as a clip, to copy.
 @JS public func copy(_ selection: String) -> String { Edits.copy(object(selection), in: App.workspace) }
 
-@JS public func undo() { App.workspace.undo() }
-@JS public func redo() { App.workspace.redo() }
+@JS public func undo() { if !App.isComparing { App.workspace.undo() } }
+@JS public func redo() { if !App.isComparing { App.workspace.redo() } }
 
 @JS public func markBaseline() { App.workspace.markBaseline() }
-@JS public func endReview() { App.workspace.endReview() }
+@JS public func endReview() {
+    App.side = "changes"
+    App.workspace.endReview()
+    Events.post(["type": "changed"])
+}
+
+/// Shows a version from the history instead of the model, read-only: compared with the model as it is, or, a
+/// review's (with `before`), as the change it was.
+@JS public func showVersion(_ model: String, before: String) throws(JSException) {
+    do {
+        let decoder = JSONDecoder()
+        let version = try decoder.decode(DataModel.self, from: Data(model.utf8))
+        App.preview = before.isEmpty ? (version, nil) : (try decoder.decode(DataModel.self, from: Data(before.utf8)), version)
+        App.side = "changes"
+        Events.post(["type": "changed"])
+    } catch {
+        throw failure(error)
+    }
+}
+
+/// Back to the model as it is, to edit.
+@JS public func endPreview() {
+    guard App.preview != nil else { return }
+    App.preview = nil
+    App.side = "changes"
+    Events.post(["type": "changed"])
+}
+
+/// Comparing, which side to show: "then", "changes" or "now".
+@JS public func setComparisonSide(_ side: String) {
+    App.side = ["then", "now"].contains(side) ? side : "changes"
+    Events.post(["type": "changed"])
+}
 
 /// A version's model, compared with the one open, as the review summary says it: "2 tables added".
 @JS public func compare(_ before: String, _ after: String) -> String {

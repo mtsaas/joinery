@@ -42,8 +42,13 @@ export interface Library {
   saveVersion(path: string, reason: string, model: string, before: string | null): Promise<boolean>;
   versions(path: string): Promise<Version[]>;
   readVersion(path: string, file: string): Promise<{ model: string; before: string | null }>;
-  /** A `.joinery` file or folder chosen elsewhere, copied into the library. */
-  importModel(source: string): Promise<string>;
+  /** A `.joinery` file or folder chosen elsewhere (or a package's `model.json`), copied into the library. */
+  importModel(source: string, collection: string | null): Promise<string>;
+  /** A copy of a model, versions and all, saved outside the library. */
+  exportModel(path: string, destination: string): Promise<void>;
+  renameCollection(name: string, to: string): Promise<string>;
+  trashCollection(name: string): Promise<void>;
+  /** Shows a model or a collection in Explorer. */
   reveal(path: string): Promise<void>;
 }
 
@@ -74,7 +79,10 @@ const app: Library = {
   saveVersion: (path, reason, model, before) => invoke("save_version", { path, reason, model, before }),
   versions: (path) => invoke("list_versions", { path }),
   readVersion: (path, file) => invoke("read_version", { path, file }),
-  importModel: (source) => invoke("import_model", { source }),
+  importModel: (source, collection) => invoke("import_model", { source, collection }),
+  exportModel: (path, destination) => invoke("export_model", { path, destination }),
+  renameCollection: (name, to) => invoke("rename_collection", { name, to }),
+  trashCollection: (name) => invoke("trash_collection", { name }),
   reveal: (path) => invoke("reveal", { path }),
 };
 
@@ -150,6 +158,24 @@ function memory(): Library {
       return { model: v.model, before: v.before };
     },
     async importModel() { throw new Error("Importing needs the app."); },
+    async exportModel() { throw new Error("Exporting needs the app."); },
+    async renameCollection(name, to) {
+      let target = to.trim() || name, i = 2;
+      while (target !== name && collections.has(target)) target = `${to.trim()} ${i++}`;
+      if (target === name) return name;
+      collections.delete(name);
+      collections.add(target);
+      for (const [path, f] of [...files]) {
+        if (!path.startsWith(`${name}/`)) continue;
+        files.delete(path);
+        files.set(`${target}/${path.slice(name.length + 1)}`, f);
+      }
+      return target;
+    },
+    async trashCollection(name) {
+      collections.delete(name);
+      for (const path of [...files.keys()]) if (path.startsWith(`${name}/`)) files.delete(path);
+    },
     async reveal() {},
   };
 }

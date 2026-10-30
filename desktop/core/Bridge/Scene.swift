@@ -8,10 +8,18 @@ final class Scene {
     private let simulation = WireSimulation()
     private let portShapes = PortShapes()
 
-    /// The model as drawn: with what's been removed since the baseline put back, while reviewing.
+    /// The model as drawn. Comparing (a version picked in the history, or a review), it's the earlier model, the later
+    /// one, or the later with what's been removed put back and the changes marked, as `App.side` says.
     static func drawn(_ workspace: Workspace) -> (model: DataModel, diff: SchemaDiff?) {
-        let diff = workspace.baseline.map { SchemaDiff(from: $0, to: workspace.model) }
-        return (diff?.model ?? workspace.model, diff)
+        let after = App.preview.map { $0.after ?? workspace.model } ?? workspace.model
+        guard let before = App.preview?.before ?? workspace.baseline else { return (after, nil) }
+        switch App.side {
+        case "then": return (before, nil)
+        case "now": return (after, nil)
+        default:
+            let diff = SchemaDiff(from: before, to: after)
+            return (diff.model, diff)
+        }
     }
 
     /// Tables, columns and groups, with their frames, colors and changes.
@@ -44,6 +52,8 @@ final class Scene {
         }
         return [
             "tables": tables, "groups": groups, "reviewing": workspace.baseline != nil,
+            // Comparing, the canvas is only there to look at.
+            "comparing": App.isComparing, "side": App.side, "previewing": App.preview != nil,
             "summary": diff?.summary ?? NSNull(), "canUndo": workspace.canUndo, "canRedo": workspace.canRedo,
             "bounds": model.bounds.map(rect) ?? NSNull(),
         ]

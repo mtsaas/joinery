@@ -1,26 +1,28 @@
-// Share, Join, Settings and version history: the Mac's panels, plainly.
-import { useEffect, useState } from "preact/hooks";
-import { mcpStatus } from "../assistant.ts";
-import { core } from "../core.ts";
-import { library, type Version } from "../library.ts";
+// Share, Join, Settings and version history: the Mac's panels.
+import { useLayoutEffect, useState } from "preact/hooks";
+import { mcpStatus, setAssistantsEnabled } from "../assistant.ts";
+import { redraw } from "../canvas/Canvas.tsx";
 import { join, share } from "../session.ts";
-import { act, fail, getState, leave, saveVersion, set, settings, useStore } from "../store.ts";
+import { getState, leave, set, settings, useStore } from "../store.ts";
+import { History } from "./History.tsx";
 
 export function Panels() {
   const state = useStore();
+  // The canvas draws on request: the scene changing anywhere (an edit, a version picked, an assistant's change) asks.
+  useLayoutEffect(() => redraw(), [state.revision]);
   return (
     <>
       {state.showsShare && <SharePanel />}
       {state.showsJoin && <JoinPanel />}
       {state.showsSettings && <SettingsPanel />}
-      {state.showsHistory && state.path && <HistoryPanel path={state.path} />}
+      {state.showsHistory && state.path && <History path={state.path} />}
     </>
   );
 }
 
 function Panel({ title, onClose, children }: { title: string; onClose: () => void; children: preact.ComponentChildren }) {
   return (
-    <div class="panel" role="dialog" aria-label={title}>
+    <div class="panel" role="dialog" aria-label={title} onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
       <h3>{title}</h3>
       {children}
       <div class="row"><button onClick={onClose}>Done</button></div>
@@ -45,9 +47,9 @@ function SharePanel() {
       {session.links && (
         <>
           <label>Link to edit</label>
-          <code>{session.links.edit}</code>
+          <Copyable text={session.links.edit} />
           <label>Link only to watch</label>
-          <code>{session.links.view}</code>
+          <Copyable text={session.links.view} />
           <p class="secondary">Send them as you would a password: anyone with a link can join while sharing lasts.</p>
         </>
       )}
@@ -63,13 +65,27 @@ function SharePanel() {
   );
 }
 
+/** Text to copy, with a button that does. */
+function Copyable({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div class="copyable">
+      <code>{text}</code>
+      <button onClick={() => void navigator.clipboard.writeText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); })}>
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
 function JoinPanel() {
   const [link, setLink] = useState("");
   const close = () => set({ showsJoin: false });
   return (
     <Panel title="Join a Session" onClose={close}>
       <label>Share link</label>
-      <input type="text" value={link} onInput={(e) => setLink((e.target as HTMLInputElement).value)} placeholder="Paste the link you were sent" autoFocus />
+      <input type="text" value={link} onInput={(e) => setLink((e.target as HTMLInputElement).value)} placeholder="Paste the link you were sent" autoFocus
+        onKeyDown={(e) => { if (e.key === "Enter" && link.trim()) { join(link); close(); } }} />
       <div class="row"><button class="primary" disabled={!link.trim()} onClick={() => { join(link); close(); }}>Join</button></div>
     </Panel>
   );
@@ -79,12 +95,19 @@ function SettingsPanel() {
   const [relay, setRelay] = useState(settings.relay);
   const [name, setName] = useState(settings.name);
   const [avoid, setAvoid] = useState(settings.avoidTables);
+  const [assistants, setAssistants] = useState(settings.mcpEnabled);
+  const [status, setStatus] = useState(mcpStatus);
   const close = () => {
     settings.relay = relay.trim() || "http://localhost:8787";
     settings.name = name.trim() || "Me";
     settings.avoidTables = avoid;
     set({ showsSettings: false });
   };
+  async function toggleAssistants(on: boolean) {
+    setAssistants(on);
+    await setAssistantsEnabled(on);
+    setStatus(mcpStatus);
+  }
   return (
     <Panel title="Settings" onClose={close}>
       <label>Your name, as others in a session see it</label>
@@ -94,60 +117,20 @@ function SettingsPanel() {
       <label class="check">
         <input type="checkbox" checked={avoid} onChange={(e) => setAvoid((e.target as HTMLInputElement).checked)} /> Wires bend around tables
       </label>
-      <label>AI assistants (MCP)</label>
-      <p>{mcpStatus}</p>
-      <p class="secondary">For Claude Code:</p>
-      <code>claude mcp add --transport http joinery http://127.0.0.1:8723/mcp</code>
+      <h4>AI assistants</h4>
+      <label class="check">
+        <input type="checkbox" checked={assistants} onChange={(e) => void toggleAssistants((e.target as HTMLInputElement).checked)} />
+        Let AI assistants read and edit data models (MCP)
+      </label>
+      <p class="secondary">{status}</p>
+      {assistants && (
+        <>
+          <p class="secondary">For Claude Code:</p>
+          <Copyable text="claude mcp add --transport http joinery http://127.0.0.1:8723/mcp" />
+          <p class="secondary">Other assistants take the address, http://127.0.0.1:8723/mcp, in their own settings. Only this computer can reach it.</p>
+        </>
+      )}
       <p class="secondary">Library: {getState().listing.root}</p>
-    </Panel>
-  );
-}
-
-function HistoryPanel({ path }: { path: string }) {
-  const [versions, setVersions] = useState<Version[]>([]);
-  const [summaries, setSummaries] = useState<Record<string, string>>({});
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const list = await library.versions(path);
-      if (cancelled) return;
-      setVersions(list);
-      const current = core.modelFile();
-      const next: Record<string, string> = {};
-      for (const v of list.slice(0, 40)) {
-        const { model, before } = await library.readVersion(path, v.file);
-        next[v.file] = v.isReview && before ? `Review: ${core.compare(before, model)}` : `Restoring: ${core.compare(current, model)}`;
-      }
-      if (!cancelled) setSummaries(next);
-    })().catch(fail);
-    return () => { cancelled = true; };
-  }, [path, getState().revision]);
-
-  async function restore(v: Version) {
-    try {
-      const { model } = await library.readVersion(path, v.file);
-      await saveVersion("Before restoring an earlier version");
-      act(() => core.edit("replace", JSON.stringify({ model })));
-    } catch (error) {
-      fail(error);
-    }
-  }
-
-  return (
-    <Panel title="Version History" onClose={() => set({ showsHistory: false })}>
-      {versions.length === 0 && <p class="secondary">No versions yet.</p>}
-      <ul class="versions">
-        {versions.map((v) => (
-          <li key={v.file}>
-            <div>
-              <strong>{v.reason}</strong> <span class="secondary">{new Date(v.date).toLocaleString()}</span>
-            </div>
-            <div class="secondary">{summaries[v.file] ?? ""}</div>
-            <button onClick={() => void restore(v)}>Restore</button>
-          </li>
-        ))}
-      </ul>
-      <p class="secondary">Kept when you open it, before AI assistants' changes, before deleting or rearranging tables, and hourly while editing. Older ones thin out to one a day, then one a week. Restoring can be undone.</p>
     </Panel>
   );
 }
