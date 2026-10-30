@@ -353,22 +353,14 @@ fn markDirty(server: *Server, conn: *Conn) void {
 /// Appends bytes to a connection's outbox, or if it's full, gives up on it: it's too far behind.
 fn queue(server: *Server, conn: *Conn, bytes: []const u8) void {
     if (conn.hot.state != .open) return;
-    if (conn.hot.out_end + bytes.len > conn.hot.out.len) {
-        // Room at the start, where what's been sent was.
-        @memmove(conn.hot.out[0 .. conn.hot.out_end - conn.hot.out_start], conn.hot.out[conn.hot.out_start..conn.hot.out_end]);
-        conn.hot.out_end -= conn.hot.out_start;
-        conn.hot.out_start = 0;
-        if (conn.hot.out_end + bytes.len > conn.hot.out.len) {
-            log.info("connection {d} dropped: its outbox is full, so it's too far behind", .{conn.link.id});
-            server.counts.lagging += 1;
-            conn.hot.state = .lagging;
-            // Told to the relay at the end of the turn: this is inside one of its calls.
-            server.markDirty(conn);
-            return;
-        }
+    if (!conn.hot.push(bytes)) {
+        log.info("connection {d} dropped: its outbox is full, so it's too far behind", .{conn.link.id});
+        server.counts.lagging += 1;
+        conn.hot.state = .lagging;
+        // Told to the relay at the end of the turn: this is inside one of its calls.
+        server.markDirty(conn);
+        return;
     }
-    @memcpy(conn.hot.out[conn.hot.out_end..][0..bytes.len], bytes);
-    conn.hot.out_end += bytes.len;
     server.markDirty(conn);
 }
 
@@ -422,9 +414,10 @@ fn flush(server: *Server, conn: *Conn) void {
 
 /// Sends what's queued. Null if it couldn't all go: the socket's full, and the poller will say when it isn't.
 fn send(server: *Server, conn: *Conn) ?void {
-    while (conn.hot.out_start < conn.hot.out_end) {
+    while (conn.hot.out_len > 0) {
         const flags: u32 = if (builtin.os.tag == .linux) c.MSG.NOSIGNAL else 0;
-        const n = c.send(conn.fd, conn.hot.out[conn.hot.out_start..conn.hot.out_end].ptr, conn.hot.out_end - conn.hot.out_start, flags);
+        const pending = conn.hot.pending();
+        const n = c.send(conn.fd, pending.ptr, pending.len, flags);
         if (n < 0) {
             if (c.errno(n) == .AGAIN) {
                 // Told when it can take more.
@@ -438,10 +431,8 @@ fn send(server: *Server, conn: *Conn) ?void {
             server.lose(conn, null);
             return null;
         }
-        conn.hot.out_start += @intCast(n);
+        conn.hot.sent(@intCast(n));
     }
-    conn.hot.out_start = 0;
-    conn.hot.out_end = 0;
 }
 
 fn free(server: *Server, conn: *Conn) void {
@@ -501,7 +492,7 @@ fn takeHandedOver(server: *Server) void {
         server.counts.connections_open += 1;
         server.relay.opened(&conn.link, server.time);
         conn.consume(server.messages(conn));
-        if (conn.hot.out_end > conn.hot.out_start) server.markDirty(conn);
+        if (conn.hot.out_len > 0) server.markDirty(conn);
     }
 }
 
