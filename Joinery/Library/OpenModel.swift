@@ -166,8 +166,12 @@ final class OpenModel {
     /// Changes it to `new`, undoably, first saving a version if it's an assistant's first change in a while or one
     /// likely to be regretted: deleting tables, or rearranging many (a layout, untangling, aligning lots: moved by
     /// different amounts, unlike dragging a few together). And hourly while editing, so a long session has some.
+    /// A column's type changed here goes to the columns its foreign keys join it to; an assistant's changes are taken as
+    /// they are, as drawing a migration to review has to show any mismatch in it.
     func change(to new: DataModel, byAssistant: Bool = false) {
         guard new != model else { return }
+        var new = new
+        if !byAssistant { new.carryTypes(from: model) }
         if byAssistant {
             if lastAssistantChange.map({ Date.now.timeIntervalSince($0) > 10 * 60 }) ?? true { saveVersion("Before AI assistant changes") }
             lastAssistantChange = .now

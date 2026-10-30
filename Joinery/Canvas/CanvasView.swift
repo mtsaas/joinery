@@ -1040,18 +1040,23 @@ struct CanvasView: View {
         model.tables[index].width = width == Metrics.tableWidth ? nil : width
     }
 
-    /// Just wide enough for its name and every column's name, with the key and type columns as they are.
-    private func fittingWidth(of table: Table) -> CGFloat {
-        func width(_ text: String, _ style: TableText) -> CGFloat {
-            (text as NSString).size(withAttributes: [.font: style.font]).width.rounded(.up) + 1
+    /// Drags `table`'s right edge to `x` (canvas points), snapped into line with other tables' edges and centers, as a
+    /// move is, unless ⌘ is down; with the guides that show it.
+    private func resize(_ table: Table, to x: CGFloat) {
+        let frame = Metrics.frame(of: table)
+        var edge = max(table.position.x + Metrics.minimumTableWidth, x.rounded())
+        var guides: [CanvasController.Guide] = []
+        if !NSEvent.modifierFlags.contains(.command) {
+            // The edge alone, as a strip with no width, moved across from where it is.
+            let strip = CGRect(x: frame.maxX, y: frame.minY, width: 0, height: frame.height)
+            let others = model.tables.filter { $0.id != table.id }.map(Metrics.frame)
+            let snapped = CanvasController.snap([strip], by: CGPoint(x: edge - frame.maxX, y: 0), to: others,
+                                                tolerance: 6 / canvas.zoom, across: true, down: false)
+            if snapped.offset.x + frame.maxX - table.position.x >= Metrics.minimumTableWidth { edge = frame.maxX + snapped.offset.x }
+            guides = snapped.guides.filter { $0.isVertical && abs($0.position - edge) < 0.5 }
         }
-        let header = Metrics.gripWidth + width(table.name, .header) + Metrics.cellInset
-        // A unique column's badge takes its capsule and a gap from the name (see `TableLayer`).
-        let names = table.columns.map { column in
-            width(column.name, column.isPrimaryKey ? .keyName : .name) + (column.isUnique && !column.isPrimaryKey ? width("UQ", .badge) + 11 : 0)
-        }.max() ?? 0
-        let rows = Metrics.keyColumnWidth + Metrics.cellInset * 2 + names + Metrics.typeColumnWidth
-        return max(Metrics.minimumTableWidth, header, rows)
+        canvas.resizeDrag = (table.id, edge - table.position.x)
+        canvas.guides = guides
     }
 
     /// A click on a port selects it, with its bus; a double-click puts it back facing its column.
@@ -1126,6 +1131,7 @@ struct CanvasView: View {
                     canvas.connection = nil
                     canvas.columnDrag = nil
                     canvas.cableDrag = nil
+                    canvas.resizeDrag = nil
                     canvas.tieMerge = nil
                 }
                 // With the zip-tie tool, every drag ties, wherever it starts.
@@ -1166,8 +1172,7 @@ struct CanvasView: View {
                     dragItem(.group(id), by: value.translation)
                 case .resize(let table):
                     guard canvas.resizeDrag != nil || CGPoint(value.translation).length >= 2 else { break }
-                    let x = canvas.canvasPoint(value.location).x
-                    canvas.resizeDrag = (table.id, max(Metrics.minimumTableWidth, (x - table.position.x).rounded()))
+                    resize(table, to: canvas.canvasPoint(value.location).x)
                 case .background:
                     dragBackground(from: value.startLocation, to: value.location)
                 }
@@ -1227,11 +1232,13 @@ struct CanvasView: View {
                 case .resize(let table):
                     if let drag = canvas.resizeDrag {
                         canvas.resizeDrag = nil
+                        canvas.guides = []
                         setWidth(drag.width, of: table.id)
                     } else if let last = lastResizeClick, last.table == table.id,
                               ProcessInfo.processInfo.systemUptime - last.time < NSEvent.doubleClickInterval {
+                        // A double-click puts it back to the usual width.
                         lastResizeClick = nil
-                        setWidth(fittingWidth(of: table), of: table.id)
+                        setWidth(Metrics.tableWidth, of: table.id)
                     } else {
                         lastResizeClick = (table.id, ProcessInfo.processInfo.systemUptime)
                     }

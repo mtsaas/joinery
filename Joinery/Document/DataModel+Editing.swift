@@ -413,6 +413,33 @@ extension DataModel {
         removeEmptyGroups()
     }
 
+    /// Every column whose type changed since `old` gives its new type to the columns joined to it by foreign keys,
+    /// either way and on through theirs, so a key and the keys referencing it stay the same type.
+    mutating func carryTypes(from old: DataModel) {
+        let before = Dictionary(old.tables.flatMap(\.columns).map { ($0.id, $0.type) }, uniquingKeysWith: { first, _ in first })
+        var types: [Column.ID: DataType] = [:]
+        for column in tables.flatMap(\.columns) where before[column.id].map({ $0 != column.type }) == true { types[column.id] = column.type }
+        guard !types.isEmpty else { return }
+        var joined: [Column.ID: [Column.ID]] = [:]
+        for wire in relationships {
+            joined[wire.from, default: []].append(wire.to)
+            joined[wire.to, default: []].append(wire.from)
+        }
+        // Out from each changed column; one reached already, by another change, keeps that type.
+        var frontier = Array(types.keys)
+        while let column = frontier.popLast() {
+            for next in joined[column] ?? [] where types[next] == nil {
+                types[next] = types[column]
+                frontier.append(next)
+            }
+        }
+        for table in tables.indices {
+            for column in tables[table].columns.indices {
+                if let type = types[tables[table].columns[column].id] { tables[table].columns[column].type = type }
+            }
+        }
+    }
+
     mutating func removeEmptyGroups() {
         let used = Set(tables.compactMap(\.group))
         groups.removeAll { !used.contains($0.id) }
