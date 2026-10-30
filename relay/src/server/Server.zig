@@ -9,7 +9,9 @@
 //! everything queued for each connection in one `send`, so a frame going to 31 guests costs 31 sends however many
 //! frames came in that turn, not more. Nothing waits on a socket: what a socket won't take yet stays in its outbox
 //! until it's writable. A connection whose outbox fills is too far behind: it's closed, and when it comes back the
-//! relay catches it up from the snapshot. With one thread to each relay, no relay needs a lock.
+//! relay catches it up from the snapshot. All the outboxes on a loop share a budget too, so connections that stop
+//! reading can't hold the relay's memory between them: when it's spent, whichever's been behind longest is closed.
+//! With one thread to each relay, no relay needs a lock.
 //!
 //! Pointer updates are the exception to "everything queued goes": each connection holds only the newest from each
 //! person until its queue has gone, so a connection that's behind is sent where pointers are, not where they were.
@@ -71,6 +73,10 @@ done: std.ArrayList(*Conn) = .empty,
 counts: metrics.Counts = .{},
 /// When it started, in seconds since 1970, for monitoring.
 started: i64,
+/// What this loop's outboxes hold past each one's `Conn.out_free`, and the most they may: this loop's share of
+/// `--outbox-mib`.
+out_used: usize = 0,
+out_budget: usize = 128 << 20,
 
 /// Lets go of silent connections, and ends rooms whose host has gone, this often.
 const tick_ms = 1000;
@@ -405,16 +411,72 @@ fn markDirty(server: *Server, conn: *Conn) void {
 /// Appends bytes to a connection's outbox, or if it's full, gives up on it: it's too far behind.
 fn queue(server: *Server, conn: *Conn, bytes: []const u8) void {
     if (conn.hot.state != .open) return;
-    if (!conn.hot.push(bytes)) {
-        log.info("connection {d} dropped: its outbox is full, so it's too far behind", .{conn.link.id});
-        server.counts.lagging += 1;
-        conn.hot.state = .lagging;
-        // Told to the relay at the end of the turn: this is inside one of its calls.
-        server.markDirty(conn);
-        return;
-    }
+    if (conn.hot.out_len + bytes.len > conn.hot.out.len) return server.lag(conn, "its outbox is full");
+    // The furthest byte this writes: once the ring wraps, the whole buffer's been written.
+    const reach = @min(conn.hot.out_start + conn.hot.out_len + bytes.len, conn.hot.out.len);
+    if (reach > conn.hot.out_used and !server.charge(conn, reach)) return;
+    if (conn.hot.out_len == 0) conn.hot.behind_since = server.time;
+    const pushed = conn.hot.push(bytes);
+    assert(pushed);
     server.markDirty(conn);
 }
+
+/// A connection that's too far behind: closed, and the relay told at the end of the turn, as this is inside one of its
+/// calls. Its outbox no longer counts: nothing more is queued for it, and it's let go of at the end of the turn.
+fn lag(server: *Server, conn: *Conn, why: []const u8) void {
+    log.info("connection {d} dropped: {s}, so it's too far behind", .{ conn.link.id, why });
+    server.counts.lagging += 1;
+    conn.hot.state = .lagging;
+    server.out_used -= billable(conn.hot.out_used);
+    conn.hot.out_used = 0;
+    server.markDirty(conn);
+}
+
+/// What an outbox that's written up to `used` counts against the budget.
+fn billable(used: usize) usize {
+    return used -| Conn.out_free;
+}
+
+/// Takes what `conn`'s outbox needs to be written up to `reach` from the budget, first closing whoever's been behind
+/// longest until there's enough. False if that was `conn` itself.
+fn charge(server: *Server, conn: *Conn, reach: usize) bool {
+    const more = billable(reach) - billable(conn.hot.out_used);
+    while (more > 0 and server.out_used + more > server.out_budget) {
+        const behind = server.longestBehind() orelse conn;
+        server.lag(behind, "the relay's outbox budget is spent and it's the longest behind");
+        if (behind == conn) return false;
+    }
+    server.out_used += more;
+    conn.hot.out_used = reach;
+    return true;
+}
+
+/// The open connection that's had something waiting to go the longest.
+fn longestBehind(server: *Server) ?*Conn {
+    // ponytail: a scan of every connection, only when the budget's spent; each closed frees up to an outbox.
+    var longest: ?*Conn = null;
+    var next = server.conns.first;
+    while (next) |node| : (next = node.next) {
+        const conn: *Conn = @fieldParentPtr("node", node);
+        if (conn.hot.state != .open or conn.hot.out_len == 0) continue;
+        if (longest == null or conn.hot.behind_since < longest.?.hot.behind_since) longest = conn;
+    }
+    return longest;
+}
+
+/// Gives the memory past `Conn.out_free` of an outbox that's all been sent back to the system, and to the budget.
+fn giveBack(server: *Server, conn: *Conn) void {
+    if (conn.hot.out_used <= Conn.out_free) return;
+    const page = std.heap.pageSize();
+    const from = std.mem.alignForward(usize, Conn.out_free, page);
+    const to = @min(std.mem.alignForward(usize, conn.hot.out_used, page), conn.hot.out.len);
+    if (to > from) std.posix.madvise(@alignCast(conn.hot.out[from..].ptr), to - from, release_advice) catch {};
+    server.out_used -= billable(conn.hot.out_used);
+    conn.hot.out_used = Conn.out_free;
+}
+
+/// Linux takes the pages back at once; macOS when it needs them.
+const release_advice = if (builtin.os.tag == .linux) c.MADV.DONTNEED else c.MADV.FREE;
 
 fn queueFrame(server: *Server, conn: *Conn, opcode: u8, payload: []const u8) void {
     var header: [10]u8 = undefined;
@@ -491,9 +553,11 @@ fn send(server: *Server, conn: *Conn) ?void {
         }
         conn.hot.sent(@intCast(n));
     }
+    server.giveBack(conn);
 }
 
 fn free(server: *Server, conn: *Conn) void {
+    server.out_used -= billable(conn.hot.out_used);
     const pages = std.heap.page_allocator;
     Relay.release(pages, conn.in);
     Relay.release(pages, conn.hot.out);
@@ -521,6 +585,7 @@ fn handOver(server: *Server, conn: *Conn) void {
     assert(!conn.in_relay and conn.link.room == null);
     server.conns.remove(&conn.node);
     server.conn_count -= 1;
+    server.out_used -= billable(conn.hot.out_used);
     const owner = server.loops[conn.owner];
     var head = owner.inbox.load(.monotonic);
     while (true) {
@@ -541,6 +606,7 @@ fn takeHandedOver(server: *Server) void {
         conn.hot.is_dirty = false;
         conn.link.room = null;
         conn.link.node = .{};
+        server.out_used += billable(conn.hot.out_used);
         server.watch(conn) catch {
             closeConnFd(conn.fd);
             server.free(conn);
@@ -630,6 +696,54 @@ fn respondMetrics(server: *Server, conn: *Conn, found: bool) void {
     server.queue(conn, std.fmt.bufPrint(&head, "HTTP/1.1 200 OK\r\ncontent-type: text/plain; version=0.0.4; charset=utf-8\r\ncontent-length: {d}\r\nconnection: close\r\n\r\n", .{body.buffered().len}) catch unreachable);
     server.queue(conn, body.buffered());
     server.closeAfterSending(conn);
+}
+
+test "connections that stop reading can't hold more than the budget: the one behind longest goes" {
+    const testing = std.testing;
+    const pages = std.heap.page_allocator;
+    var server: Server = undefined;
+    server.conns = .{};
+    server.dirty = .empty;
+    defer server.dirty.deinit(testing.allocator);
+    try server.dirty.ensureTotalCapacity(testing.allocator, 3);
+    server.counts = .{};
+    server.batch_ms = 0;
+    server.out_used = 0;
+    server.out_budget = 3 << 20;
+
+    var conns: [3]Conn = undefined;
+    for (&conns, 0..) |*conn, i| {
+        const out = try Relay.reserve(u8, pages, 6 << 20);
+        conn.* = .{ .hot = .{ .out = out }, .link = .{ .id = i }, .fd = -1, .kind = .websocket, .in = &.{}, .since = 0 };
+        server.conns.append(&conn.node);
+    }
+    defer for (&conns) |*conn| Relay.release(pages, conn.hot.out);
+    const frame = try testing.allocator.alloc(u8, 2 << 20);
+    defer testing.allocator.free(frame);
+
+    // Two non-readers fill past the budget: the first, behind longest, is closed, not the second.
+    server.time = 1;
+    server.queue(&conns[0], frame);
+    server.time = 2;
+    server.queue(&conns[1], frame);
+    try testing.expectEqual(.lagging, conns[0].hot.state);
+    try testing.expectEqual(.open, conns[1].hot.state);
+    try testing.expectEqual(billable(2 << 20), server.out_used);
+
+    // A third that's keeping up still gets its frames, and once they're sent its memory's given back.
+    server.time = 3;
+    server.queue(&conns[2], frame[0 .. 1 << 20]);
+    try testing.expectEqual(.open, conns[2].hot.state);
+    conns[2].hot.sent(conns[2].hot.out_len);
+    server.giveBack(&conns[2]);
+    try testing.expectEqual(billable(2 << 20), server.out_used);
+
+    // The budget's never passed, however much more comes.
+    server.time = 4;
+    server.queue(&conns[2], frame);
+    try testing.expect(server.out_used <= server.out_budget);
+    try testing.expectEqual(.lagging, conns[1].hot.state);
+    try testing.expectEqual(.open, conns[2].hot.state);
 }
 
 test "past the public cap, connections are turned away and a scrape still gets in" {

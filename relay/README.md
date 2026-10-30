@@ -23,7 +23,8 @@ zig build -Doptimize=ReleaseSafe      # zig-out/bin/joinery-relay
 ```
 
 Flags: `--address`, `--port` (8787), `--metrics-address`, `--metrics-port` (9187), `--threads` (event loops: half the
-cores), `--batch-ms` (how long a queue waits for more before it's sent: 5), `--max-rooms` (256) and `--max-connections` (768),
+cores), `--batch-ms` (how long a queue waits for more before it's sent: 5), `--max-rooms` (256), `--max-connections` (768)
+and `--outbox-mib` (what connections that are behind hold between them, before the one behind longest is closed: 128),
 which keep what anyone can make it hold under 2 GiB at worst (raise them with its memory), and on Linux `--pin <cpu>` (loop i on CPU
 pin + i, which halves the tail latency). Prometheus metrics are at `/metrics` on their own port, which only this machine
 can reach unless `--metrics-address` says otherwise.

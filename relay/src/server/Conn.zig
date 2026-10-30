@@ -8,7 +8,7 @@ const Relay = @import("../relay/Relay.zig");
 const wire = @import("../relay/wire.zig");
 const Pointers = @import("Pointers.zig");
 
-/// What every send to it touches, together: 48 bytes, so usually one cache line, two at most. Not aligned to one: the
+/// What every send to it touches, together: 64 bytes, a cache line or two. Not aligned to one: the
 /// allocator gives over-aligned things a page each.
 hot: Hot,
 link: Relay.Link,
@@ -38,6 +38,8 @@ pub const Hot = struct {
     out: []u8,
     out_start: usize = 0,
     out_len: usize = 0,
+    /// How far into `out` has been written since it was last given back: what it's holding in memory.
+    out_used: usize = 0,
     state: enum {
         open,
         /// The relay's closed it: what's queued goes, then the socket.
@@ -53,6 +55,8 @@ pub const Hot = struct {
     wants_write: bool = false,
     /// When its queue was last empty and got something: with a batch window, it's sent once it's waited that long.
     dirty_since: i64 = 0,
+    /// When its queue last went from empty to not: how long it's been behind.
+    behind_since: i64 = 0,
 
     comptime {
         assert(@sizeOf(Hot) <= std.atomic.cache_line);
@@ -102,6 +106,10 @@ pub fn outSize(limits: wire.Limits) usize {
     // would make this zero, as docs/relay.md has it.
     return 2 * (@as(usize, limits.max_snapshot) + limits.log_bytes);
 }
+
+/// The start of each outbox that's kept once it's sent, and not counted against the loop's budget: enough for the
+/// usual turn's frames, so a connection that's keeping up never costs a system call to give memory back.
+pub const out_free = 64 * 1024;
 
 test "the outbox wraps round its end, and turns away what doesn't fit" {
     var buffer: [8]u8 = undefined;

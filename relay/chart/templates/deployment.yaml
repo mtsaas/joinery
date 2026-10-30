@@ -53,6 +53,8 @@ spec:
             - {{ .Values.maxRooms | quote }}
             - --max-connections
             - {{ .Values.maxConnections | quote }}
+            - --outbox-mib
+            - {{ .Values.outboxMib | quote }}
             {{- with .Values.threads }}
             - --threads
             - {{ . | quote }}

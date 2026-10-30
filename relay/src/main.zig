@@ -3,7 +3,7 @@
 //!
 //!     joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]
 //!                   [--threads <half the cores>] [--pin <first CPU>] [--batch-ms 5]
-//!                   [--max-rooms 256] [--max-connections 768]
+//!                   [--max-rooms 256] [--max-connections 768] [--outbox-mib 128]
 //!
 //! Prometheus metrics are at http://<metrics address>:<metrics port>/metrics, on this machine only unless the metrics
 //! address says otherwise.
@@ -44,10 +44,11 @@ pub fn main(init: std.process.Init) !void {
     // took a relay from 750 full rooms to 1,000, for a wait well under a frame (bench/load-results.md).
     var batch_ms: i64 = 5;
     // What anyone can make the relay hold, without signing in, sized for 2 GiB at worst: a room up to its log's ring
-    // and a snapshot, about 4 MiB, and a connection up to a snapshot's worth of input, about 1 MiB. Raise them with
-    // the memory the relay's given.
+    // and a snapshot, about 4 MiB, a connection up to a snapshot's worth of input, about 1 MiB, and the outboxes of
+    // connections that are behind, between them. Raise them with the memory the relay's given.
     var max_rooms: usize = 256;
     var max_connections: usize = 768;
+    var outbox_mib: usize = 128;
     var args = init.minimal.args.iterate();
     _ = args.skip();
     while (args.next()) |arg| {
@@ -68,6 +69,8 @@ pub fn main(init: std.process.Init) !void {
             max_rooms = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--max-connections")) {
             max_connections = std.fmt.parseInt(usize, value, 10) catch return usage();
+        } else if (std.mem.eql(u8, arg, "--outbox-mib")) {
+            outbox_mib = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--pin")) {
             pin = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else return usage();
@@ -95,6 +98,7 @@ pub fn main(init: std.process.Init) !void {
     for (loops) |loop| {
         loop.loops = loops;
         loop.batch_ms = batch_ms;
+        loop.out_budget = (outbox_mib << 20) / threads;
     }
     const cap = Server.limitConnections(threads, max_connections);
     std.log.info("relaying on {f} with {d} loops, up to {d} rooms and {d} connections, metrics at http://{f}/metrics", .{ address, threads, max_rooms, cap, metrics_address });
@@ -117,6 +121,6 @@ fn runLoop(loop: *Server, pin: ?usize) void {
 }
 
 fn usage() error{Usage} {
-    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n] [--max-rooms n] [--max-connections n]", .{});
+    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n] [--max-rooms n] [--max-connections n] [--outbox-mib n]", .{});
     return error.Usage;
 }
