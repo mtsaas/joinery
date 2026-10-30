@@ -246,7 +246,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MARKETING_VERSION = 0.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.mtsaas.joinery.debug;
+				PRODUCT_BUNDLE_IDENTIFIER = com.mtsaas.joinery;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SPARKLE_FEED_URL = "";
 				SWIFT_EMIT_LOC_STRINGS = YES;

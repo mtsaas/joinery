@@ -1,7 +1,7 @@
 # Developing Joinery
 
-Joinery needs macOS 26 and Xcode 26. Open `Joinery.xcodeproj` and press ⌘R; ⌘U runs the tests. Debug builds are
-`com.mtsaas.joinery.debug`, so they never collide with an installed copy and keep a library of their own.
+Joinery needs macOS 26 and Xcode 26. Open `Joinery.xcodeproj` and press ⌘R; ⌘U runs the tests. Debug builds share the
+installed app's bundle ID, so they open your real library; quit the installed copy first.
 
 From the command line, sign ad hoc and without the hardened runtime, which would refuse Sparkle's differently signed
 framework. About 50 seconds from clean, 15 after a change:
