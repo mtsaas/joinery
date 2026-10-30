@@ -53,8 +53,9 @@ export function useStore(): State {
   const [, rerender] = useReducer((n: number) => n + 1, 0);
   // A layout effect, so it subscribes at once: an effect waits for a frame, which a hidden window may never draw.
   useLayoutEffect(() => {
-    listeners.add(rerender);
-    return () => void listeners.delete(rerender);
+    const listener = () => rerender(undefined);
+    listeners.add(listener);
+    return () => void listeners.delete(listener);
   }, []);
   return state;
 }

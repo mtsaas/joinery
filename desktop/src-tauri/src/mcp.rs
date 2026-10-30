@@ -12,7 +12,10 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 
-pub const PORT: u16 = 8723;
+/// The Mac's port, or `JOINERY_MCP_PORT`'s, to run beside a Mac copy while testing.
+fn port() -> u16 {
+    std::env::var("JOINERY_MCP_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(8723)
+}
 
 /// Responses awaited, by request.
 fn waiting() -> &'static Mutex<HashMap<u64, Sender<Vec<u8>>>> {
@@ -27,9 +30,9 @@ static STARTED: OnceLock<Result<(), String>> = OnceLock::new();
 pub fn mcp_start(app: AppHandle) -> Result<(), String> {
     STARTED
         .get_or_init(|| {
-            let listener = TcpListener::bind(("127.0.0.1", PORT)).map_err(|e| {
+            let listener = TcpListener::bind(("127.0.0.1", port())).map_err(|e| {
                 if e.kind() == std::io::ErrorKind::AddrInUse {
-                    format!("Port {PORT} is in use by another app, perhaps another copy of Joinery.")
+                    format!("Port {} is in use by another app, perhaps another copy of Joinery.", port())
                 } else {
                     e.to_string()
                 }
