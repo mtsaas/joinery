@@ -46,10 +46,23 @@ private func failure(_ error: any Error) -> JSException {
 @JS public func scene() -> String { json(Scene.scene(App.workspace)) }
 
 /// Wires, ports and ties at `time`, in seconds, as JSON. `offsets` is `{"tables": {id: [dx, dy]}, "ties": {…}}`.
+/// `offsets` may also hold a `preview` of a drag in progress (see `Scene.previewing`).
 @JS public func frame(_ time: Double, offsets: String, avoiding: Bool) -> String {
     let o = object(offsets)
     return json(App.scene.frame(App.workspace, time: time, tableOffsets: Edits.offsets(o["tables"]), tieOffsets: Edits.offsets(o["ties"]),
-                                avoiding: avoiding))
+                                avoiding: avoiding, preview: o["preview"] as? [String: Any] ?? [:]))
+}
+
+/// Where on a group's edge a port nearest `x`, `y` would go: `{"side", "along", "point"}`, or "null".
+@JS public func portSpot(_ group: String, _ x: Double, _ y: Double, offsets: String) -> String {
+    guard let id = UUID(uuidString: group) else { return "null" }
+    return json(Scene.portSpot(App.workspace, group: id, near: CGPoint(x: x, y: y), tableOffsets: Edits.offsets(object(offsets)["tables"]))
+                ?? NSNull())
+}
+
+/// A port's socket within `reach` of `x`, `y`: `{"port", "isOutside", "center"}`, or "null".
+@JS public func portSocketAt(_ x: Double, _ y: Double, reach: Double) -> String {
+    json(App.scene.portSocket(App.workspace, at: CGPoint(x: x, y: y), within: reach) ?? NSNull())
 }
 
 /// The wire under `x`, `y`, within `tolerance` canvas points, or "null".

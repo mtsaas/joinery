@@ -2,6 +2,7 @@
 // ports and ties, then the tables over them, with the selection, the review's changes and others' pointers.
 import type { Frame, Group, Peer, Point, Rect, Scene, Table } from "../core.ts";
 import { alpha, fonts, type Theme } from "../theme.ts";
+import type { Guide } from "./gestures.ts";
 import { Metrics, socket } from "./metrics.ts";
 
 export interface View {
@@ -31,11 +32,18 @@ export interface Overlay {
   editing: { table: string; column: string | null } | null;
   /** Tables not in focus, faded. */
   faded: Set<string> | null;
+  /** The wires to show over the rest, which fade: the selection's, or those among the tables in focus. */
+  highlighted: Set<string> | null;
+  /** Lines showing a dragged table lining up with others. */
+  guides: Guide[];
+  /** The + by a group's edge, where a click adds a port. */
+  portHint: Point | null;
 }
 
 export const emptyOverlay = (): Overlay => ({
   selectedTables: new Set(), selectedWires: new Set(), selectedTies: new Set(), selectedGroups: new Set(), tableOffsets: {},
   hoveredSocket: null, hoveredTie: null, connecting: null, marquee: null, stroke: null, peers: [], editing: null, faded: null,
+  highlighted: null, guides: [], portHint: null,
 });
 
 export function moved(table: Table, overlay: Overlay): Rect {
@@ -88,6 +96,29 @@ export function draw(ctx: CanvasRenderingContext2D, view: View, scene: Scene, fr
     ctx.stroke();
   }
   for (const peer of overlay.peers) drawPeer(ctx, peer, scene, theme, view.zoom);
+  // Guides: there, but quiet.
+  ctx.strokeStyle = alpha(theme.accent, 0.45);
+  ctx.lineWidth = 1 / view.zoom;
+  for (const g of overlay.guides) {
+    ctx.beginPath();
+    if (g.vertical) { ctx.moveTo(g.position, g.start); ctx.lineTo(g.position, g.end); }
+    else { ctx.moveTo(g.start, g.position); ctx.lineTo(g.end, g.position); }
+    ctx.stroke();
+  }
+  if (overlay.portHint) {
+    const [x, y] = overlay.portHint;
+    const r = Metrics.portHintRadius / view.zoom;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fillStyle = theme.accent;
+    ctx.fill();
+    ctx.strokeStyle = "#ffffff";
+    ctx.lineWidth = 1.75 / view.zoom;
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.5, y); ctx.lineTo(x + r * 0.5, y);
+    ctx.moveTo(x, y - r * 0.5); ctx.lineTo(x, y + r * 0.5);
+    ctx.stroke();
+  }
   if (overlay.marquee) {
     const [x, y, w, h] = overlay.marquee;
     ctx.fillStyle = alpha(theme.accent, 0.1);
@@ -137,7 +168,13 @@ function smooth(ctx: CanvasRenderingContext2D, points: number[]) {
 function drawWires(ctx: CanvasRenderingContext2D, frame: Frame, theme: Theme, overlay: Overlay) {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  for (const wire of frame.wires) {
+  // Highlighted wires last, so they're on top; otherwise in the model's order, so overlaps never swap.
+  const highlighted = overlay.highlighted;
+  const wires = highlighted
+    ? [...frame.wires.filter((w) => !highlighted.has(w.id)), ...frame.wires.filter((w) => highlighted.has(w.id))]
+    : frame.wires;
+  for (const wire of wires) {
+    const dimmed = highlighted ? !highlighted.has(wire.id) : false;
     const color = wire.change ? theme.change(wire.change) : theme.color(wire.color);
     smooth(ctx, wire.points);
     ctx.setLineDash([]);
@@ -149,13 +186,15 @@ function drawWires(ctx: CanvasRenderingContext2D, frame: Frame, theme: Theme, ov
       ctx.lineWidth = Metrics.selectedWireWidth;
       ctx.stroke();
     }
-    ctx.strokeStyle = color;
+    ctx.strokeStyle = dimmed ? alpha(color, 0.28) : color;
     ctx.lineWidth = Metrics.wireWidth;
     if (wire.change === "removed") ctx.setLineDash([6, 5]);
     ctx.stroke();
   }
   ctx.setLineDash([]);
   for (const port of frame.ports) {
+    const busDimmed = highlighted ? !highlighted.has(port.id) && !port.wires.some((w) => highlighted.has(w)) : false;
+    ctx.globalAlpha = busDimmed ? 0.22 : 1;
     const color = port.plugged ? theme.color(port.color) : theme.socket;
     if (port.bus) {
       smooth(ctx, port.bus);
@@ -168,8 +207,10 @@ function drawWires(ctx: CanvasRenderingContext2D, frame: Frame, theme: Theme, ov
     }
     drawPort(ctx, port.point, port.normal, port.shape, color, port.label, overlay.selectedWires.has(port.id), theme);
   }
+  ctx.globalAlpha = 1;
   for (const tie of frame.ties) {
     const selected = overlay.selectedTies.has(tie.id), hovered = overlay.hoveredTie === tie.id;
+    ctx.globalAlpha = overlay.faded && highlighted && !tie.wires.some((w) => highlighted.has(w)) ? 0.22 : 1;
     ctx.save();
     ctx.translate(tie.center[0], tie.center[1]);
     if (tie.count === 1) {
@@ -192,6 +233,7 @@ function drawWires(ctx: CanvasRenderingContext2D, frame: Frame, theme: Theme, ov
     }
     ctx.restore();
   }
+  ctx.globalAlpha = 1;
 }
 
 /** A port: a sideways T on its group's edge, a bar across its inside end and a stem out, both pills, as one shape. */

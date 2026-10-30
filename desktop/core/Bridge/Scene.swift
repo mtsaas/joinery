@@ -46,13 +46,23 @@ final class Scene {
             "tables": tables, "groups": groups, "reviewing": workspace.baseline != nil,
             "summary": diff?.summary ?? NSNull(), "canUndo": workspace.canUndo, "canRedo": workspace.canRedo,
             "bounds": model.bounds.map(rect) ?? NSNull(),
+            // Zip ties where they are, and each cable's ties in order along it, for dragging them and pulling cables.
+            "ties": model.zipTies.map { tie in
+                ["id": tie.id.uuidString, "position": xy(tie.position), "direction": xy(tie.direction),
+                 "held": tie.heldDirection != nil, "wires": tie.relationships.map(\.uuidString)] as [String: Any]
+            },
+            "cables": Dictionary(model.relationships.map { ($0.id.uuidString, $0.zipTies.map(\.uuidString)) }
+                + model.groups.flatMap(\.ports).map { ($0.id.uuidString, $0.zipTies.map(\.uuidString)) },
+                uniquingKeysWith: { first, _ in first }),
+            "wires": model.relationships.map { ["id": $0.id.uuidString, "from": $0.from.uuidString, "to": $0.to.uuidString] },
         ]
     }
 
     /// Wires as they spring toward their routes at `time`, in seconds, with tables and ties dragged by their offsets.
     func frame(_ workspace: Workspace, time: Double, tableOffsets: [Table.ID: CGPoint], tieOffsets: [ZipTie.ID: CGPoint],
-               avoiding: Bool) -> [String: Any] {
-        let (model, diff) = Self.drawn(workspace)
+               avoiding: Bool, preview: [String: Any] = [:]) -> [String: Any] {
+        let (drawn, diff) = Self.drawn(workspace)
+        let model = Self.previewing(drawn, preview, tieOffsets: tieOffsets)
         let routing: Routing
         if let current = self.routing, let inputs, inputs.model == model, inputs.tables == tableOffsets, inputs.ties == tieOffsets,
            inputs.avoiding == avoiding {
@@ -81,11 +91,14 @@ final class Scene {
         let ports: [[String: Any]] = routing.ports.sorted { $0.key.uuidString < $1.key.uuidString }.map { id, port in
             let shape = portShapes[id] ?? port.shape
             return ["id": id.uuidString, "color": colors[id] ?? NSNull(), "label": port.label, "plugged": port.column != nil,
-                    "point": [port.point.x, port.point.y], "normal": [port.normal.x, port.normal.y],
-                    "shape": [shape.length, shape.outer, shape.inner], "wires": port.wires.map(\.uuidString),
+                    "group": port.group.uuidString, "column": port.column?.uuidString ?? NSNull(),
+                    "point": xy(port.point), "normal": xy(port.normal),
+                    "shape": [Double(shape.length), Double(shape.outer), Double(shape.inner)], "wires": port.wires.map(\.uuidString),
                     "bus": simulation.wires[id].map { flat($0.points) } ?? NSNull()]
         }
         let ties: [[String: Any]] = routing.ties.sorted { $0.key.uuidString < $1.key.uuidString }.compactMap { id, tie in
+            // The pointer's stand-in on a cable being pulled isn't drawn.
+            guard id != Self.grabID else { return nil }
             // Drawn where its wires actually are, so it rides along as they spring into place.
             let slots = tie.relationships.compactMap { wire -> CGPoint? in
                 guard let points = simulation.wires[wire]?.points, let index = cableTies[wire]?.firstIndex(of: id) else { return nil }
@@ -94,18 +107,62 @@ final class Scene {
             }
             guard !slots.isEmpty else { return nil }
             let center = slots.reduce(.zero, +) / CGFloat(slots.count)
-            return ["id": id.uuidString, "center": [center.x, center.y], "direction": [tie.direction.x, tie.direction.y],
-                    "halfLength": tie.halfLength, "count": tie.relationships.count,
+            return ["id": id.uuidString, "center": xy(center), "direction": xy(tie.direction),
+                    "halfLength": Double(tie.halfLength), "count": tie.relationships.count,
                     "wires": tie.relationships.map(\.uuidString),
                     "color": tie.relationships.first.flatMap { colors[$0] } ?? NSNull()]
         }
         return ["moving": isMoving || portShapes.isEasing, "wires": wires, "ports": ports, "ties": ties]
     }
 
+    /// The bend point that stands in for the pointer on a cable being pulled, while it's routed.
+    static let grabID = UUID(uuidString: "00000000-0000-0000-0000-00000000A11E")!
+
+    /// The model as routed while something's dragged, as the Mac's `routedModel` has it: a port slid along its edge
+    /// (`port`), a zip tie over another, shown combined (`merge`), or a cable pulled through the pointer, out of the ties
+    /// it's been tugged out of (`pull`).
+    static func previewing(_ model: DataModel, _ preview: [String: Any], tieOffsets: [ZipTie.ID: CGPoint]) -> DataModel {
+        guard !preview.isEmpty else { return model }
+        var routed = model
+        if let port = preview["port"] as? [String: Any], let id = Edits.optionalUUID(port["port"]),
+           let side = (port["side"] as? String).flatMap(Side4.init(rawValue:)) {
+            routed.movePort(id, to: (side, CGFloat(port["along"] as? Double ?? 0.5)))
+        }
+        if let merge = preview["merge"] as? [String: Any], let tie = Edits.optionalUUID(merge["tie"]),
+           let target = Edits.optionalUUID(merge["into"]) {
+            routed.merge(tie, by: tieOffsets[tie] ?? .zero, into: target, along: Edits.point(merge["along"]))
+        }
+        if let pull = preview["pull"] as? [String: Any], let cable = Edits.optionalUUID(pull["cable"]) {
+            for tie in Edits.ids(pull["popped"]) { routed.untie(cable, from: tie) }
+            var grab = ZipTie(position: Edits.point(pull["point"]), direction: Edits.point(pull["direction"]), relationships: [cable])
+            grab.id = grabID
+            routed.zipTies.append(grab)
+            var ties = routed.zipTies(onCable: cable) ?? []
+            ties.insert(grab.id, at: min(max((pull["segment"] as? NSNumber)?.intValue ?? 0, 0), ties.count))
+            routed.setZipTies(onCable: cable, ties)
+        }
+        return routed
+    }
+
+    /// Where on a group's edge a port nearest `point` would go, and that point, as the + by the edge shows it.
+    static func portSpot(_ workspace: Workspace, group: UUID, near point: CGPoint, tableOffsets: [Table.ID: CGPoint]) -> [String: Any]? {
+        let model = workspace.model
+        guard let spot = model.portSpot(nearest: point, on: group, offsets: tableOffsets),
+              let at = model.edgePoint(of: group, at: spot, offsets: tableOffsets) else { return nil }
+        return ["side": spot.side.rawValue, "along": Double(spot.along), "point": xy(at)]
+    }
+
+    /// A port's socket within `reach` of `point`: its outside end, where its bus leaves, or its inside, where its wires
+    /// come in.
+    func portSocket(_ workspace: Workspace, at point: CGPoint, within reach: CGFloat) -> [String: Any]? {
+        guard let socket = workspace.model.portSocket(at: point, within: reach, in: routing?.ports) else { return nil }
+        return ["port": socket.port.uuidString, "isOutside": socket.isOutside, "center": xy(socket.center)]
+    }
+
     /// The wire nearest `point`, within `tolerance`, for clicking and pulling one.
     func hit(near point: CGPoint, within tolerance: CGFloat) -> [String: Any]? {
         simulation.hit(near: point, within: tolerance).map { hit in
-            ["id": hit.relationship.uuidString, "point": [hit.point.x, hit.point.y], "tangent": [hit.tangent.x, hit.tangent.y],
+            ["id": hit.relationship.uuidString, "point": xy(hit.point), "tangent": xy(hit.tangent),
              "segment": hit.segment]
         }
     }
@@ -128,5 +185,8 @@ final class Scene {
 }
 
 func rect(_ rect: CGRect) -> [Double] { [rect.minX, rect.minY, rect.width, rect.height] }
+
+/// A point for JSON: JSONSerialization can't write CGFloat off Apple platforms.
+func xy(_ point: CGPoint) -> [Double] { [point.x, point.y] }
 
 func flat(_ points: [CGPoint]) -> [Double] { points.flatMap { [$0.x, $0.y] } }

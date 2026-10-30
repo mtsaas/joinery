@@ -125,8 +125,11 @@ enum Events {
     }
 }
 
+/// `object` as JSON. A bare `null` is fine too: JSONSerialization traps on one without `.fragmentsAllowed`, and
+/// "nothing here" (`NSNull()`) is a common answer. (Not checked with `isValidJSONObject`, which turns down CGFloat
+/// off Apple platforms, though writing it works.)
 func json(_ object: Any) -> String {
-    (try? JSONSerialization.data(withJSONObject: object)).map { String(decoding: $0, as: UTF8.self) } ?? "null"
+    (try? JSONSerialization.data(withJSONObject: object, options: .fragmentsAllowed)).map { String(decoding: $0, as: UTF8.self) } ?? "null"
 }
 
 func object(_ text: String) -> [String: Any] {
