@@ -1,5 +1,6 @@
 import { render } from "preact";
 import { App } from "./App.tsx";
+import { canvas } from "./canvas/Canvas.tsx";
 import { startAssistants } from "./assistant.ts";
 import "./session.ts";
 import { setEditNext } from "./canvas/CellEditor.tsx";
@@ -29,7 +30,7 @@ async function start() {
 }
 
 // For checking the app from a browser's console, and for tests that drive it.
-Object.assign(window, { joinery: { getState, act, library, core: () => import("./core.ts").then((m) => m.core) } });
+Object.assign(window, { joinery: { getState, act, library, canvas, core: () => import("./core.ts").then((m) => m.core) } });
 
 start().catch((error) => {
   fail(error);
