@@ -79,6 +79,43 @@ const closing_grace_ms = 5000;
 /// A connection gets this long to finish its HTTP request.
 const request_ms = 10_000;
 
+/// Descriptors connections hold, across every loop: they all draw on the process's one table.
+var conn_fds: std.atomic.Value(usize) = .init(0);
+/// The most connections the public listeners take, set by `limitConnections`. Past it they're closed as soon as
+/// they're accepted, so the descriptor table can't fill and starve the metrics listener the liveness probe asks.
+var public_cap: usize = std.math.maxInt(usize);
+/// Connections only scrapes can take, past the public cap.
+const metrics_room = 16;
+
+/// Sets the public cap from the descriptors the process may have, raising its soft limit to the hard one first, and
+/// returns it. Each loop keeps a listener, a wake pipe and an event queue; the rest of the headroom is the metrics
+/// listener, stdio, and `metrics_room`.
+pub fn limitConnections(loops: usize) usize {
+    const posix = std.posix;
+    if (posix.getrlimit(.NOFILE)) |limit| {
+        var raised = limit;
+        raised.cur = limit.max;
+        // Refused, as some systems do past a ceiling: then what's there is what there is.
+        posix.setrlimit(.NOFILE, raised) catch {};
+        var nofile: u64 = @intCast((posix.getrlimit(.NOFILE) catch limit).cur);
+        // macOS takes an unlimited soft limit, but holds each process to kern.maxfilesperproc all the same.
+        if (builtin.os.tag.isDarwin()) {
+            var per_process: c_int = 0;
+            var size: usize = @sizeOf(c_int);
+            if (c.sysctlbyname("kern.maxfilesperproc", &per_process, &size, null, 0) == 0 and per_process > 0) {
+                nofile = @min(nofile, @as(u64, @intCast(per_process)));
+            }
+        }
+        public_cap = @intCast(@min(nofile, std.math.maxInt(usize)) -| (4 * loops + metrics_room + 32));
+    } else |_| {}
+    return public_cap;
+}
+
+fn closeConnFd(fd: c.fd_t) void {
+    _ = c.close(fd);
+    _ = conn_fds.fetchSub(1, .monotonic);
+}
+
 /// Loop `index`, on `listener`; loop 0 answers scrapes on `metrics_listener` too. Then each needs `loops` set.
 pub fn init(server: *Server, io: Io, gpa: Allocator, config: Relay.Config, index: u8, listener: c.fd_t, metrics_listener: c.fd_t) !void {
     var seed: [std.Random.DefaultCsprng.secret_seed_length]u8 = undefined;
@@ -159,12 +196,19 @@ fn now(server: *const Server) i64 {
 // Connections
 
 fn accept(server: *Server, listener: c.fd_t, kind: Conn.Kind) void {
+    const cap = if (kind == .metrics) public_cap +| metrics_room else public_cap;
     // As many as are waiting.
     while (true) {
         const fd = c.accept(listener, null, null);
         if (fd < 0) return;
+        // Full: closed at once, which still takes it from the listener's queue, so it isn't reported again.
+        if (conn_fds.fetchAdd(1, .monotonic) >= cap) {
+            closeConnFd(fd);
+            server.counts.refused += 1;
+            continue;
+        }
         server.adopt(fd, kind) catch {
-            _ = c.close(fd);
+            closeConnFd(fd);
             log.warn("turned a connection away: out of memory", .{});
         };
     }
@@ -320,7 +364,7 @@ fn shut(server: *Server, conn: *Conn) void {
     if (conn.in_relay) server.counts.connections_open -= 1;
     conn.in_relay = false;
     conn.hot.state = .gone;
-    _ = c.close(conn.fd);
+    closeConnFd(conn.fd);
     server.conns.remove(&conn.node);
     server.conn_count -= 1;
     server.done.appendAssumeCapacity(conn);
@@ -497,7 +541,7 @@ fn takeHandedOver(server: *Server) void {
         conn.link.room = null;
         conn.link.node = .{};
         server.watch(conn) catch {
-            _ = c.close(conn.fd);
+            closeConnFd(conn.fd);
             server.free(conn);
             continue;
         };
@@ -585,4 +629,58 @@ fn respondMetrics(server: *Server, conn: *Conn, found: bool) void {
     server.queue(conn, std.fmt.bufPrint(&head, "HTTP/1.1 200 OK\r\ncontent-type: text/plain; version=0.0.4; charset=utf-8\r\ncontent-length: {d}\r\nconnection: close\r\n\r\n", .{body.buffered().len}) catch unreachable);
     server.queue(conn, body.buffered());
     server.closeAfterSending(conn);
+}
+
+test "past the public cap, connections are turned away and a scrape still gets in" {
+    const gpa = std.testing.allocator;
+    const loopback = try std.Io.net.Ip4Address.parse("127.0.0.1", 0);
+    const listener = try socket.listen(loopback, false);
+    defer _ = c.close(listener);
+    const metrics_listener = try socket.listen(loopback, false);
+    defer _ = c.close(metrics_listener);
+    var server: Server = undefined;
+    try server.init(std.testing.io, gpa, .{}, 0, listener, metrics_listener);
+    defer server.deinit();
+    const loops = [_]*Server{&server};
+    server.loops = &loops;
+    const saved_cap = public_cap;
+    defer public_cap = saved_cap;
+    public_cap = conn_fds.load(.monotonic) + 3;
+
+    var clients: [5]c.fd_t = undefined;
+    for (&clients) |*client| client.* = try connectTo(listener);
+    defer for (clients) |client| {
+        _ = c.close(client);
+    };
+    server.accept(listener, .http);
+    try std.testing.expectEqual(3, server.conn_count);
+    try std.testing.expectEqual(2, server.counts.refused);
+
+    // The scrape takes a descriptor from the room kept for it, and is answered.
+    const scraper = try connectTo(metrics_listener);
+    defer _ = c.close(scraper);
+    const get = "GET /metrics HTTP/1.1\r\n\r\n";
+    try std.testing.expectEqual(@as(isize, get.len), c.send(scraper, get, get.len, 0));
+    server.accept(metrics_listener, .metrics);
+    try std.testing.expectEqual(4, server.conn_count);
+    const scrape: *Conn = @fieldParentPtr("node", server.conns.last.?);
+    server.read(scrape);
+    server.finishTurn();
+    var answer: [32]u8 = undefined;
+    const n = c.recv(scraper, &answer, answer.len, 0);
+    try std.testing.expect(n > 0 and std.mem.startsWith(u8, answer[0..@intCast(n)], "HTTP/1.1 200 OK"));
+
+    while (server.conns.first) |node| server.shut(@fieldParentPtr("node", node));
+    server.finishTurn();
+}
+
+/// A blocking client connected to `listener`'s port on loopback.
+fn connectTo(listener: c.fd_t) !c.fd_t {
+    var address: c.sockaddr.in = undefined;
+    var len: c.socklen_t = @sizeOf(c.sockaddr.in);
+    if (c.getsockname(listener, @ptrCast(&address), &len) < 0) return error.Unexpected;
+    const fd = c.socket(c.AF.INET, c.SOCK.STREAM, 0);
+    if (fd < 0) return error.SystemResources;
+    if (c.connect(fd, @ptrCast(&address), len) < 0) return error.ConnectionRefused;
+    return fd;
 }
