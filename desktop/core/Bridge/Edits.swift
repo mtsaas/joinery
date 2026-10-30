@@ -73,6 +73,18 @@ enum Edits {
             model.untie(try uuid(a["wire"]), from: try uuid(a["tie"]))
         case "tie":
             model.tie(try uuid(a["wire"]), into: try uuid(a["tie"]), at: int(a["index"]), from: point(a["from"]), along: point(a["along"]))
+        case "releaseTie":
+            // Turns with its wires again, rather than held the way it was lined up.
+            for id in ids(a["ties"]) as Set<UUID> {
+                if let index = model.zipTies.firstIndex(where: { $0.id == id }) { model.zipTies[index].heldDirection = nil }
+            }
+        case "pullCable":
+            // A pulled cable let go: out of the ties it was tugged out of, and into the one it's over.
+            let cable = try uuid(a["cable"])
+            for tie in ids(a["popped"]) as Set<UUID> { model.untie(cable, from: tie) }
+            if let target = optionalUUID(a["into"]) {
+                model.tie(cable, into: target, at: int(a["segment"]), from: point(a["point"]), along: point(a["along"]))
+            }
         case "mergeTies":
             model.merge(try uuid(a["tie"]), by: point(a["by"]), into: try uuid(a["into"]), along: point(a["along"]))
         case "align":

@@ -29,6 +29,11 @@ export const Metrics = {
   portHeight: 20,
   portHintRadius: 10,
   gridSpacing: 24,
+  portWidth: 96,
+  /** How much further a cable has to be pulled from a zip tie than where it was grabbed, to pop out. */
+  tiePopPull: 80,
+  /** How near it has to come back to snap into one it popped out of: well short of popping, so it doesn't flicker. */
+  tieSnapPull: 30,
 } as const;
 
 export type Part = "key" | "name" | "type";

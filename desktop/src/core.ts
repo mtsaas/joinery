@@ -63,6 +63,28 @@ export interface Scene {
   canUndo: boolean;
   canRedo: boolean;
   bounds: Rect | null;
+  /** Zip ties and bend points where they are in the model. */
+  ties: SceneTie[];
+  /** Each cable's ties, in order along it: a wire's by its ID, a port's bus by the port's. */
+  cables: Record<string, string[]>;
+  /** Each foreign key's columns. */
+  wires: { id: string; from: string; to: string }[];
+}
+
+export interface SceneTie {
+  id: string;
+  position: Point;
+  direction: Point;
+  /** Held the way it was lined up, rather than turning with its wires. */
+  held: boolean;
+  wires: string[];
+}
+
+/** A drag in progress, routed as if it were done: a port slid along its edge, a tie over another, a cable pulled. */
+export interface Preview {
+  port?: { port: string; side: string; along: number };
+  merge?: { tie: string; into: string; along: Point };
+  pull?: { cable: string; popped: string[]; point: Point; direction: Point; segment: number };
 }
 
 export interface Wire {
@@ -78,6 +100,9 @@ export interface Port {
   color: ColorName | null;
   label: string;
   plugged: boolean;
+  group: string;
+  /** The column outside its group it stands for. */
+  column: string | null;
   point: Point;
   normal: Point;
   /** length, outer, inner */
@@ -131,8 +156,9 @@ export function scene(): Scene {
   return JSON.parse(core.scene());
 }
 
-export function frame(time: number, tables: Record<string, Point>, ties: Record<string, Point>, avoiding: boolean): Frame {
-  return JSON.parse(core.frame(time, JSON.stringify({ tables, ties }), avoiding));
+export function frame(time: number, tables: Record<string, Point>, ties: Record<string, Point>, avoiding: boolean,
+  preview: Preview = {}): Frame {
+  return JSON.parse(core.frame(time, JSON.stringify({ tables, ties, preview }), avoiding));
 }
 
 /** Makes an edit, as one change and one undo; returns what it made, such as a new table's ID. */
