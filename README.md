@@ -1,5 +1,7 @@
 # Joinery
 
+<img width="1603" height="938" alt="image" src="https://github.com/user-attachments/assets/66cbbdad-5f8a-49a1-8baf-eb1e5aaf6c73" />
+
 Joinery is a macOS app for sketching SQL data models on an infinite canvas. Tables sit on the canvas, foreign keys are
 drawn as wires between column sockets, and wires can be zip-tied into bundles. Models live in a Freeform-style library
 with version history, can be edited live with others through an end-to-end encrypted relay, and can be read and changed
