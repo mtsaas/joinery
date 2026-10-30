@@ -626,6 +626,24 @@ struct JoineryTests {
         #expect(other.groups.map(\.name) == ["sales"])
     }
 
+    @Test func pastedTableTakesTheGroupItLandsIn() throws {
+        var model = storefront()
+        let orders = model.tables[1], reviews = model.tables[2]
+        model.group([orders.id, reviews.id], named: "sales")
+        let clip = model.clip(tables: [orders.id])
+        model.tables.removeAll { $0.id == orders.id }
+
+        // Cut from the group and pasted far from it: in no group.
+        var away = model
+        let far = away.paste(clip, offset: CGPoint(x: 5000, y: 5000)).tables
+        #expect(away.table(far[0])?.group == nil && away.groups.count == 1)
+
+        // Pasted over the group: in it.
+        var back = model
+        let near = back.paste(clip, offset: reviews.position - orders.position).tables
+        #expect(back.table(near[0])?.group == back.table(reviews.id)?.group)
+    }
+
     @Test func untanglingCrossesFewerWiresTheSameWayEveryTime() {
         var model = DataModel.synthetic(tables: 24, foreignKeys: 36)
         // Scrambled: each table swapped with one across the grid, so wires criss-cross.

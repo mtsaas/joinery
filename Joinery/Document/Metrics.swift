@@ -4,6 +4,10 @@ import CoreGraphics
 /// so sockets can be placed without measuring views.
 enum Metrics {
     static let tableWidth: CGFloat = 236
+    /// The narrowest a table can be dragged: the key and type columns and a little name.
+    static let minimumTableWidth: CGFloat = 150
+    /// How near a header's right edge the pointer has to be to drag the table wider, in screen points.
+    static let resizeReach: CGFloat = 5
     /// The grid's key column (PK, FK) and type column; names get the rest.
     static let keyColumnWidth: CGFloat = 30
     static let typeColumnWidth: CGFloat = 86
@@ -65,12 +69,14 @@ enum Metrics {
     /// Which grid column a point on a table falls in, by its distance from the table's left edge.
     enum GridColumn { case key, name, type }
 
-    static func gridColumn(atX x: CGFloat) -> GridColumn {
-        x < keyColumnWidth ? .key : x < tableWidth - typeColumnWidth ? .name : .type
+    static func gridColumn(atX x: CGFloat, width: CGFloat) -> GridColumn {
+        x < keyColumnWidth ? .key : x < width - typeColumnWidth ? .name : .type
     }
 
+    static func width(of table: Table) -> CGFloat { table.width ?? tableWidth }
+
     static func size(of table: Table) -> CGSize {
-        CGSize(width: tableWidth, height: headerHeight + CGFloat(table.columns.count) * rowHeight)
+        CGSize(width: width(of: table), height: headerHeight + CGFloat(table.columns.count) * rowHeight)
     }
 
     static func frame(of table: Table) -> CGRect {
@@ -83,8 +89,8 @@ enum Metrics {
         let y = frame.minY + headerHeight + CGFloat(row) * rowHeight
         let (x, width): (CGFloat, CGFloat) = switch part {
         case .key: (0, keyColumnWidth)
-        case .name: (keyColumnWidth, tableWidth - keyColumnWidth - typeColumnWidth)
-        case .type: (tableWidth - typeColumnWidth, typeColumnWidth)
+        case .name: (keyColumnWidth, frame.width - keyColumnWidth - typeColumnWidth)
+        case .type: (frame.width - typeColumnWidth, typeColumnWidth)
         }
         return CGRect(x: frame.minX + x, y: y, width: width, height: rowHeight)
     }

@@ -36,10 +36,11 @@ extension DataModel {
     }
 
     /// Adds a copy of `clip`, moved by `offset`, with everything in it new: tables renamed if theirs are taken, groups
-    /// joined if one here has the same name, and foreign keys to tables left behind kept only where those tables are here.
+    /// not here made, a table of a group that is here put into whichever group it lands in (or none), and foreign keys
+    /// to tables left behind kept only where those tables are here.
     /// - Returns: What was added, to select.
     mutating func paste(_ clip: DataModel, offset: CGPoint) -> (tables: [Table.ID], ties: [ZipTie.ID], groups: [TableGroup.ID]) {
-        var groupIDs: [TableGroup.ID: TableGroup.ID] = [:]
+        var groupIDs: [TableGroup.ID: TableGroup.ID] = [:], made: Set<TableGroup.ID> = []
         for group in clip.groups {
             if let same = groups.first(where: { $0.name.lowercased() == group.name.lowercased() }) {
                 groupIDs[group.id] = same.id
@@ -48,6 +49,7 @@ extension DataModel {
                 copy.id = UUID()
                 groups.append(copy)
                 groupIDs[group.id] = copy.id
+                made.insert(copy.id)
             }
         }
         var columnIDs: [Column.ID: Column.ID] = [:], tableIDs: [Table.ID] = []
@@ -75,6 +77,17 @@ extension DataModel {
             tables.append(table)
             tableIDs.append(table.id)
         }
+        // Where it lands decides its group, unless that group came with it: a cut table pasted away from its old group
+        // isn't pulled back into it.
+        let pasted = Set(tableIDs)
+        let boundaries = groups.filter { !made.contains($0.id) }.compactMap { group in
+            frame(of: group.id, excluding: pasted).map { (id: group.id, frame: $0) }
+        }
+        for index in tables.indices where pasted.contains(tables[index].id) && !(tables[index].group.map(made.contains) ?? false) {
+            let frame = Metrics.frame(of: tables[index])
+            tables[index].group = boundaries.last { $0.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) }?.id
+        }
+        removeEmptyGroups()
         let here = Set(tables.flatMap(\.columns).map(\.id))
         // Copied groups' ports, for the copied columns, or the same ones if they're here.
         for group in clip.groups {

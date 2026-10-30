@@ -21,6 +21,8 @@ struct CanvasView: View {
     /// The last click, to tell a double-click from two clicks.
     @State private var lastClick: (item: CanvasController.Item, time: TimeInterval)?
     @State private var lastPortClick: (port: GroupPort.ID, time: TimeInterval)?
+    @State private var lastResizeClick: (table: Table.ID, time: TimeInterval)?
+    @State private var isHoveringResize = false
     /// A selected item Shift-pressed: taken out of the selection if the press turns out to be a click, not a drag.
     @State private var deselectOnClick: CanvasController.Item?
     @FocusState private var isCanvasFocused: Bool
@@ -891,8 +893,12 @@ struct CanvasView: View {
                         .flatMap { point.y < Metrics.frame(of: $0).minY + Metrics.headerHeight ? $0.id : nil }
                 }
                 if header != canvas.hoveredHeader { canvas.hoveredHeader = header }
+                let isOverEdge = if case .active(let location) = phase { resizeEdge(at: canvas.canvasPoint(location)) != nil } else { false }
+                if isOverEdge != isHoveringResize { isHoveringResize = isOverEdge }
             }
-            .pointerStyle(canvas.isTying ? .rectSelection : hoveredSocket != nil || isHoveringPortSocket ? .link
+            .pointerStyle(canvas.isTying ? .rectSelection
+                          : canvas.resizeDrag != nil || isHoveringResize && press == nil ? .frameResize(position: .trailing)
+                          : hoveredSocket != nil || isHoveringPortSocket ? .link
                           : canvas.portDrag != nil || canvas.dragOffset != nil ? .grabActive
                           : isHoveringPort || canvas.hoveredHeader != nil ? .grabIdle : nil)
             .help(hoveredSocket != nil ? "Drag to another column to add a foreign key"
@@ -907,8 +913,12 @@ struct CanvasView: View {
 
     /// The model the wires are routed for: with a port being dragged where it's got to.
     private var routedModel: DataModel {
-        guard canvas.portDrag != nil || canvas.cableDrag != nil || canvas.tieMerge != nil || newColumnPreview != nil else { return model }
+        guard canvas.portDrag != nil || canvas.cableDrag != nil || canvas.tieMerge != nil || newColumnPreview != nil
+                || canvas.resizeDrag != nil else { return model }
         var routed = model
+        if let drag = canvas.resizeDrag, let index = routed.tables.firstIndex(where: { $0.id == drag.table }) {
+            routed.tables[index].width = drag.width
+        }
         // A wire over a table's header: the column it'd make there, and the wire to it.
         if let (column, table) = newColumnPreview {
             routed.connect(dragging: column, onto: .table(table), newColumn: canvas.newColumnIDs.column,
@@ -979,6 +989,8 @@ struct CanvasView: View {
         /// On the + by a group's edge: a new port there.
         case newPort(TableGroup.ID, side: Side4, along: CGFloat)
         case table(Table)
+        /// On a header's right edge: dragging the table wider or narrower, or a double-click to fit it to its text.
+        case resize(Table)
         /// On a group's name: selecting and moving the group.
         case group(TableGroup.ID)
         case background
@@ -991,6 +1003,7 @@ struct CanvasView: View {
             return .portSocket(socket.port, isOutside: socket.isOutside, at: socket.center)
         }
         if let port = model.port(at: point, in: ports) { return .port(port) }
+        if let table = resizeEdge(at: point) { return .resize(table) }
         if !model.tables.contains(where: { Metrics.frame(of: $0).contains(point) }),
            let hit = simulation.hit(near: point, within: Metrics.wireHitRadius / canvas.zoom) {
             return .cable(hit)
@@ -1010,6 +1023,35 @@ struct CanvasView: View {
         }
         if let group = group(at: point) { return .group(group) }
         return .background
+    }
+
+    /// The table whose header's right edge is under `point`, in canvas points: the top one, if several.
+    private func resizeEdge(at point: CGPoint) -> Table? {
+        let reach = Metrics.resizeReach / canvas.zoom
+        return model.tables.last { table in
+            let frame = Metrics.frame(of: table)
+            return abs(point.x - frame.maxX) <= reach && point.y >= frame.minY && point.y < frame.minY + Metrics.headerHeight
+        }
+    }
+
+    /// The usual width is kept as none, so it follows `Metrics.tableWidth`.
+    private func setWidth(_ width: CGFloat, of id: Table.ID) {
+        guard let index = model.tables.firstIndex(where: { $0.id == id }) else { return }
+        model.tables[index].width = width == Metrics.tableWidth ? nil : width
+    }
+
+    /// Just wide enough for its name and every column's name, with the key and type columns as they are.
+    private func fittingWidth(of table: Table) -> CGFloat {
+        func width(_ text: String, _ style: TableText) -> CGFloat {
+            (text as NSString).size(withAttributes: [.font: style.font]).width.rounded(.up) + 1
+        }
+        let header = Metrics.gripWidth + width(table.name, .header) + Metrics.cellInset
+        // A unique column's badge takes its capsule and a gap from the name (see `TableLayer`).
+        let names = table.columns.map { column in
+            width(column.name, column.isPrimaryKey ? .keyName : .name) + (column.isUnique && !column.isPrimaryKey ? width("UQ", .badge) + 11 : 0)
+        }.max() ?? 0
+        let rows = Metrics.keyColumnWidth + Metrics.cellInset * 2 + names + Metrics.typeColumnWidth
+        return max(Metrics.minimumTableWidth, header, rows)
     }
 
     /// A click on a port selects it, with its bus; a double-click puts it back facing its column.
@@ -1122,6 +1164,10 @@ struct CanvasView: View {
                     dragColumn(column, in: table, to: canvas.canvasPoint(value.location))
                 case .group(let id):
                     dragItem(.group(id), by: value.translation)
+                case .resize(let table):
+                    guard canvas.resizeDrag != nil || CGPoint(value.translation).length >= 2 else { break }
+                    let x = canvas.canvasPoint(value.location).x
+                    canvas.resizeDrag = (table.id, max(Metrics.minimumTableWidth, (x - table.position.x).rounded()))
                 case .background:
                     dragBackground(from: value.startLocation, to: value.location)
                 }
@@ -1177,6 +1223,17 @@ struct CanvasView: View {
                         dragItem(.table(table.id), by: .zero)
                         dropItem(.table(table.id), at: location, translation: .zero,
                                  click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) }
+                    }
+                case .resize(let table):
+                    if let drag = canvas.resizeDrag {
+                        canvas.resizeDrag = nil
+                        setWidth(drag.width, of: table.id)
+                    } else if let last = lastResizeClick, last.table == table.id,
+                              ProcessInfo.processInfo.systemUptime - last.time < NSEvent.doubleClickInterval {
+                        lastResizeClick = nil
+                        setWidth(fittingWidth(of: table), of: table.id)
+                    } else {
+                        lastResizeClick = (table.id, ProcessInfo.processInfo.systemUptime)
                     }
                 case .group(let id):
                     // A double-click on its name renames it.
@@ -1531,7 +1588,7 @@ struct CanvasView: View {
         let local = point - table.position
         let row = Int(((local.y - Metrics.headerHeight) / Metrics.rowHeight).rounded(.down))
         guard local.y >= Metrics.headerHeight, table.columns.indices.contains(row) else { return .name(of: table.id) }
-        return CanvasController.Cell(table: table.id, row: .column(table.columns[row].id), part: Metrics.gridColumn(atX: local.x))
+        return CanvasController.Cell(table: table.id, row: .column(table.columns[row].id), part: Metrics.gridColumn(atX: local.x, width: Metrics.width(of: table)))
     }
 
     private func selectCell(at point: CGPoint, in table: Table) {

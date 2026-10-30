@@ -178,6 +178,8 @@ final class CanvasController {
     /// A column being dragged to another place in its table, and where it'd go: before the column at `insertion`, or
     /// last if that's past them all.
     var columnDrag: (table: Table.ID, column: Column.ID, insertion: Int)?
+    /// A table being dragged wider or narrower by its header's right edge, and how wide it is so far.
+    var resizeDrag: (table: Table.ID, width: CGFloat)?
     /// The table open in the table designer, beside the canvas.
     var designing: Table.ID?
     /// A shortcut for the table designer, caught before the field being typed in there could take it.

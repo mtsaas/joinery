@@ -135,7 +135,7 @@ struct TableLayer: View {
             let runs = table.compoundPrimaryKeyRuns
             let rows = frame.minY + Metrics.headerHeight
             // The key and type columns' edges, down through the rows.
-            for x in [Metrics.keyColumnWidth, Metrics.tableWidth - Metrics.typeColumnWidth - hairline] {
+            for x in [Metrics.keyColumnWidth, frame.width - Metrics.typeColumnWidth - hairline] {
                 lines.addRect(CGRect(x: frame.minX + x, y: rows, width: hairline, height: frame.maxY - rows))
             }
             for (index, column) in table.columns.enumerated() {
