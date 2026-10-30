@@ -188,7 +188,6 @@ test "a host's frame at the last seq drops it, and the room still takes guests" 
     h.receive(0, makeFrame(.snapshot, last, "snapshot"));
     try testing.expectEqualSlices(*Relay.Link, &.{&h.links[0]}, h.closed.items);
     try testing.expectEqual(@as(u64, 0), room.latest);
-    h.receive(0, makeFrame(.ops, 1, "ops"));
     h.receive(1, hello(.guest, &room.id, &room.guest_secret, "a", "Guest", ""));
     try testing.expectEqual(null, h.bye(1));
 
@@ -201,4 +200,23 @@ test "a host's frame at the last seq drops it, and the room still takes guests" 
     try testing.expectEqual(last - 1, other.latest);
     h.receive(3, hello(.guest, &other.id, &other.guest_secret, "b", "Guest", ""));
     try testing.expectEqual(null, h.bye(3));
+}
+
+test "a connection the relay lets go of is in no room and not in the lobby, however it goes" {
+    var h: Harness = undefined;
+    h.init(.{});
+    defer h.deinit();
+    const room = h.host("Host", "Model");
+    h.join(1, .guest, &room.guest_secret, "a");
+    h.join(2, .view, &room.view_secret, "v");
+    // Dropped, replaced by the same client on a new connection, refused before joining, and ended with the room.
+    h.receive(2, makeFrame(.change, 1, "change"));
+    h.join(3, .guest, &room.guest_secret, "a");
+    h.receive(4, makeFrame(.ping, 0, ""));
+    h.receive(0, makeFrame(.bye, 0, "Stopped sharing."));
+    for ([_]usize{ 0, 1, 2, 3, 4 }) |i| {
+        const link = &h.links[i];
+        try testing.expectEqual(null, link.room);
+        try testing.expect(link.node.prev == null and link.node.next == null and h.relay.lobby.first != &link.node);
+    }
 }

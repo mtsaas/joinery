@@ -5,6 +5,7 @@ test {
     _ = @import("relay/relay_test.zig");
     _ = @import("relay/replay_test.zig");
     _ = @import("server/Server.zig");
+    _ = @import("server/Conn.zig");
     _ = @import("server/Pointers.zig");
     _ = @import("server/http.zig");
     _ = @import("server/metrics.zig");
