@@ -422,13 +422,13 @@ fn queue(server: *Server, conn: *Conn, bytes: []const u8) void {
 }
 
 /// A connection that's too far behind: closed, and the relay told at the end of the turn, as this is inside one of its
-/// calls. Its outbox no longer counts: nothing more is queued for it, and it's let go of at the end of the turn.
+/// calls. Nothing queued for it is sent now, so its outbox's memory goes back at once, not when it's let go of at the
+/// end of the turn: what the budget stops counting, the relay no longer holds, even if it's taken again this turn.
 fn lag(server: *Server, conn: *Conn, why: []const u8) void {
     log.info("connection {d} dropped: {s}, so it's too far behind", .{ conn.link.id, why });
     server.counts.lagging += 1;
     conn.hot.state = .lagging;
-    server.out_used -= billable(conn.hot.out_used);
-    conn.hot.out_used = 0;
+    server.giveBack(conn);
     server.markDirty(conn);
 }
 
@@ -464,13 +464,14 @@ fn longestBehind(server: *Server) ?*Conn {
     return longest;
 }
 
-/// Gives the memory past `Conn.out_free` of an outbox that's all been sent back to the system, and to the budget.
+/// Gives the memory past `Conn.out_free` of an outbox that's all been sent, or never will be, back to the system, and
+/// to the budget. Still counted if the system won't take it.
 fn giveBack(server: *Server, conn: *Conn) void {
     if (conn.hot.out_used <= Conn.out_free) return;
     const page = std.heap.pageSize();
     const from = std.mem.alignForward(usize, Conn.out_free, page);
     const to = @min(std.mem.alignForward(usize, conn.hot.out_used, page), conn.hot.out.len);
-    if (to > from) std.posix.madvise(@alignCast(conn.hot.out[from..].ptr), to - from, release_advice) catch {};
+    if (to > from) std.posix.madvise(@alignCast(conn.hot.out[from..].ptr), to - from, release_advice) catch return;
     server.out_used -= billable(conn.hot.out_used);
     conn.hot.out_used = Conn.out_free;
 }
@@ -606,7 +607,14 @@ fn takeHandedOver(server: *Server) void {
         conn.hot.is_dirty = false;
         conn.link.room = null;
         conn.link.node = .{};
+        // What it brings counts here now: past this loop's budget, it's let go of like one too far behind.
         server.out_used += billable(conn.hot.out_used);
+        if (server.out_used > server.out_budget) {
+            server.counts.lagging += 1;
+            closeConnFd(conn.fd);
+            server.free(conn);
+            continue;
+        }
         server.watch(conn) catch {
             closeConnFd(conn.fd);
             server.free(conn);
@@ -787,6 +795,43 @@ test "past the public cap, connections are turned away and a scrape still gets i
 
     while (server.conns.first) |node| server.shut(@fieldParentPtr("node", node));
     server.finishTurn();
+}
+
+test "a connection handed to another loop counts against that loop's budget, and is let go of past it" {
+    const gpa = std.testing.allocator;
+    const loopback = try std.Io.net.Ip4Address.parse("127.0.0.1", 0);
+    const listener = try socket.listen(loopback, false);
+    defer _ = c.close(listener);
+    const metrics_listener = try socket.listen(loopback, false);
+    defer _ = c.close(metrics_listener);
+    var from: Server = undefined;
+    try from.init(std.testing.io, gpa, .{}, 0, listener, metrics_listener);
+    defer from.deinit();
+    var to: Server = undefined;
+    try to.init(std.testing.io, gpa, .{}, 1, listener, metrics_listener);
+    defer to.deinit();
+    const loops = [_]*Server{ &from, &to };
+    from.loops = &loops;
+    to.loops = &loops;
+    to.out_budget = 1 << 20;
+
+    const client = try connectTo(listener);
+    defer _ = c.close(client);
+    from.accept(listener, .http);
+    const conn: *Conn = @fieldParentPtr("node", from.conns.first.?);
+    const frame = try gpa.alloc(u8, 2 << 20);
+    defer gpa.free(frame);
+    from.queue(conn, frame);
+    try std.testing.expect(from.out_used > to.out_budget);
+
+    conn.owner = 1;
+    conn.hot.state = .leaving;
+    from.handOver(conn);
+    try std.testing.expectEqual(0, from.out_used);
+    to.takeHandedOver();
+    try std.testing.expectEqual(0, to.conn_count);
+    try std.testing.expectEqual(0, to.out_used);
+    try std.testing.expectEqual(1, to.counts.lagging);
 }
 
 /// A blocking client connected to `listener`'s port on loopback.
