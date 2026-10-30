@@ -1057,9 +1057,32 @@ struct JoineryTests {
         #expect(SchemaDiff(from: before, to: after) == diff)
     }
 
+    /// The whole server minus the socket, as any platform's app drives it: request bytes in, response bytes out.
+    @Test func theMCPServerAnswersHTTPWithoutTheApp() async throws {
+        final class Host: MCPHost {
+            var model = DataModel()
+            func callLibraryTool(_ name: String, _ arguments: [String: Any]) async throws -> String { "library: \(name)" }
+            func edit(_ change: (inout DataModel) throws -> String) async throws -> String { try change(&model) }
+        }
+        let host = Host()
+        func post(_ json: String, origin: String? = nil) async throws -> String {
+            let head = "POST /mcp HTTP/1.1\r\nContent-Length: \(json.utf8.count)\r\n" + (origin.map { "Origin: \($0)\r\n" } ?? "")
+            let request = try #require(MCP.Request(Data((head + "\r\n" + json).utf8)))
+            return String(decoding: await MCP.response(to: request, host: host), as: UTF8.self)
+        }
+        // Not whole yet: the body is still to come.
+        #expect(MCP.Request(Data("POST /mcp HTTP/1.1\r\nContent-Length: 10\r\n\r\n{}".utf8)) == nil)
+        let created = try await post(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_tables","arguments":{"tables":[{"name":"users","columns":[{"name":"id","type":"uuid","primary_key":true}]}]}}}"#)
+        #expect(created.hasPrefix("HTTP/1.1 200 OK"))
+        #expect(host.model.tables.map(\.name) == ["users"])
+        #expect(try await post(#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_models"}}"#).contains("library: list_models"))
+        #expect(try await post(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).hasPrefix("HTTP/1.1 202"))
+        #expect(try await post("{}", origin: "https://evil.example").hasPrefix("HTTP/1.1 403"))
+    }
+
     @Test func assistantsAreToldHowToReviewSchemaChanges() async throws {
         func result(_ method: String, _ params: [String: Any] = [:]) async throws -> [String: Any] {
-            let reply = try #require(await MCPServer.reply(to: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params]))
+            let reply = try #require(await MCP.reply(to: ["jsonrpc": "2.0", "id": 1, "method": method, "params": params], host: MCPServer.shared))
             return try #require(reply["result"] as? [String: Any])
         }
         let initialized = try await result("initialize")

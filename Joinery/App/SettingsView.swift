@@ -58,18 +58,18 @@ private struct AIAssistantSettings: View {
 
             Section("Claude Code") {
                 Text("Run this in Terminal, then ask Claude to work on your data model:")
-                Snippet(text: MCPServer.setupCommand)
+                Snippet(text: MCP.setupCommand)
             }
 
             Section("Claude Desktop and others") {
                 Text("Apps that connect to MCP servers by URL can use:")
-                Snippet(text: MCPServer.url)
+                Snippet(text: MCP.url)
                 Text("Apps that start their servers themselves, like Claude Desktop, can reach it through a bridge. Add this to its configuration (Claude Desktop: Settings ▸ Developer ▸ Edit Config):")
-                Snippet(text: MCPServer.bridgeConfiguration)
+                Snippet(text: MCP.bridgeConfiguration)
             }
 
             Section("What assistants can do") {
-                ForEach(MCPServer.toolSummaries, id: \.name) { tool in
+                ForEach(MCP.toolSummaries, id: \.name) { tool in
                     LabeledContent {
                         Text(tool.summary).foregroundStyle(.secondary)
                     } label: {
@@ -85,7 +85,7 @@ private struct AIAssistantSettings: View {
 
     private var status: some View {
         let (color, text): (Color, String) = switch server.status {
-        case .running: (.green, "Running at \(MCPServer.url)")
+        case .running: (.green, "Running at \(MCP.url)")
         case .starting: (.yellow, "Starting…")
         case .off: (.secondary, "Off")
         case .failed(let reason): (.red, reason)
