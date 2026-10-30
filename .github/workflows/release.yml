@@ -29,6 +29,9 @@ jobs:
       app_tag: ${{ steps.release.outputs.tag_name }}
       relay: ${{ steps.release.outputs['relay--release_created'] }}
       relay_version: ${{ steps.release.outputs['relay--version'] }}
+      desktop: ${{ steps.release.outputs['desktop--release_created'] }}
+      desktop_version: ${{ steps.release.outputs['desktop--version'] }}
+      desktop_tag: ${{ steps.release.outputs['desktop--tag_name'] }}
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
@@ -119,3 +122,13 @@ jobs:
           gh release upload "$TAG" "build/release/Joinery-$VERSION.dmg"
           cp "build/release/Joinery-$VERSION.dmg" build/release/Joinery.dmg
           gh release upload updates build/release/appcast.xml build/release/Joinery.dmg --clobber
+
+  # Joinery for Windows and Linux: built, attached to the release, and added to its update feed (desktop.yml).
+  desktop:
+    needs: release-please
+    if: needs.release-please.outputs.desktop == 'true'
+    uses: ./.github/workflows/desktop.yml
+    with:
+      tag: ${{ needs.release-please.outputs.desktop_tag }}
+      version: ${{ needs.release-please.outputs.desktop_version }}
+    secrets: inherit
