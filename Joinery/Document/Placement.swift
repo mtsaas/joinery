@@ -61,6 +61,25 @@ extension DataModel {
         arrangeBlock(layout, at: CGPoint(x: (fallback ?? anchor).maxX + clearance, y: anchor.minY))
     }
 
+    /// Where a table of `size` can go, its top left nearest `origin`, inside `area` and `gap` clear of every table and
+    /// group; nil if nowhere in `area` is open.
+    func openSpot(for size: CGSize, near origin: CGPoint, in area: CGRect, gap: CGFloat = 24) -> CGPoint? {
+        let obstacles = (tables.map(Metrics.frame) + groups.compactMap { frame(of: $0.id) }).map { $0.insetBy(dx: -gap, dy: -gap) }
+        let isOpen = { (point: CGPoint) in !obstacles.contains { $0.intersects(CGRect(origin: point, size: size)) } }
+        if isOpen(origin) { return origin }
+        var best: (point: CGPoint, distance: CGFloat)?
+        // ponytail: a grid search, O(candidates × tables); fine for a window's worth of canvas and hundreds of tables.
+        let step: CGFloat = 16
+        for y in stride(from: area.minY, through: area.maxY - size.height, by: step) {
+            for x in stride(from: area.minX, through: area.maxX - size.width, by: step) {
+                let point = CGPoint(x: x, y: y), distance = point.distance(to: origin)
+                guard distance < best?.distance ?? .infinity, isOpen(point) else { continue }
+                best = (point, distance)
+            }
+        }
+        return best?.point
+    }
+
     /// Moves `ids` together, as a block in rows, its top left at `origin`.
     mutating func place(_ ids: [Table.ID], at origin: CGPoint) {
         arrangeBlock(blockLayout(ids), at: origin)

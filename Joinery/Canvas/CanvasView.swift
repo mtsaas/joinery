@@ -21,6 +21,8 @@ struct CanvasView: View {
     /// The last click, to tell a double-click from two clicks.
     @State private var lastClick: (item: CanvasController.Item, time: TimeInterval)?
     @State private var lastPortClick: (port: GroupPort.ID, time: TimeInterval)?
+    @State private var lastResizeClick: (table: Table.ID, time: TimeInterval)?
+    @State private var isHoveringResize = false
     /// A selected item Shift-pressed: taken out of the selection if the press turns out to be a click, not a drag.
     @State private var deselectOnClick: CanvasController.Item?
     @FocusState private var isCanvasFocused: Bool
@@ -285,12 +287,7 @@ struct CanvasView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { note in
             if note.object as AnyObject? === canvas { openSettings() }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .pickFromWheel)) { note in
-            guard note.object as AnyObject? === canvas, let wheel = canvas.wheel,
-                  let direction = note.userInfo?["direction"] as? CommandWheel.Direction else { return }
-            canvas.wheel = nil
-            wheelContents(wheel).slots[direction]?.action()
-        }
+        .onReceive(NotificationCenter.default.publisher(for: .pickFromWheel)) { debugPickFromWheel($0) }
         .onReceive(NotificationCenter.default.publisher(for: .click)) { note in
             if note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint { click(at: point) }
         }
@@ -361,9 +358,7 @@ struct CanvasView: View {
                 })
             }
         }
-        // The selection's color: each table's, and each group's (not its tables').
-        let groups = canvas.selectedGroups
-        let loose = groups.isEmpty ? tables : Set(model.tables.filter { tables.contains($0.id) && !($0.group.map(groups.contains) ?? false) }.map(\.id))
+        let (loose, groups) = colorTargets
         if !loose.isEmpty || !groups.isEmpty {
             let what = [(loose.count, "table"), (groups.count, "group")].filter { $0.0 > 0 }
                 .map { "\($0.0) \($0.1)\($0.0 == 1 ? "" : "s")" }.formatted()
@@ -484,6 +479,25 @@ struct CanvasView: View {
         canvas.wheel = .init(center: center, point: point, target: target)
     }
 
+    #if DEBUG
+    /// A command or color on the open wheel, picked by a debug script.
+    private func debugPickFromWheel(_ note: Notification) {
+        guard note.object as AnyObject? === canvas, let wheel = canvas.wheel else { return }
+        canvas.wheel = nil
+        if let color = note.userInfo?["color"] as? TableColor { return wheelContents(wheel).color?.set(color) ?? () }
+        guard let direction = note.userInfo?["direction"] as? CommandWheel.Direction else { return }
+        wheelContents(wheel).slots[direction]?.action()
+    }
+    #endif
+
+    /// What recoloring the selection colors: each selected group, and each selected table not in one of them (a group's
+    /// tables keep their own colors).
+    private var colorTargets: (tables: Set<Table.ID>, groups: Set<TableGroup.ID>) {
+        let tables = canvas.selectedTables, groups = canvas.selectedGroups
+        let loose = model.tables.filter { tables.contains($0.id) && !($0.group.map(groups.contains) ?? false) }.map(\.id)
+        return (Set(loose), groups)
+    }
+
     /// What the wheel offers. With two or more tables or ties selected, aligning, each way pointing where things go:
     /// left edges to the west, top edges to the north. Otherwise, what suits what was right-clicked.
     private func wheelContents(_ wheel: CanvasController.Wheel) -> (slots: [CommandWheel.Direction: PaletteCommand],
@@ -517,9 +531,10 @@ struct CanvasView: View {
                                                    symbol: "distribute.vertical.center") { model.distribute(tables, horizontally: false) }
             }
             extras = [groupSelection, untangle, copyMarkdown, deleteSelection]
-            // The selected tables' color, all at once.
-            if let first = model.tables.first(where: { tables.contains($0.id) }) {
-                color = (first.color, { color in model.recolor(tables: tables, groups: [], color) })
+            // The selection's color, all at once.
+            let (loose, groups) = colorTargets
+            if let current = model.groups.first(where: { groups.contains($0.id) })?.color ?? model.tables.first(where: { loose.contains($0.id) })?.color {
+                color = (current, { color in model.recolor(tables: loose, groups: groups, color) })
             }
             return (slots, extras, color)
         }
@@ -891,8 +906,12 @@ struct CanvasView: View {
                         .flatMap { point.y < Metrics.frame(of: $0).minY + Metrics.headerHeight ? $0.id : nil }
                 }
                 if header != canvas.hoveredHeader { canvas.hoveredHeader = header }
+                let isOverEdge = if case .active(let location) = phase { resizeEdge(at: canvas.canvasPoint(location)) != nil } else { false }
+                if isOverEdge != isHoveringResize { isHoveringResize = isOverEdge }
             }
-            .pointerStyle(canvas.isTying ? .rectSelection : hoveredSocket != nil || isHoveringPortSocket ? .link
+            .pointerStyle(canvas.isTying ? .rectSelection
+                          : canvas.resizeDrag != nil || isHoveringResize && press == nil ? .frameResize(position: .trailing)
+                          : hoveredSocket != nil || isHoveringPortSocket ? .link
                           : canvas.portDrag != nil || canvas.dragOffset != nil ? .grabActive
                           : isHoveringPort || canvas.hoveredHeader != nil ? .grabIdle : nil)
             .help(hoveredSocket != nil ? "Drag to another column to add a foreign key"
@@ -907,8 +926,12 @@ struct CanvasView: View {
 
     /// The model the wires are routed for: with a port being dragged where it's got to.
     private var routedModel: DataModel {
-        guard canvas.portDrag != nil || canvas.cableDrag != nil || canvas.tieMerge != nil || newColumnPreview != nil else { return model }
+        guard canvas.portDrag != nil || canvas.cableDrag != nil || canvas.tieMerge != nil || newColumnPreview != nil
+                || canvas.resizeDrag != nil else { return model }
         var routed = model
+        if let drag = canvas.resizeDrag, let index = routed.tables.firstIndex(where: { $0.id == drag.table }) {
+            routed.tables[index].width = drag.width
+        }
         // A wire over a table's header: the column it'd make there, and the wire to it.
         if let (column, table) = newColumnPreview {
             routed.connect(dragging: column, onto: .table(table), newColumn: canvas.newColumnIDs.column,
@@ -979,6 +1002,8 @@ struct CanvasView: View {
         /// On the + by a group's edge: a new port there.
         case newPort(TableGroup.ID, side: Side4, along: CGFloat)
         case table(Table)
+        /// On a header's right edge: dragging the table wider or narrower, or a double-click to fit it to its text.
+        case resize(Table)
         /// On a group's name: selecting and moving the group.
         case group(TableGroup.ID)
         case background
@@ -991,6 +1016,7 @@ struct CanvasView: View {
             return .portSocket(socket.port, isOutside: socket.isOutside, at: socket.center)
         }
         if let port = model.port(at: point, in: ports) { return .port(port) }
+        if let table = resizeEdge(at: point) { return .resize(table) }
         if !model.tables.contains(where: { Metrics.frame(of: $0).contains(point) }),
            let hit = simulation.hit(near: point, within: Metrics.wireHitRadius / canvas.zoom) {
             return .cable(hit)
@@ -1010,6 +1036,40 @@ struct CanvasView: View {
         }
         if let group = group(at: point) { return .group(group) }
         return .background
+    }
+
+    /// The table whose header's right edge is under `point`, in canvas points: the top one, if several.
+    private func resizeEdge(at point: CGPoint) -> Table? {
+        let reach = Metrics.resizeReach / canvas.zoom
+        return model.tables.last { table in
+            let frame = Metrics.frame(of: table)
+            return abs(point.x - frame.maxX) <= reach && point.y >= frame.minY && point.y < frame.minY + Metrics.headerHeight
+        }
+    }
+
+    /// The usual width is kept as none, so it follows `Metrics.tableWidth`.
+    private func setWidth(_ width: CGFloat, of id: Table.ID) {
+        guard let index = model.tables.firstIndex(where: { $0.id == id }) else { return }
+        model.tables[index].width = width == Metrics.tableWidth ? nil : width
+    }
+
+    /// Drags `table`'s right edge to `x` (canvas points), snapped into line with other tables' edges and centers, as a
+    /// move is, unless ⌘ is down; with the guides that show it.
+    private func resize(_ table: Table, to x: CGFloat) {
+        let frame = Metrics.frame(of: table)
+        var edge = max(table.position.x + Metrics.minimumTableWidth, x.rounded())
+        var guides: [CanvasController.Guide] = []
+        if !NSEvent.modifierFlags.contains(.command) {
+            // The edge alone, as a strip with no width, moved across from where it is.
+            let strip = CGRect(x: frame.maxX, y: frame.minY, width: 0, height: frame.height)
+            let others = model.tables.filter { $0.id != table.id }.map(Metrics.frame)
+            let snapped = CanvasController.snap([strip], by: CGPoint(x: edge - frame.maxX, y: 0), to: others,
+                                                tolerance: 6 / canvas.zoom, across: true, down: false)
+            if snapped.offset.x + frame.maxX - table.position.x >= Metrics.minimumTableWidth { edge = frame.maxX + snapped.offset.x }
+            guides = snapped.guides.filter { $0.isVertical && abs($0.position - edge) < 0.5 }
+        }
+        canvas.resizeDrag = (table.id, edge - table.position.x)
+        canvas.guides = guides
     }
 
     /// A click on a port selects it, with its bus; a double-click puts it back facing its column.
@@ -1084,6 +1144,7 @@ struct CanvasView: View {
                     canvas.connection = nil
                     canvas.columnDrag = nil
                     canvas.cableDrag = nil
+                    canvas.resizeDrag = nil
                     canvas.tieMerge = nil
                 }
                 // With the zip-tie tool, every drag ties, wherever it starts.
@@ -1122,6 +1183,9 @@ struct CanvasView: View {
                     dragColumn(column, in: table, to: canvas.canvasPoint(value.location))
                 case .group(let id):
                     dragItem(.group(id), by: value.translation)
+                case .resize(let table):
+                    guard canvas.resizeDrag != nil || CGPoint(value.translation).length >= 2 else { break }
+                    resize(table, to: canvas.canvasPoint(value.location).x)
                 case .background:
                     dragBackground(from: value.startLocation, to: value.location)
                 }
@@ -1177,6 +1241,19 @@ struct CanvasView: View {
                         dragItem(.table(table.id), by: .zero)
                         dropItem(.table(table.id), at: location, translation: .zero,
                                  click: { selectCell(at: $0, in: table) }) { doubleClickCell(at: $0, in: table) }
+                    }
+                case .resize(let table):
+                    if let drag = canvas.resizeDrag {
+                        canvas.resizeDrag = nil
+                        canvas.guides = []
+                        setWidth(drag.width, of: table.id)
+                    } else if let last = lastResizeClick, last.table == table.id,
+                              ProcessInfo.processInfo.systemUptime - last.time < NSEvent.doubleClickInterval {
+                        // A double-click puts it back to the usual width.
+                        lastResizeClick = nil
+                        setWidth(Metrics.tableWidth, of: table.id)
+                    } else {
+                        lastResizeClick = (table.id, ProcessInfo.processInfo.systemUptime)
                     }
                 case .group(let id):
                     // A double-click on its name renames it.
@@ -1531,7 +1608,7 @@ struct CanvasView: View {
         let local = point - table.position
         let row = Int(((local.y - Metrics.headerHeight) / Metrics.rowHeight).rounded(.down))
         guard local.y >= Metrics.headerHeight, table.columns.indices.contains(row) else { return .name(of: table.id) }
-        return CanvasController.Cell(table: table.id, row: .column(table.columns[row].id), part: Metrics.gridColumn(atX: local.x))
+        return CanvasController.Cell(table: table.id, row: .column(table.columns[row].id), part: Metrics.gridColumn(atX: local.x, width: Metrics.width(of: table)))
     }
 
     private func selectCell(at point: CGPoint, in table: Table) {

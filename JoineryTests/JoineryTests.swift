@@ -626,6 +626,56 @@ struct JoineryTests {
         #expect(other.groups.map(\.name) == ["sales"])
     }
 
+    @Test func aKeysTypeChangeGoesToTheKeysJoinedToIt() {
+        let model = storefront()
+        var changed = model
+        // users.id, referenced by orders.user_id and reviews.user_id.
+        changed.tables[0].columns[0].type = .bigint
+        changed.carryTypes(from: model)
+        let userIDs = changed.relationships.filter { $0.to == model.tables[0].columns[0].id }.map(\.from)
+        #expect(!userIDs.isEmpty)
+        #expect(userIDs.allSatisfy { changed.columnLocations[$0].map { $0.table.columns[$0.row].type } == .bigint })
+        // Unjoined columns keep theirs; nothing changed, nothing moves.
+        #expect(changed.tables[1].columns[0].type == model.tables[1].columns[0].type)
+        var same = model
+        same.carryTypes(from: model)
+        #expect(same == model)
+    }
+
+    @Test func openSpotIsTheNearestClearPlaceInTheArea() throws {
+        var model = DataModel()
+        let size = CGSize(width: Metrics.tableWidth, height: 100)
+        let area = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        // Nothing there: where asked.
+        #expect(model.openSpot(for: size, near: CGPoint(x: 100, y: 100), in: area) == CGPoint(x: 100, y: 100))
+        // A table there: somewhere near, clear of it, still in the area.
+        _ = model.addTable(at: CGPoint(x: 100, y: 100))
+        let spot = try #require(model.openSpot(for: size, near: CGPoint(x: 100, y: 100), in: area))
+        #expect(!Metrics.frame(of: model.tables[0]).insetBy(dx: -24, dy: -24).intersects(CGRect(origin: spot, size: size)))
+        #expect(area.contains(CGRect(origin: spot, size: size)))
+        #expect(spot.distance(to: CGPoint(x: 100, y: 100)) < 200)
+        // No room at all: nil.
+        #expect(model.openSpot(for: size, near: .zero, in: CGRect(x: 100, y: 100, width: 236, height: 52)) == nil)
+    }
+
+    @Test func pastedTableTakesTheGroupItLandsIn() throws {
+        var model = storefront()
+        let orders = model.tables[1], reviews = model.tables[2]
+        model.group([orders.id, reviews.id], named: "sales")
+        let clip = model.clip(tables: [orders.id])
+        model.tables.removeAll { $0.id == orders.id }
+
+        // Cut from the group and pasted far from it: in no group.
+        var away = model
+        let far = away.paste(clip, offset: CGPoint(x: 5000, y: 5000)).tables
+        #expect(away.table(far[0])?.group == nil && away.groups.count == 1)
+
+        // Pasted over the group: in it.
+        var back = model
+        let near = back.paste(clip, offset: reviews.position - orders.position).tables
+        #expect(back.table(near[0])?.group == back.table(reviews.id)?.group)
+    }
+
     @Test func untanglingCrossesFewerWiresTheSameWayEveryTime() {
         var model = DataModel.synthetic(tables: 24, foreignKeys: 36)
         // Scrambled: each table swapped with one across the grid, so wires criss-cross.
@@ -1300,10 +1350,13 @@ struct JoineryTests {
             randomEdit(&model, &random)
             // An edit that changes nothing leaves nothing to undo, as in the app.
             guard model != open.model else { continue }
+            // As made, with any type changed carried along its foreign keys.
+            var expected = model
+            expected.carryTypes(from: open.model)
             undo.beginUndoGrouping()
             open.change(to: model)
             undo.endUndoGrouping()
-            #expect(open.model == model)
+            #expect(open.model == expected)
             states.append(open.model)
         }
         // Back through every state, then forward through them all again.

@@ -85,6 +85,8 @@ struct Table: Codable, Identifiable, Equatable {
     var samples: [[String: String]] = []
     /// Anything worth writing down about it.
     var notes = ""
+    /// As wide as it's been dragged, in canvas points; nil for the usual width (`Metrics.tableWidth`).
+    var width: CGFloat?
 }
 
 extension Table {
@@ -99,6 +101,7 @@ extension Table {
         group = try container.decodeIfPresent(TableGroup.ID.self, forKey: .group)
         samples = try container.decodeIfPresent([[String: String]].self, forKey: .samples) ?? []
         notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
+        width = try container.decodeIfPresent(CGFloat.self, forKey: .width)
     }
 
     /// A sample row's value for a column.

@@ -28,6 +28,9 @@ struct CellEditor: View {
             .onAppear {
                 placeCaret()
                 isFocused = true
+                // Focus asked for as the field is put in can be lost, as on a header double-clicked; ask again once
+                // it's in.
+                DispatchQueue.main.async { isFocused = true }
             }
             // Keys typed before it had focus were added to the text for it; the caret goes after them.
             .onChange(of: text) { if !isFocused { selection = TextSelection(insertionPoint: text.endIndex) } }

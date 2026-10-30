@@ -178,6 +178,8 @@ final class CanvasController {
     /// A column being dragged to another place in its table, and where it'd go: before the column at `insertion`, or
     /// last if that's past them all.
     var columnDrag: (table: Table.ID, column: Column.ID, insertion: Int)?
+    /// A table being dragged wider or narrower by its header's right edge, and how wide it is so far.
+    var resizeDrag: (table: Table.ID, width: CGFloat)?
     /// The table open in the table designer, beside the canvas.
     var designing: Table.ID?
     /// A shortcut for the table designer, caught before the field being typed in there could take it.
@@ -574,12 +576,16 @@ final class CanvasController {
         isFitted = true
     }
 
-    /// Adds a table in the middle of the view, stepped down and right from any already there, and starts naming it.
-    /// Adds a table around `point` (in canvas points), or mid-view, and starts naming it.
+    /// Adds a table around `point` (in canvas points), or mid-view, and starts naming it: in the open spot in view
+    /// nearest there, clear of other tables and groups, or there anyway if the view has no room.
     func addTable(to model: inout DataModel, at point: CGPoint? = nil) {
         let middle = point ?? canvasPoint(CGPoint(x: viewSize.width / 2, y: viewSize.height / 2))
         var position = CGPoint(x: (middle.x - Metrics.tableWidth / 2).rounded(), y: (middle.y - (point == nil ? 80 : 12)).rounded())
-        while model.tables.contains(where: { $0.position.distance(to: position) < 8 }) { position += CGPoint(x: 24, y: 24) }
+        // The view, less the toolbar along its top and a margin round the rest. A new table has its header and one row,
+        // with room below for a few more.
+        let area = CGRect(origin: canvasPoint(CGPoint(x: 24, y: 80)), size: CGSize(width: viewSize.width - 48, height: viewSize.height - 104) * (1 / zoom))
+        let size = CGSize(width: Metrics.tableWidth, height: Metrics.headerHeight + Metrics.rowHeight * 4)
+        if let open = model.openSpot(for: size, near: position, in: area) { position = CGPoint(x: open.x.rounded(), y: open.y.rounded()) }
         let id = model.addTable(at: position)
         selection = [.table(id)]
         edit(.name(of: id))
