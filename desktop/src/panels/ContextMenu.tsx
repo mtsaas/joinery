@@ -68,6 +68,7 @@ export function ContextMenu({ menu, onClose }: { menu: Menu; onClose: () => void
     items.push({ title: "Remove Ports", run: () => edit("removePorts", { groups: [h.id] }) });
     items.push({ title: "Ungroup", destructive: true, run: () => edit("ungroup", { groups: [h.id] }) });
   } else if (h.kind === "tie") {
+    items.push({ title: "Turn with Wires", run: () => edit("releaseTie", { ties: [h.id] }) });
     items.push({ title: "Remove Zip Tie", destructive: true, run: () => edit("removeTables", { ties: [h.id] }) });
   } else if (h.kind === "port") {
     items.push({ title: "Remove Port", destructive: true, run: () => edit("removeTables", { ports: [h.id] }) });
