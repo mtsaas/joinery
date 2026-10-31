@@ -1016,8 +1016,11 @@ struct CanvasView: View {
         case table(Table)
         /// On a header's right edge: dragging the table wider or narrower, or a double-click to fit it to its text.
         case resize(Table)
-        /// On a group's name: selecting and moving the group.
+        /// On a group's grip: selecting and moving the group.
         case group(TableGroup.ID)
+        /// On the rest of a group's name band: a click selects it, a double-click renames it, a drag draws a selection
+        /// rectangle, as on the canvas.
+        case groupName(TableGroup.ID)
         case background
     }
 
@@ -1046,7 +1049,10 @@ struct CanvasView: View {
             if !isOneOfMany, case .column(let id) = cell(at: point, in: table).row { return .row(table, column: id) }
             return .table(table)
         }
-        if let group = group(at: point) { return .group(group) }
+        if let group = group(at: point) {
+            let onGrip = model.frame(of: group).map { GroupLayer.grip(of: $0).contains(point) } == true
+            return onGrip ? .group(group) : .groupName(group)
+        }
         return .background
     }
 
@@ -1195,6 +1201,11 @@ struct CanvasView: View {
                     dragColumn(column, in: table, to: canvas.canvasPoint(value.location))
                 case .group(let id):
                     dragItem(.group(id), by: value.translation)
+                case .groupName:
+                    // Moved, it's a selection rectangle, not a click.
+                    guard CGPoint(value.translation).length >= 3 else { break }
+                    self.press = .background
+                    dragBackground(from: value.startLocation, to: value.location)
                 case .resize(let table):
                     guard canvas.resizeDrag != nil || CGPoint(value.translation).length >= 2 else { break }
                     resize(table, to: canvas.canvasPoint(value.location).x)
@@ -1270,6 +1281,10 @@ struct CanvasView: View {
                 case .group(let id):
                     // A double-click on its name renames it.
                     dropItem(.group(id), at: location, translation: translation, click: nil) { _ in canvas.renamingGroup = id }
+                case .groupName(let id):
+                    // A click: selected, as a press on its grip would, and a double-click renames it.
+                    dragItem(.group(id), by: .zero)
+                    dropItem(.group(id), at: location, translation: .zero, click: nil) { _ in canvas.renamingGroup = id }
                 case .background:
                     if canvas.backgroundDrag == nil { click(at: canvas.canvasPoint(location)) } else { finishBackgroundDrag() }
                 }
