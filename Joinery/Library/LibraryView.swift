@@ -18,10 +18,8 @@ struct LibraryView: View {
                     LibraryBrowser(library: library)
                 }
             }
-            // Under the tabs, as far below them as they are below the window's top. While they're peeked at, it
-            // slides further down, off the window's bottom, rather than shrinking.
+            // Under the tabs, as far below them as they are below the window's top. Their previews open over it.
             .padding(.top, titleBarHeight)
-            .offset(y: library.isPeeking ? TabBar.peekHeight : 0)
             TabBar(library: library, height: titleBarHeight)
         }
         .background(Panel.color)
@@ -60,10 +58,10 @@ enum Panel {
     static let controlHeight: CGFloat = 36
     /// The gap between those controls and the surface's edges.
     static let controlInset = inset
-    /// Each control's square in its capsule, and its gap from the capsule's ends and top and bottom, so a round
-    /// highlight on it is concentric with the capsule.
+    /// Each control's slot in its capsule, as a window toolbar's group spaces them: wider than its icon, so a wide
+    /// symbol isn't crowding the next; and the capsule's margin at each end, beyond them.
     static let controlIconInset: CGFloat = 4
-    static let controlIconSize = controlHeight - 2 * controlIconInset
+    static let controlItemSize = CGSize(width: 32, height: controlHeight - 2 * controlIconInset)
     /// The surface's top corners: concentric with the capsules in them, their radius plus the gap between them.
     static let surfaceCornerRadius = controlHeight / 2 + controlInset
     /// Its bottom corners: concentric with the window's, its radius less the gap between them.
@@ -117,8 +115,9 @@ private struct NewTabButton: View {
 /// name, the one in front clearest. Each closes with the × that takes its icon's place on hover, or ⌘W.
 /// Drag one to put it elsewhere.
 ///
-/// Rest on a tab a moment and they peek: the row grows down, each model's tab showing the model as it is now, and the
-/// surface slides down out of the way until the pointer leaves.
+/// Rest on a tab a moment and they peek: the row grows down over the surface, each model's tab showing the model as
+/// it is now, until the pointer leaves the row. A preview is part of its tab: a click on either brings it forward,
+/// and they stay open while the pointer's still there.
 private struct TabBar: View {
     let library: Library
     let height: CGFloat
@@ -180,7 +179,6 @@ private struct TabBar: View {
     }
 
     private func choose(_ url: URL?) {
-        setPeeking(false)
         library.selection = url
     }
 }
@@ -267,18 +265,20 @@ private struct CloseButton: View {
     }
 }
 
-/// A glass pill, clearest in front and on hover. Resting on it a moment calls `peek`.
+/// A glass pill, the one in front over a light fill so it stands out on the plain back panel. On hover a fainter fill
+/// fades in behind the glass, as Safari's tabs lighten; the glass itself never changes, so nothing flashes. Resting on
+/// it a moment calls `peek`.
 private struct Tab<Content: View>: View {
     let isFront: Bool
     let cornerRadius: CGFloat
     let select: () -> Void
     let peek: () -> Void
-    var isHovered: Binding<Bool>? = nil
     @ViewBuilder let content: Content
     @State private var hovering = false
     @State private var resting: Task<Void, Never>?
 
     static var frontFill: Color { Color(light: NSColor(white: 1, alpha: 0.85), dark: NSColor(white: 1, alpha: 0.1)) }
+    static var hoverFill: Color { Color(light: NSColor(white: 1, alpha: 0.4), dark: NSColor(white: 1, alpha: 0.05)) }
 
     var body: some View {
         content
@@ -286,17 +286,17 @@ private struct Tab<Content: View>: View {
             .foregroundStyle(isFront ? .primary : .secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             // A pill while it's as tall as its corners are round, and a card of the same corners when it grows.
-            .glassEffect(isFront || hovering ? .regular : .clear, in: .rect(cornerRadius: cornerRadius))
-            // Behind the glass in front, which shows it through, so that tab stands out on the plain back panel.
+            .glassEffect(isFront ? .regular : .clear, in: .rect(cornerRadius: cornerRadius))
+            // Behind the glass, which shows it through.
             .background {
-                if isFront { RoundedRectangle(cornerRadius: cornerRadius).fill(Self.frontFill) }
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .fill(isFront ? Self.frontFill : hovering ? Self.hoverFill : .clear)
             }
             .animation(.smooth(duration: 0.15), value: hovering)
             .contentShape(.rect(cornerRadius: cornerRadius))
             .onTapGesture(perform: select)
             .onHover { isHovering in
                 hovering = isHovering
-                isHovered?.wrappedValue = isHovering
                 resting?.cancel()
                 guard isHovering else { return }
                 resting = Task {
@@ -514,7 +514,9 @@ struct ModelEditor: View {
     }
 }
 
-/// Controls floating over the canvas, together in one piece of glass, as a toolbar's group would be.
+/// Controls floating over the canvas, together in one piece of glass, as a toolbar's group would be. Not a
+/// `ControlGroup`: outside a window toolbar that draws an older segmented control, not glass; and the window's toolbar
+/// is where the tabs are.
 struct ControlGroupGlass<Content: View>: View {
     @ViewBuilder let content: Content
 
@@ -531,10 +533,10 @@ struct ControlGroupGlass<Content: View>: View {
             .glassEffect(.regular, in: .capsule)
     }
 
-    /// Each icon centered in the same square, whatever its symbol's shape, so they line up and space evenly.
+    /// Each icon centered in the same slot, whatever its symbol's shape, so they line up and space evenly.
     private struct IconSquare: LabelStyle {
         func makeBody(configuration: Configuration) -> some View {
-            configuration.icon.frame(width: Panel.controlIconSize, height: Panel.controlIconSize)
+            configuration.icon.frame(width: Panel.controlItemSize.width, height: Panel.controlItemSize.height)
         }
     }
 }

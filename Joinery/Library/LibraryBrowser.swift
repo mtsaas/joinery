@@ -94,12 +94,24 @@ struct LibraryBrowser: View {
         }
     }
 
-    /// Along the surface's top, at the trailing end, as Freeform's toolbar has them.
-    /// In glass, as the canvas's controls are, and as far in from the surface's corner, so its corners are
-    /// concentric with theirs.
+    /// Along the surface's top: what's shown, and how many, then the controls at the trailing end, as Freeform's
+    /// toolbar has them. In glass, as the canvas's controls are, and as far in from the surface's corner, so its
+    /// corners are concentric with theirs.
     private var controls: some View {
         HStack(spacing: 8) {
-            Spacer()
+            let count = shown.count
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(.tint)
+                Text(count == 1 ? "1 Data Model" : "\(count) Data Models")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            // Level with the models' leading edge below.
+            .padding(.leading, Self.contentInset - Panel.controlInset)
+            Spacer(minLength: 0)
             ControlGroupGlass {
                 Button("Join", systemImage: "person.2.badge.plus") { showsJoin.toggle() }
                     .help("Join a data model someone is sharing, from their link")
@@ -233,48 +245,31 @@ struct LibraryBrowser: View {
         previews.preview(of: url, modified: modified(url))
     }
 
-    private func header(count: Int) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 30, weight: .bold))
-                .foregroundStyle(.tint)
-            Text(count == 1 ? "1 Data Model" : "\(count) Data Models")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 28)
-        .padding(.top, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
+    /// The models' gap from the surface's sides.
+    static let contentInset: CGFloat = 28
 
     private var content: some View {
         let shown = shown
         return Group {
             if shown.isEmpty {
-                VStack(spacing: 0) {
-                    header(count: 0)
-                    emptyState
-                        .frame(maxHeight: .infinity)
-                }
+                emptyState
+                    .frame(maxHeight: .infinity)
             } else if layout == .grid {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        header(count: shown.count)
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 196, maximum: 240), spacing: 20, alignment: .top)],
                                   alignment: .leading, spacing: 20) {
                             ForEach(shown, id: \.self) { card($0) }
                         }
-                        .padding(.horizontal, 28)
+                        .padding(.horizontal, Self.contentInset)
+                        .padding(.top, 8)
                         .padding(.bottom, 20)
                     }
                 }
                 // A click on the background lets go of the highlighted model.
                 .background { Color.clear.contentShape(.rect).onTapGesture { highlighted = nil } }
             } else {
-                VStack(alignment: .leading, spacing: 14) {
-                    header(count: shown.count)
-                    list(shown)
-                }
+                list(shown)
             }
         }
         .focusable()
