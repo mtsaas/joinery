@@ -116,7 +116,7 @@ struct LibraryBrowser: View {
                 Button("Join", systemImage: "person.2.badge.plus") { showsJoin.toggle() }
                     .help("Join a data model someone is sharing, from their link")
                     .popover(isPresented: $showsJoin, arrowEdge: .bottom) { JoinPanel() }
-                Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: selectedCollection) }
+                Button("New Data Model", systemImage: "plus") { library.newModel(in: selectedCollection) }
                     .help("New data model (⌘N)")
             }
             ControlGroupGlass {
@@ -194,7 +194,7 @@ struct LibraryBrowser: View {
         .tag(Scope.collection(collection.url))
         .dropDestination(for: URL.self) { urls, _ in move(urls, into: collection.url) }
         .contextMenu {
-            Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: collection.url) }
+            Button("New Data Model", systemImage: "plus") { library.newModel(in: collection.url) }
             Button("Rename", systemImage: "pencil") { renaming = collection.url }
             Button("Show in Finder", systemImage: "finder") { library.showInFinder(collection.url) }
             Divider()
