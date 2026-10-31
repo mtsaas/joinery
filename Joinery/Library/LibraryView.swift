@@ -196,7 +196,7 @@ extension View {
     }
 }
 
-/// A model's tab: its icon, or the × on hover, then its name; peeking, the model as it is now under them.
+/// A model's tab: its icon, its name and a × to close it; peeking, the model as it is now under them.
 private struct ModelTab: View {
     let tab: OpenModel
     let isFront: Bool
@@ -205,7 +205,6 @@ private struct ModelTab: View {
     let select: () -> Void
     let close: () -> Void
     let peek: () -> Void
-    @State private var isHovered = false
     @State private var preview: ModelPreviews.Preview?
     @State private var layouts = TextLayouts()
 
@@ -213,27 +212,20 @@ private struct ModelTab: View {
     private var iconInset: CGFloat { (height - ModelIcon.size.height) / 2 }
 
     var body: some View {
-        Tab(isFront: isFront, cornerRadius: height / 2, select: select, peek: peek, isHovered: $isHovered) {
+        Tab(isFront: isFront, cornerRadius: height / 2, select: select, peek: peek) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
-                    ZStack {
-                        ModelIcon(model: tab.model).opacity(isHovered ? 0 : 1)
-                        if isHovered {
-                            Button("Close Tab", systemImage: "xmark", action: close)
-                                .labelStyle(.iconOnly)
-                                .buttonStyle(.borderless)
-                                .font(.caption2.weight(.bold))
-                                .help("Close tab (⌘W)")
-                        }
-                    }
+                    ModelIcon(model: tab.model)
                     Text(tab.name)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    Spacer(minLength: 0)
+                    // As far in from the pill's trailing end as the icon is from its leading end: a circle the
+                    // icon's height, concentric with the pill's end.
+                    CloseButton(size: ModelIcon.size.height, action: close)
                 }
-                .padding(.leading, iconInset)
-                .padding(.trailing, 12)
+                .padding(.horizontal, iconInset)
                 .frame(height: height)
-                .animation(.smooth(duration: 0.15), value: isHovered)
                 if isPeeking {
                     // What the tab shows now, where it's scrolled and zoomed to.
                     ModelThumbnail(preview: preview, layouts: layouts,
@@ -249,6 +241,29 @@ private struct ModelTab: View {
         }
         // Laid out and routed once each time they peek, not every frame of the row growing.
         .onChange(of: isPeeking, initial: true) { if isPeeking { preview = ModelPreviews.make(tab.model) } }
+    }
+}
+
+/// A tab's ×: always there, a circle behind it on hover.
+private struct CloseButton: View {
+    let size: CGFloat
+    let action: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark")
+                .font(.system(size: size * 0.5, weight: .bold))
+                .frame(width: size, height: size)
+                .background(Circle().fill(isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear)))
+                .contentShape(.circle)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
+        .onHover { isHovered = $0 }
+        .animation(.smooth(duration: 0.15), value: isHovered)
+        .help("Close tab (⌘W)")
+        .accessibilityLabel("Close Tab")
     }
 }
 
