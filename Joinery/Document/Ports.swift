@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Ports on groups' edges, bundling the wires between a group's tables and a column outside it into one cable.

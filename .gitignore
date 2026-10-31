@@ -10,3 +10,4 @@ relay/zig-out/
 infra/
 scripts/release.sh
 relay/bench/azure.sh
+.build/

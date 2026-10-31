@@ -1,23 +1,31 @@
 import Foundation
+#if canImport(UniformTypeIdentifiers)
 import UniformTypeIdentifiers
+#endif
 
+#if canImport(UniformTypeIdentifiers)
 extension UTType {
     static let joineryDataModel = UTType(exportedAs: "com.mtsaas.joinery.schema")
 }
+#endif
 
 /// A `.joinery` data model is a package, a folder Finder shows as one file: the model, as `model.json`, and its earlier
 /// versions (see `History`), so wherever the file goes, its history goes too. Before there were versions, it was the
 /// model alone, as a file; those still open, and become packages when next written.
 extension DataModel {
+    #if !os(WASI)
     /// Reads a `.joinery` package, or file from before packages, dropping anything it refers to that isn't there.
     init(contentsOf url: URL) throws {
         self = try JSONDecoder().decode(DataModel.self, from: Data(contentsOf: url.isPackage ? url.appending(path: Self.packagedName) : url))
         repair()
     }
+    #endif
 
     /// The model's file in a package.
     static let packagedName = "model.json"
 
+    // The Windows app reads and writes files in its shell, and hands the core the JSON (`fileData`).
+    #if !os(WASI)
     /// Writes it into a `.joinery` package as readable JSON, keys sorted so changes diff cleanly. Written whole to a new
     /// file that then replaces the old, so it's never half written. Only the model is replaced, so the package keeps its
     /// versions and the library's marks on it (favorite, last opened). A file from before packages becomes one, its
@@ -38,6 +46,7 @@ extension DataModel {
             for (name, value) in marks { url.setExtendedAttribute(name, to: value) }
         }
     }
+    #endif
 
     /// What a `.joinery` file of it holds.
     var fileData: Data {
@@ -49,6 +58,7 @@ extension DataModel {
     }
 }
 
+#if !os(WASI)
 extension URL {
     /// Extended attributes the app keeps on files start with this.
     static let attributePrefix = "com.mtsaas.joinery."
@@ -94,3 +104,4 @@ extension URL {
         }
     }
 }
+#endif

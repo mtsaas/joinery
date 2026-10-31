@@ -35,6 +35,7 @@ Joinery/
   Examples/        The bundled example data models
 JoineryTests/      Swift Testing: the data model, routing and physics, undo, the library, sessions (with a simulation)
 relay/             The relay, in Zig, and its Helm chart
+desktop/           Joinery for Windows and Linux: the core in WebAssembly, a TypeScript canvas, and a Tauri shell
 docs/              guide.md, relay.md (the session protocol, and why it's correct), this
 scripts/           Builds, benchmarks and the release
 ```
@@ -65,6 +66,11 @@ JOINERY_LIBRARY=/tmp/joinery-library JOINERY_OPEN=Sakila JOINERY_SCRIPT="tie 320
 `scripts/build.sh` builds an unsandboxed, ad-hoc-signed Debug copy with its own bundle ID, so it can read sample files
 and write snapshots, and never touches the real library.
 
+`scripts/smoke.sh` smoke-tests both apps: it builds each, opens Storefront in a throwaway library, has an AI assistant
+add a table over MCP, checks it was applied and saved, and snapshots the canvas into `/tmp/joinery-smoke`. Run
+`scripts/smoke.sh mac` or `scripts/smoke.sh desktop` for one. The desktop app's debug builds take `JOINERY_OPEN` and
+`JOINERY_SNAPSHOT` as the Mac's do (`desktop/src-tauri/src/debug.rs`), and CI runs its half on Windows and Linux.
+
 ## Performance
 
 - **Frame rate:** Debug builds show frames per second while anything moves, and what the last frame cost.
@@ -82,12 +88,56 @@ to where it should go, add a note, and press Return. Each correction keeps the w
 both lines. Debug ▸ Export Routing Feedback… writes them to one file, and `scripts/score-feedback.sh <file>` replays every
 case against the current routing.
 
+## Windows and Linux
+
+`desktop/` is Joinery for Windows and Linux. It runs the same Swift core as the Mac app, compiled to WebAssembly, so a
+model, an edit, a session or an assistant's tool call behaves the same on every platform.
+
+```
+desktop/
+  core/            The core's folders, linked in from Joinery/, and Bridge/: the open model with its undo, the scene
+                   the canvas draws, each frame's wires, edits by name, sessions and MCP, exported to JavaScript
+  src/             The window, in TypeScript and Preact: the canvas (drawn as the Mac's TableLayer and CanvasView draw
+                   it), the library sidebar, panels, the WebSocket a session runs over, and the library tools for MCP
+  src-tauri/       The shell, in Rust: the library on disk, in the Mac's own format, and MCP's socket
+  tests/           The core as the app drives it, in Node, and a session between two copies through the relay
+```
+
+The core can't reach the network or the disk in WebAssembly, so the shell does: the window holds the session's
+WebSocket and hands its bytes to the core, and the Rust side keeps the `.joinery` packages, their versions and the
+review's baseline. Models move between a Mac and a PC as the same files. The library is `Documents\Joinery` on Windows
+and `~/Documents/Joinery` on Linux; favorites and when each was last opened are in its `.library.json`, as the Mac keeps
+them on the files themselves.
+
+**Building it** needs the swift.org toolchain and its WebAssembly SDK (Xcode's Swift can't build for WebAssembly), Rust,
+and Node. With the toolchain installed under `~/Library/Developer/Toolchains`:
+
+```sh
+export PATH=~/Library/Developer/Toolchains/swift-6.4.2-RELEASE.xctoolchain/usr/bin:$PATH
+swift sdk install https://download.swift.org/swift-6.4.2-release/wasm-sdk/swift-6.4.2-RELEASE/swift-6.4.2-RELEASE_wasm.artifactbundle.tar.gz \
+  --checksum 83baca83553f8c443cda7b84800912e6e709c3acd2e7ebf277794ca5836c0da5
+cd desktop
+npm ci
+npm run core          # the core to WebAssembly, into core-pkg/: about 3 minutes
+npx tauri dev         # the app, in its own window, reloading as src/ changes
+npm run dev           # or just the window, in a browser, with a library kept in memory
+```
+
+`JOINERY_LIBRARY` points the app at another library folder, and `JOINERY_MCP_PORT` moves MCP off 8723, so it can run
+beside the Mac app. The WebAssembly module is about 47 MB, most of it Foundation's internationalization data; installed,
+that loads from disk, and the installer compresses it to about 18 MB.
+
+**Testing:** `npm test` in `desktop/` opens examples, edits and undoes, reviews, answers MCP, and shares a model
+between two copies of the core through the relay. That last test needs the relay built (`zig build` in `relay/`) and is
+skipped without it. `cargo test` in `desktop/src-tauri` checks the library's paths, names and version thinning.
+
 ## Releases
 
 [release-please](https://github.com/googleapis/release-please) makes releases from commit messages in the
 [Conventional Commits](https://www.conventionalcommits.org) style: `fix:` or `feat:`, with `(relay)` or a change under
-`relay/` for the relay. It keeps a release pull request open for each of Joinery and the relay; merging one makes the
-release. Below 1.0, a breaking change bumps the minor version.
+`relay/` for the relay, or under `desktop/` for Windows and Linux. It keeps a release pull request open for each of
+Joinery, the relay and the desktop app; merging one makes the release. A change to the core is Joinery's, and the
+desktop app picks it up in its next release. Below 1.0, a breaking change bumps the minor version.
 
 - **Joinery** (`joinery-v…`): the release workflow builds it, signs it and its Sparkle helpers with a Developer ID, has
   Apple notarize it, lays out the disk image with `dmgbuild` (`scripts/dmg.py`), and attaches it to the release. It adds
@@ -95,6 +145,12 @@ release. Below 1.0, a breaking change bumps the minor version.
   release is never the latest, so relay releases can't take its place. Copies built in Xcode don't check for updates.
 - **The relay** (`relay-v…`): the image `ghcr.io/mtsaas/joinery-relay` and the chart
   `oci://ghcr.io/mtsaas/charts/joinery-relay`, at the release's version. Every push to `main` also publishes `:main`.
+
+- **Joinery for Windows and Linux** (`desktop-v…`): the Desktop workflow builds the core, tests it, and builds the
+  NSIS and MSI installers on Windows and the .deb and AppImage on Linux, and attaches them to the release. With the
+  updater key set, it also signs the update files and puts `latest.json` on the `desktop-updates` release, which
+  released copies check at launch. The installers aren't code-signed yet, so Windows shows a SmartScreen warning (More
+  info, then Run anyway); `bundle.windows.signCommand` in the workflow's build step is where signing goes.
 
 `gh workflow run Release -f version=<x.y.z>` builds Joinery again for a release that's been made, after a failed build.
 `scripts/package-app.sh` is what the workflow runs. Signing needs these repository secrets:
@@ -104,7 +160,20 @@ release. Below 1.0, a breaking change bumps the minor version.
 | `DEVELOPER_ID_CERT_P12`, `DEVELOPER_ID_CERT_PASSWORD` | The Developer ID Application certificate and key, as a base64 .p12, and its password |
 | `APPLE_TEAM_ID` | The team it belongs to |
 | `NOTARY_API_KEY`, `NOTARY_API_KEY_ID`, `NOTARY_API_ISSUER` | An App Store Connect API key (the .p8's contents), its ID and issuer, to notarize |
+| `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | The Windows and Linux app's updater key and its password. Without them, installers are built but released copies aren't offered updates |
 | `SPARKLE_PRIVATE_KEY` | Sparkle's private key, kept in the login keychain under the account `mtsaas-joinery` (`generate_keys --account mtsaas-joinery -x <file>`). Joinery installs only updates signed with it |
+
+**The desktop updater key.** Make it once, keep the private key somewhere safe, and put the public key in the app:
+
+```sh
+npx --prefix desktop tauri signer generate -w ~/.tauri/joinery-desktop.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/joinery-desktop.key
+gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+```
+
+Then replace `REPLACE_WITH_THE_UPDATER_PUBLIC_KEY` in `desktop/src-tauri/tauri.conf.json` with the contents of
+`~/.tauri/joinery-desktop.key.pub`, and commit it. Copies only install updates signed with the matching private key, so
+a lost key means people download the next version by hand.
 
 **Rotating keys.** Sparkle accepts an update that changes the Sparkle key or the Developer ID certificate, never both
 at once. To change the Sparkle key, release once with the new public key in `Info.plist` while still signing with the

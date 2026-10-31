@@ -9,7 +9,7 @@ core="Joinery/Document Joinery/Collaboration/Protocol Joinery/MCP/Protocol"
 status=0
 
 # Only these frameworks.
-bad=$(grep -n '^import ' $(find $core -name '*.swift') | grep -vE 'import (Foundation|CoreGraphics|CryptoKit|UniformTypeIdentifiers)$')
+bad=$(grep -n '^import ' $(find $core -name '*.swift') | grep -vE 'import (Foundation|CoreGraphics|CryptoKit|Crypto|UniformTypeIdentifiers)$')
 [ -n "$bad" ] && { echo "Frameworks the core mustn't use:"; echo "$bad"; status=1; }
 
 # Nothing from the app, the network or the screen, by name.
