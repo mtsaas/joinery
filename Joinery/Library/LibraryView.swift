@@ -1,27 +1,34 @@
 import SwiftUI
 
-/// The window: a back panel with the tabs along its top, beside the window's buttons, and under them a raised surface
-/// with whatever the tab in front shows: the library's data models, or a model's canvas and its controls.
+/// The window: a back panel with the tabs on it, along its top beside the window's buttons or down its leading side,
+/// and a raised surface with the model in front: its canvas and controls. The library slides in over the surface from
+/// its leading edge; it's out for good while no model is open.
 struct LibraryView: View {
     @Bindable var library: Library
     /// The title bar's height, which the tab row matches so the window's buttons sit centered in it.
     @State private var titleBarHeight: CGFloat = 32
+    @AppStorage("verticalTabs") private var isVertical = false
+    @AppStorage("tabColumnWidth") private var tabColumnWidth: Double = 220
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Group {
-                if let open = library.open {
-                    ModelEditor(open: open)
-                        .id(ObjectIdentifier(open))
-                } else {
-                    LibraryBrowser(library: library)
+        Group {
+            if isVertical {
+                HStack(spacing: 0) {
+                    VerticalTabBar(library: library, titleBarHeight: titleBarHeight, width: $tabColumnWidth)
+                    // As far below the window's top as in the horizontal layout, so its top corners stay clear of the
+                    // window's and concentric with the controls in them.
+                    surface.padding(.top, titleBarHeight)
+                }
+            } else {
+                ZStack(alignment: .top) {
+                    // Under the tabs, as far below them as they are below the window's top. While they're peeked at,
+                    // it slides further down, off the window's bottom, rather than shrinking.
+                    surface
+                        .padding(.top, titleBarHeight)
+                        .offset(y: library.isPeeking ? TabBar.peekHeight : 0)
+                    TabBar(library: library, height: titleBarHeight)
                 }
             }
-            // Under the tabs, as far below them as they are below the window's top. While they're peeked at, it
-            // slides further down, off the window's bottom, rather than shrinking.
-            .padding(.top, titleBarHeight)
-            .offset(y: library.isPeeking ? TabBar.peekHeight : 0)
-            TabBar(library: library, height: titleBarHeight)
         }
         .background(Panel.color)
         .ignoresSafeArea(edges: .top)
@@ -29,6 +36,7 @@ struct LibraryView: View {
             Color.clear.ignoresSafeArea()
                 .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { if $0 > 0 { titleBarHeight = $0 } }
         }
+        .animation(.smooth(duration: 0.3), value: isVertical)
         // For the Window menu and Mission Control. The window's title bar is hidden (see `JoineryApp`): the tabs are
         // in its place, and what each shows has its own controls, on its surface.
         .navigationTitle(library.open?.name ?? "Joinery")
@@ -37,6 +45,50 @@ struct LibraryView: View {
         } message: {
             Text(library.failure ?? "")
         }
+    }
+
+    /// The model in front, or with none, a note beside the library; the library over either, when it's out.
+    private var surface: some View {
+        let showsLibrary = library.showsLibrary || library.open == nil
+        return Group {
+            if let open = library.open {
+                ModelEditor(open: open)
+                    .id(ObjectIdentifier(open))
+            } else {
+                ContentUnavailableView {
+                    Label("No Data Model Open", systemImage: "tablecells")
+                } description: {
+                    Text("Open one from the library, or start a new one.")
+                } actions: {
+                    Button("New Data Model") { library.newModel() }
+                }
+                .padding(.leading, LibraryPanel.width)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Theme.canvas)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if showsLibrary {
+                ZStack(alignment: .leading) {
+                    // A click anywhere else puts it away, as a popover goes, if there's a model to go back to.
+                    if library.open != nil {
+                        Color.black.opacity(0.06)
+                            .contentShape(.rect)
+                            .onTapGesture { withAnimation(.smooth(duration: 0.25)) { library.showsLibrary = false } }
+                            .transition(.opacity)
+                    }
+                    LibraryPanel(library: library)
+                        .frame(maxHeight: .infinity)
+                        .glassEffect(.regular, in: .rect)
+                        .overlay(alignment: .trailing) { Rectangle().fill(.separator).frame(width: 1) }
+                        .shadow(color: .black.opacity(0.12), radius: 8, x: 2)
+                        .transition(.move(edge: .leading))
+                }
+            }
+        }
+        .animation(.smooth(duration: 0.25), value: showsLibrary)
+        // Clipped to the surface, so the library's corners are the surface's.
+        .surface()
     }
 }
 
@@ -80,16 +132,56 @@ extension View {
     }
 }
 
-/// The library, then the open models, one tab each, from the leading edge: glass pills with an icon of the model and
-/// its name, the one in front clearest. Each closes with the × that takes its icon's place on hover, or ⌘W. Drag one
-/// to put it elsewhere.
+/// Shows or hides the library, beside the window's own buttons. It's out for good while no model is open.
+private struct LibraryButton: View {
+    let library: Library
+    let size: CGFloat
+
+    var body: some View {
+        Button("Library", systemImage: "sidebar.left") {
+            withAnimation(.smooth(duration: 0.25)) { library.showsLibrary.toggle() }
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .foregroundStyle(library.showsLibrary || library.open == nil ? Color.accentColor : .secondary)
+        .frame(width: size, height: size)
+        .disabled(library.open == nil)
+        .help("Show or hide the library (⌘↑)")
+    }
+}
+
+/// A new model, in a tab.
+private struct NewTabButton: View {
+    let library: Library
+    let size: CGFloat
+
+    var body: some View {
+        Button("New Data Model", systemImage: "plus") { library.newModel(in: library.selection.flatMap(library.collection(of:))) }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .frame(width: size, height: size)
+            .help("New data model, in a tab (⌘N)")
+    }
+}
+
+/// Switches between tabs along the top and down the side.
+private struct TabLayoutMenu: View {
+    @AppStorage("verticalTabs") private var isVertical = false
+
+    var body: some View {
+        Toggle("Vertical Tabs", isOn: $isVertical)
+    }
+}
+
+/// The open models, one tab each, from the leading edge, after the library button: glass pills with an icon of the
+/// model and its name, the one in front clearest. Each closes with the × that takes its icon's place on hover, or ⌘W.
+/// Drag one to put it elsewhere.
 ///
 /// Rest on a tab a moment and they peek: the row grows down, each model's tab showing the model as it is now, and the
 /// surface slides down out of the way until the pointer leaves.
 private struct TabBar: View {
     let library: Library
     let height: CGFloat
-    @AppStorage("showsSidebar") private var showsSidebar = true
 
     /// Clear of the window's close, minimize and zoom buttons.
     static let leading: CGFloat = 78
@@ -102,51 +194,25 @@ private struct TabBar: View {
     /// A peeked-at model's preview: its height, and its gap from the tab's sides and bottom, as the icon's from its
     /// leading end, so the preview's corners are concentric with the tab's.
     static let previewHeight: CGFloat = 96
-    static let previewInset = TabIcon.inset
+    static let previewInset = (24 - ModelIcon.size.height) / 2
     /// How much taller the row is while peeking.
     static let peekHeight = previewHeight + previewInset
 
     /// A tab's height, and the radius of its pill.
     private var tabHeight: CGFloat { height - 2 * Self.inset }
-    private var cornerRadius: CGFloat { tabHeight / 2 }
 
     var body: some View {
         HStack(alignment: .top, spacing: Self.spacing) {
-            Button("Show Sidebar", systemImage: "sidebar.left") {
-                withAnimation(.smooth(duration: 0.3)) { showsSidebar.toggle() }
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.borderless)
-            .frame(width: tabHeight, height: tabHeight)
-            // Only the library has a sidebar.
-            .disabled(library.open != nil)
-            .help(showsSidebar ? "Hide the sidebar (⌃⌘S)" : "Show the sidebar (⌃⌘S)")
-            Tab(isFront: library.open == nil, cornerRadius: cornerRadius, select: { choose(nil) }, peek: peek) {
-                Label("Library", systemImage: "square.grid.2x2")
-                    .labelStyle(.titleAndIcon)
-                    .padding(.horizontal, 10)
-                    .frame(maxHeight: .infinity)
-            }
-            .fixedSize(horizontal: true, vertical: false)
-            .frame(height: tabHeight)
-            .help("All data models (⌘↑)")
+            LibraryButton(library: library, size: tabHeight)
             ForEach(library.tabs, id: \.url) { tab in
                 ModelTab(tab: tab, isFront: tab === library.open, isPeeking: library.isPeeking, height: tabHeight,
                          select: { choose(tab.url) }, close: { library.close(tab) }, peek: peek)
                     .frame(maxWidth: Self.maxWidth)
                     .help(tab.name)
-                    .draggable(tab.url)
-                    .dropDestination(for: URL.self) { urls, _ in
-                        guard let dragged = urls.first, let index = library.tabs.firstIndex(where: { $0 === tab }) else { return false }
-                        return library.moveTab(dragged, to: index)
-                    }
+                    .reorderable(in: library, tab: tab)
             }
             Spacer(minLength: 0)
-            Button("New Data Model", systemImage: "plus") { library.newModel(in: library.selection.flatMap(library.collection(of:))) }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .frame(width: tabHeight, height: tabHeight)
-                .help("New data model, in a tab (⌘N)")
+            NewTabButton(library: library, size: tabHeight)
         }
         .padding(.leading, Self.leading)
         .padding(.trailing, Panel.inset)
@@ -158,6 +224,7 @@ private struct TabBar: View {
         // Anywhere in the row, grown or not, keeps them peeking; leaving it stops.
         .contentShape(.rect)
         .onHover { if !$0 { setPeeking(false) } }
+        .contextMenu { TabLayoutMenu() }
     }
 
     private func peek() {
@@ -169,118 +236,185 @@ private struct TabBar: View {
         withAnimation(.smooth(duration: 0.3)) { library.isPeeking = isPeeking }
     }
 
-    private func choose(_ url: URL?) {
+    private func choose(_ url: URL) {
         setPeeking(false)
         library.selection = url
     }
+}
 
-    /// A model's tab: its icon, or the × on hover, then its name; peeking, the model as it is now under them.
-    private struct ModelTab: View {
-        let tab: OpenModel
-        let isFront: Bool
-        let isPeeking: Bool
-        let height: CGFloat
-        let select: () -> Void
-        let close: () -> Void
-        let peek: () -> Void
-        @State private var isHovered = false
-        @State private var preview: ModelPreviews.Preview?
-        @State private var layouts = TextLayouts()
+/// The open models down the back panel's leading side, under the window's buttons, the library button and +: a pill
+/// each, full width. Drag its trailing edge to make it wider or narrower.
+private struct VerticalTabBar: View {
+    let library: Library
+    let titleBarHeight: CGFloat
+    @Binding var width: Double
+    @State private var widthAtDragStart: Double?
 
-        var body: some View {
-            Tab(isFront: isFront, cornerRadius: height / 2, select: select, peek: peek, isHovered: $isHovered) {
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack(spacing: 6) {
-                        ZStack {
-                            TabIcon(model: tab.model).opacity(isHovered ? 0 : 1)
-                            if isHovered {
-                                Button("Close Tab", systemImage: "xmark", action: close)
-                                    .labelStyle(.iconOnly)
-                                    .buttonStyle(.borderless)
-                                    .font(.caption2.weight(.bold))
-                                    .help("Close tab (⌘W)")
-                            }
-                        }
-                        Text(tab.name)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                    }
-                    // The icon as far in from the pill's leading end as from its top and bottom.
-                    .padding(.leading, TabIcon.inset)
-                    .padding(.trailing, 12)
-                    .frame(height: height)
-                    .animation(.smooth(duration: 0.15), value: isHovered)
-                    if isPeeking {
-                        // What the tab shows now, where it's scrolled and zoomed to.
-                        ModelThumbnail(preview: preview, layouts: layouts,
-                                       view: (tab.canvas.zoom, tab.canvas.offset, tab.canvas.viewSize))
-                            .frame(maxWidth: .infinity)
-                            .frame(height: TabBar.previewHeight)
-                            .background(Theme.canvas)
-                            .clipShape(.rect(cornerRadius: height / 2 - TabBar.previewInset))
-                            .padding([.horizontal, .bottom], TabBar.previewInset)
-                            .transition(.opacity)
+    /// A tab's height: a little taller than along the top, to be an easy target in a list.
+    static let rowHeight: CGFloat = 28
+    static let widths = 160.0...360.0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: TabBar.spacing) {
+            HStack(spacing: TabBar.spacing) {
+                // Clear of the window's buttons.
+                Spacer().frame(width: TabBar.leading - Panel.inset)
+                LibraryButton(library: library, size: titleBarHeight - 2 * TabBar.inset)
+                Spacer(minLength: 0)
+                NewTabButton(library: library, size: titleBarHeight - 2 * TabBar.inset)
+            }
+            .frame(height: titleBarHeight)
+            ScrollView {
+                VStack(spacing: TabBar.spacing) {
+                    ForEach(library.tabs, id: \.url) { tab in
+                        ModelTab(tab: tab, isFront: tab === library.open, isPeeking: false, height: Self.rowHeight,
+                                 select: { library.selection = tab.url }, close: { library.close(tab) }, peek: {})
+                            .frame(height: Self.rowHeight)
+                            .help(tab.name)
+                            .reorderable(in: library, tab: tab)
                     }
                 }
             }
-            // Laid out and routed once each time they peek, not every frame of the row growing.
-            .onChange(of: isPeeking, initial: true) { if isPeeking { preview = ModelPreviews.make(tab.model) } }
+            .scrollIndicators(.never)
         }
-    }
-
-    /// A glass pill, clearest in front and on hover. Resting on it a moment calls `peek`.
-    private struct Tab<Content: View>: View {
-        let isFront: Bool
-        let cornerRadius: CGFloat
-        let select: () -> Void
-        let peek: () -> Void
-        var isHovered: Binding<Bool>? = nil
-        @ViewBuilder let content: Content
-        @State private var hovering = false
-        @State private var resting: Task<Void, Never>?
-
-        static var frontFill: Color { Color(light: NSColor(white: 1, alpha: 0.85), dark: NSColor(white: 1, alpha: 0.1)) }
-
-        var body: some View {
-            content
-                .font(.callout.weight(isFront ? .medium : .regular))
-                .foregroundStyle(isFront ? .primary : .secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                // A pill while it's as tall as its corners are round, and a card of the same corners when it grows.
-                .glassEffect(isFront || hovering ? .regular : .clear, in: .rect(cornerRadius: cornerRadius))
-                // Behind the glass in front, which shows it through, so that tab stands out on the plain back panel.
-                .background {
-                    if isFront { RoundedRectangle(cornerRadius: cornerRadius).fill(Self.frontFill) }
-                }
-                .animation(.smooth(duration: 0.15), value: hovering)
-                .contentShape(.rect(cornerRadius: cornerRadius))
-                .onTapGesture(perform: select)
-                .onHover { isHovering in
-                    hovering = isHovering
-                    isHovered?.wrappedValue = isHovering
-                    resting?.cancel()
-                    guard isHovering else { return }
-                    resting = Task {
-                        try? await Task.sleep(for: TabBar.peekDelay)
-                        if !Task.isCancelled { peek() }
-                    }
-                }
+        // As far in from the window's edge as the surface is.
+        .padding(.leading, Panel.inset)
+        .frame(width: width)
+        .animation(.smooth(duration: 0.25), value: library.tabs.map(\.url))
+        .animation(.smooth(duration: 0.25), value: library.open.map(ObjectIdentifier.init))
+        .contextMenu { TabLayoutMenu() }
+        .overlay(alignment: .trailing) {
+            // The gap between the tabs and the surface, as the handle for resizing.
+            Color.clear
+                .frame(width: Panel.inset)
+                .contentShape(.rect)
+                .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+                .gesture(DragGesture(coordinateSpace: .global).onChanged { drag in
+                    let start = widthAtDragStart ?? width
+                    widthAtDragStart = start
+                    width = min(max(start + drag.translation.width, Self.widths.lowerBound), Self.widths.upperBound)
+                }.onEnded { _ in widthAtDragStart = nil })
+                .offset(x: Panel.inset)
         }
     }
 }
 
-/// A model in miniature, as a favicon: its tables, in their colors and where they are, in a pill concentric with the
-/// tab's.
-private struct TabIcon: View {
-    let model: DataModel
+extension View {
+    /// Dragged onto another tab, a tab moves there.
+    fileprivate func reorderable(in library: Library, tab: OpenModel) -> some View {
+        draggable(tab.url)
+            .dropDestination(for: URL.self) { urls, _ in
+                guard let dragged = urls.first, let index = library.tabs.firstIndex(where: { $0 === tab }) else { return false }
+                return library.moveTab(dragged, to: index)
+            }
+    }
+}
 
-    /// In from the tab's edges.
-    static let inset: CGFloat = 4
+/// A model's tab: its icon, or the × on hover, then its name; peeking, the model as it is now under them.
+private struct ModelTab: View {
+    let tab: OpenModel
+    let isFront: Bool
+    let isPeeking: Bool
+    let height: CGFloat
+    let select: () -> Void
+    let close: () -> Void
+    let peek: () -> Void
+    @State private var isHovered = false
+    @State private var preview: ModelPreviews.Preview?
+    @State private var layouts = TextLayouts()
+
+    /// The icon as far in from the pill's leading end as from its top and bottom, so it's concentric with the pill.
+    private var iconInset: CGFloat { (height - ModelIcon.size.height) / 2 }
+
+    var body: some View {
+        Tab(isFront: isFront, cornerRadius: height / 2, select: select, peek: peek, isHovered: $isHovered) {
+            VStack(alignment: .leading, spacing: 0) {
+                HStack(spacing: 6) {
+                    ZStack {
+                        ModelIcon(model: tab.model).opacity(isHovered ? 0 : 1)
+                        if isHovered {
+                            Button("Close Tab", systemImage: "xmark", action: close)
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                                .font(.caption2.weight(.bold))
+                                .help("Close tab (⌘W)")
+                        }
+                    }
+                    Text(tab.name)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                .padding(.leading, iconInset)
+                .padding(.trailing, 12)
+                .frame(height: height)
+                .animation(.smooth(duration: 0.15), value: isHovered)
+                if isPeeking {
+                    // What the tab shows now, where it's scrolled and zoomed to.
+                    ModelThumbnail(preview: preview, layouts: layouts,
+                                   view: (tab.canvas.zoom, tab.canvas.offset, tab.canvas.viewSize))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: TabBar.previewHeight)
+                        .background(Theme.canvas)
+                        .clipShape(.rect(cornerRadius: height / 2 - iconInset))
+                        .padding([.horizontal, .bottom], iconInset)
+                        .transition(.opacity)
+                }
+            }
+        }
+        // Laid out and routed once each time they peek, not every frame of the row growing.
+        .onChange(of: isPeeking, initial: true) { if isPeeking { preview = ModelPreviews.make(tab.model) } }
+    }
+}
+
+/// A glass pill, clearest in front and on hover. Resting on it a moment calls `peek`.
+private struct Tab<Content: View>: View {
+    let isFront: Bool
+    let cornerRadius: CGFloat
+    let select: () -> Void
+    let peek: () -> Void
+    var isHovered: Binding<Bool>? = nil
+    @ViewBuilder let content: Content
+    @State private var hovering = false
+    @State private var resting: Task<Void, Never>?
+
+    static var frontFill: Color { Color(light: NSColor(white: 1, alpha: 0.85), dark: NSColor(white: 1, alpha: 0.1)) }
+
+    var body: some View {
+        content
+            .font(.callout.weight(isFront ? .medium : .regular))
+            .foregroundStyle(isFront ? .primary : .secondary)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            // A pill while it's as tall as its corners are round, and a card of the same corners when it grows.
+            .glassEffect(isFront || hovering ? .regular : .clear, in: .rect(cornerRadius: cornerRadius))
+            // Behind the glass in front, which shows it through, so that tab stands out on the plain back panel.
+            .background {
+                if isFront { RoundedRectangle(cornerRadius: cornerRadius).fill(Self.frontFill) }
+            }
+            .animation(.smooth(duration: 0.15), value: hovering)
+            .contentShape(.rect(cornerRadius: cornerRadius))
+            .onTapGesture(perform: select)
+            .onHover { isHovering in
+                hovering = isHovering
+                isHovered?.wrappedValue = isHovering
+                resting?.cancel()
+                guard isHovering else { return }
+                resting = Task {
+                    try? await Task.sleep(for: TabBar.peekDelay)
+                    if !Task.isCancelled { peek() }
+                }
+            }
+    }
+}
+
+/// A model in miniature, as a favicon: its tables, in their colors and where they are, in a pill.
+struct ModelIcon: View {
+    let model: DataModel?
+
     static let size = CGSize(width: 24, height: 16)
 
     var body: some View {
         Canvas { context, size in
-            let frames = model.tables.map { (Metrics.frame(of: $0), $0.color) }
+            let frames = (model?.tables ?? []).map { (Metrics.frame(of: $0), $0.color) }
             guard let bounds = frames.map(\.0).reduce(nil, { $0?.union($1) ?? $1 }) else { return }
             let padding: CGFloat = 3
             let scale = min((size.width - 2 * padding) / bounds.width, (size.height - 2 * padding) / bounds.height)
@@ -293,7 +427,6 @@ private struct TabIcon: View {
         }
         .frame(width: Self.size.width, height: Self.size.height)
         .background(Theme.canvas)
-        // Concentric with the tab: a pill whose ends are its ends, less the inset.
         .clipShape(.capsule)
     }
 }
@@ -471,7 +604,6 @@ struct ModelEditor: View {
             }
             .focusedSceneValue(\.canvasController, canvas)
             .focusedSceneValue(\.model, model)
-            .surface()
             #if DEBUG
             // Not cancelled if a step opens another model, closing this editor.
             .task { Task { await DebugHooks.script(model, canvas: canvas) } }

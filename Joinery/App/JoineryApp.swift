@@ -14,8 +14,6 @@ struct JoineryApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             LibraryCommands(library: .shared)
-            // View ▸ Show Sidebar (⌃⌘S), for the library's.
-            SidebarCommands()
             CanvasCommands()
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Updates.controller?.checkForUpdates(nil) }
@@ -56,6 +54,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// File menu items for the library.
 struct LibraryCommands: Commands {
     let library: Library
+    @AppStorage("verticalTabs") private var isVertical = false
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -70,12 +69,16 @@ struct LibraryCommands: Commands {
             Button("Show Library in Finder") { library.showInFinder(library.root) }
         }
         CommandGroup(replacing: .saveItem) {
-            // Changes save themselves; this keeps the data model as it is in its version history.
-            // With a tab in front, ⌘W closes it rather than the window.
-            Button(library.open == nil ? "Close" : "Close Tab") {
+            // As Safari has them. With no tab open, Close Tab closes the window. Titles that don't change with what's
+            // open: a menu's titles aren't always rebuilt when it changes.
+            Button("Close Tab") {
                 if let open = library.open { library.close(open) } else { NSApp.keyWindow?.performClose(nil) }
             }
             .keyboardShortcut("w")
+            Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+            Divider()
+            // Changes save themselves; this keeps the data model as it is in its version history.
             Button("Save Version") { library.open?.saveVersionNow() }
                 .keyboardShortcut("s")
                 .disabled(library.open == nil)
@@ -88,9 +91,12 @@ struct LibraryCommands: Commands {
                 .keyboardShortcut("z", modifiers: [.command, .shift])
         }
         CommandGroup(before: .windowList) {
-            Button("Show All Data Models") { library.selection = nil }
-                .keyboardShortcut(.upArrow, modifiers: .command)
-                .disabled(library.open == nil)
+            Button("Show or Hide Library") {
+                withAnimation(.smooth(duration: 0.25)) { library.showsLibrary.toggle() }
+            }
+            .keyboardShortcut(.upArrow, modifiers: .command)
+            .disabled(library.open == nil)
+            Toggle("Vertical Tabs", isOn: $isVertical)
             Button("Show Next Tab") { library.showTab(offset: 1) }
                 .keyboardShortcut(.tab, modifiers: .control)
                 .disabled(library.tabs.isEmpty)
