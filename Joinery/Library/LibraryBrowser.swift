@@ -44,7 +44,7 @@ struct LibraryBrowser: View {
                 controls
                 content
             }
-            .background(.background)
+            .background(Panel.homeColor)
             .surface()
         }
         .confirmationDialog("Move “\(collectionToTrash?.name ?? "")” to the Trash?", isPresented: Binding {

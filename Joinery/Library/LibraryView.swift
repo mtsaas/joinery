@@ -54,6 +54,11 @@ enum Panel {
         Color(light: Themes.shared.light.canvas.blended(withFraction: 0.09, of: .black) ?? .gray,
               dark: Themes.shared.dark.canvas.blended(withFraction: 0.45, of: .black) ?? .black)
     }
+    /// Home's surface: the theme's canvas, a little lighter, so the models' thumbnails on the canvas itself stand out.
+    static var homeColor: Color {
+        Color(light: Themes.shared.light.canvas.blended(withFraction: 0.5, of: .white) ?? .white,
+              dark: Themes.shared.dark.canvas.blended(withFraction: 0.06, of: .white) ?? .black)
+    }
     /// The window's own corners: measured from a snapshot, on macOS 26 with the title bar hidden.
     static let windowCornerRadius: CGFloat = 16
     /// The height of the capsules of controls floating along a surface's top.
