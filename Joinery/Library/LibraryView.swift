@@ -24,6 +24,8 @@ struct LibraryView: View {
         }
         .background(Panel.color)
         .ignoresSafeArea(edges: .top)
+        // Light catching the window's top edge, as it catches glass.
+        .overlay { RoundedRectangle(cornerRadius: Panel.windowCornerRadius).sheen().ignoresSafeArea() }
         .background(TallTitleBar())
         .background {
             Color.clear.ignoresSafeArea()
@@ -77,8 +79,45 @@ extension View {
     func surface() -> some View {
         clipShape(Panel.surfaceShape)
             .overlay { Panel.surfaceShape.strokeBorder(.separator.opacity(0.6)) }
+            .overlay { Panel.surfaceShape.sheen() }
             .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
             .padding([.horizontal, .bottom], Panel.inset)
+    }
+}
+
+extension InsettableShape {
+    /// A glassy sheen, as light from above catches it: a bright edge along its top that fades out down its sides, and
+    /// the faintest glow inside its top, gone a little way down. Subtle, and only to look at.
+    func sheen() -> some View {
+        ZStack {
+            strokeBorder(LinearGradient(stops: [.init(color: .white.opacity(0.32), location: 0), .init(color: .white.opacity(0), location: 0.5)],
+                                        startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.12)), lineWidth: 1)
+            fill(LinearGradient(colors: [.white.opacity(0.06), .white.opacity(0)], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.06)))
+        }
+        .blendMode(.plusLighter)
+        .allowsHitTesting(false)
+    }
+}
+
+/// Dragging a tab along its group to reorder it: it follows the pointer, but past the group's ends, or up or down off
+/// it, it's pulled back, more the further it goes, as a scroll view's content is past its edge; let go, it springs back
+/// into its place.
+enum TabDrag {
+    /// The furthest a tab stretches past the group's ends, and up or down off it.
+    static let reach = CGSize(width: 24, height: 12)
+
+    /// `value` inside `range` as it is; outside it, pulled back towards it, never more than `reach` past.
+    static func rubberBand(_ value: CGFloat, in range: ClosedRange<CGFloat>, reach: CGFloat) -> CGFloat {
+        func pull(_ over: CGFloat) -> CGFloat { (1 - 1 / (over * 0.55 / reach + 1)) * reach }
+        if value < range.lowerBound { return range.lowerBound - pull(range.lowerBound - value) }
+        if value > range.upperBound { return range.upperBound + pull(value - range.upperBound) }
+        return value
+    }
+
+    /// Where a tab whose middle is at `center` belongs among `count` tabs `width` wide, side by side from 0.
+    static func slot(forCenter center: CGFloat, width: CGFloat, count: Int) -> Int {
+        guard width > 0, count > 0 else { return 0 }
+        return min(max(Int((center / width).rounded(.down)), 0), count - 1)
     }
 }
 
@@ -111,9 +150,9 @@ private struct NewTabButton: View {
     }
 }
 
-/// Home, then the open models, one tab each, from the leading edge: glass pills with an icon of the model and its
-/// name, the one in front clearest. Each closes with the × that takes its icon's place on hover, or ⌘W.
-/// Drag one to put it elsewhere.
+/// Home, then the open models together in one glass group, a tab each with an icon of the model, its name and a ×; the
+/// one in front a raised pill in it. Drag a tab along the group to put it elsewhere: the others make way, and past the
+/// group's ends it's pulled back (`TabDrag`).
 ///
 /// Rest on a tab a moment and they peek: the row grows down over the surface, each model's tab showing the model as
 /// it is now, until the pointer leaves the row. A preview is part of its tab: a click on either brings it forward,
@@ -137,6 +176,17 @@ private struct TabBar: View {
     static let peekHeight = previewHeight + previewInset
 
     private var tabHeight: CGFloat { Panel.tabHeight }
+    /// Between the group's edge and the tabs in it: its corners are theirs plus this, so they're concentric.
+    static let groupInset: CGFloat = 3
+    private var groupRadius: CGFloat { tabHeight / 2 + Self.groupInset }
+    static let groupSpace = "tabGroup"
+    static var groupShade: Color { Color(light: NSColor(white: 0, alpha: 0.07), dark: NSColor(white: 0, alpha: 0)) }
+
+    /// The tab being dragged: where the pointer took hold of it, from its leading edge, and where the pointer is now,
+    /// both in the group.
+    @State private var dragging: (url: URL, grab: CGPoint, location: CGPoint)?
+    /// The width each tab has, sharing the group's evenly.
+    @State private var tabWidth: CGFloat = 0
 
     var body: some View {
         HStack(alignment: .top, spacing: Self.spacing) {
@@ -146,20 +196,36 @@ private struct TabBar: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(width: tabHeight, height: tabHeight)
+            .padding(.top, Self.groupInset)
             .help("Home: all data models (⌘↑)")
-            ForEach(library.tabs, id: \.url) { tab in
-                ModelTab(tab: tab, isFront: tab === library.open, isPeeking: library.isPeeking, height: tabHeight,
-                         select: { choose(tab.url) }, close: { library.close(tab) }, peek: peek)
-                    .frame(maxWidth: Self.maxWidth)
-                    .help(tab.name)
-                    .reorderable(in: library, tab: tab)
+            if !library.tabs.isEmpty {
+                HStack(alignment: .top, spacing: 0) {
+                    ForEach(library.tabs, id: \.url) { tab in
+                        ModelTab(tab: tab, isFront: tab === library.open, isPeeking: library.isPeeking, height: tabHeight,
+                                 select: { choose(tab.url) }, close: { library.close(tab) }, peek: peek)
+                            .frame(maxWidth: Self.maxWidth)
+                            .help(tab.name)
+                            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { tabWidth = $0 }
+                            .offset(offset(of: tab))
+                            .zIndex(dragging?.url == tab.url ? 1 : 0)
+                            .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .named(Self.groupSpace))
+                                .onChanged { drag(tab, $0) }
+                                .onEnded { _ in withAnimation(.spring(duration: 0.35, bounce: 0.2)) { dragging = nil } })
+                    }
+                }
+                .coordinateSpace(.named(Self.groupSpace))
+                .padding(Self.groupInset)
+                .glassEffect(.regular, in: .rect(cornerRadius: groupRadius))
+                // A shade behind the glass in light mode, where it's nearly as white as the tab in front would be.
+                .background(RoundedRectangle(cornerRadius: groupRadius).fill(Self.groupShade))
             }
             Spacer(minLength: 0)
             NewTabButton(library: library, size: tabHeight)
+                .padding(.top, Self.groupInset)
         }
         .padding(.leading, Self.leading)
         .padding(.trailing, Panel.inset)
-        .padding(.vertical, (height - tabHeight) / 2)
+        .padding(.vertical, (height - tabHeight) / 2 - Self.groupInset)
         .frame(height: height + (library.isPeeking ? Self.peekHeight : 0), alignment: .top)
         // Tabs opening, closing, moving and coming to the front all move into place.
         .animation(.smooth(duration: 0.25), value: library.tabs.map(\.url))
@@ -181,16 +247,29 @@ private struct TabBar: View {
     private func choose(_ url: URL?) {
         library.selection = url
     }
-}
 
-extension View {
-    /// Dragged onto another tab, a tab moves there.
-    fileprivate func reorderable(in library: Library, tab: OpenModel) -> some View {
-        draggable(tab.url)
-            .dropDestination(for: URL.self) { urls, _ in
-                guard let dragged = urls.first, let index = library.tabs.firstIndex(where: { $0 === tab }) else { return false }
-                return library.moveTab(dragged, to: index)
-            }
+    /// Where a tab being dragged is drawn, from its place: following the pointer, pulled back past the group's ends.
+    private func offset(of tab: OpenModel) -> CGSize {
+        guard let dragging, dragging.url == tab.url, let index = library.tabs.firstIndex(where: { $0 === tab }) else { return .zero }
+        let lastSlot = CGFloat(library.tabs.count - 1) * tabWidth
+        let x = TabDrag.rubberBand(dragging.location.x - dragging.grab.x, in: 0...lastSlot, reach: TabDrag.reach.width)
+        let y = TabDrag.rubberBand(dragging.location.y - dragging.grab.y, in: 0...0, reach: TabDrag.reach.height)
+        return CGSize(width: x - CGFloat(index) * tabWidth, height: y)
+    }
+
+    /// Follows the pointer, bringing the tab to the front, and moves it among the others as its middle passes theirs.
+    private func drag(_ tab: OpenModel, _ value: DragGesture.Value) {
+        guard let index = library.tabs.firstIndex(where: { $0 === tab }) else { return }
+        if dragging?.url != tab.url {
+            choose(tab.url)
+            dragging = (tab.url, CGPoint(x: value.startLocation.x - CGFloat(index) * tabWidth, y: value.startLocation.y), value.location)
+        } else {
+            dragging?.location = value.location
+        }
+        guard let dragging else { return }
+        let center = dragging.location.x - dragging.grab.x + tabWidth / 2
+        let slot = TabDrag.slot(forCenter: center, width: tabWidth, count: library.tabs.count)
+        if slot != index { withAnimation(.smooth(duration: 0.25)) { _ = library.moveTab(tab.url, to: slot) } }
     }
 }
 
@@ -210,7 +289,7 @@ private struct ModelTab: View {
     private var iconInset: CGFloat { (height - ModelIcon.size.height) / 2 }
 
     var body: some View {
-        Tab(isFront: isFront, cornerRadius: height / 2, select: select, peek: peek) {
+        Tab(isFront: isFront, cornerRadius: height / 2, select: select, peek: peek, isGrouped: true) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
                     ModelIcon(model: tab.model)
@@ -265,14 +344,16 @@ private struct CloseButton: View {
     }
 }
 
-/// A glass pill, the one in front over a light fill so it stands out on the plain back panel. On hover a fainter fill
-/// fades in behind the glass, as Safari's tabs lighten; the glass itself never changes, so nothing flashes. Resting on
-/// it a moment calls `peek`.
+/// A pill: on its own (home), glass; in the tab group, clear, the group's glass behind it. The one in front has a light
+/// fill, raised a little; on hover a fainter one fades in, as Safari's tabs lighten, the glass itself never changing,
+/// so nothing flashes. Resting on it a moment calls `peek`.
 private struct Tab<Content: View>: View {
     let isFront: Bool
     let cornerRadius: CGFloat
     let select: () -> Void
     let peek: () -> Void
+    /// In the tab group, which is glass already: none of its own.
+    var isGrouped = false
     @ViewBuilder let content: Content
     @State private var hovering = false
     @State private var resting: Task<Void, Never>?
@@ -286,11 +367,12 @@ private struct Tab<Content: View>: View {
             .foregroundStyle(isFront ? .primary : .secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             // A pill while it's as tall as its corners are round, and a card of the same corners when it grows.
-            .glassEffect(isFront ? .regular : .clear, in: .rect(cornerRadius: cornerRadius))
+            .glassEffect(isGrouped ? .identity : isFront ? .regular : .clear, in: .rect(cornerRadius: cornerRadius))
             // Behind the glass, which shows it through.
             .background {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(isFront ? Self.frontFill : hovering ? Self.hoverFill : .clear)
+                    .shadow(color: .black.opacity(isGrouped && isFront ? 0.15 : 0), radius: 1.5, y: 0.5)
             }
             .animation(.smooth(duration: 0.15), value: hovering)
             .contentShape(.rect(cornerRadius: cornerRadius))

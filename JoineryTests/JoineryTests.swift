@@ -1779,3 +1779,24 @@ extension JoineryTests {
         #expect(model.tables[1].indexes.count == 1)
     }
 }
+
+
+// MARK: Tab dragging
+
+extension JoineryTests {
+    @Test func aDraggedTabIsPulledBackPastTheGroupAndFindsItsSlot() {
+        // Inside the group, as it is; past it, pulled back, more the further, never past the reach.
+        #expect(TabDrag.rubberBand(50, in: 0...100, reach: 24) == 50)
+        let near = TabDrag.rubberBand(110, in: 0...100, reach: 24), far = TabDrag.rubberBand(400, in: 0...100, reach: 24)
+        #expect(near > 100 && near < 110)
+        #expect(far > near && far < 124)
+        #expect(TabDrag.rubberBand(-10, in: 0...100, reach: 24) == 100 - TabDrag.rubberBand(110, in: 0...100, reach: 24))
+        // Up and down, held to the row.
+        #expect(abs(TabDrag.rubberBand(1000, in: 0...0, reach: 12)) < 12)
+        // Its slot is the one its middle is over, within the group.
+        #expect(TabDrag.slot(forCenter: 50, width: 200, count: 3) == 0)
+        #expect(TabDrag.slot(forCenter: 250, width: 200, count: 3) == 1)
+        #expect(TabDrag.slot(forCenter: 900, width: 200, count: 3) == 2)
+        #expect(TabDrag.slot(forCenter: -40, width: 200, count: 3) == 0)
+    }
+}
