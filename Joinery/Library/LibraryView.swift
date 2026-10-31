@@ -79,7 +79,7 @@ extension View {
     func surface() -> some View {
         clipShape(Panel.surfaceShape)
             .overlay { Panel.surfaceShape.strokeBorder(.separator.opacity(0.6)) }
-            .overlay { Panel.surfaceShape.sheen() }
+            .overlay { Panel.surfaceShape.sheen(0.4) }  // Fainter than the window's.
             .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
             .padding([.horizontal, .bottom], Panel.inset)
     }
@@ -88,11 +88,12 @@ extension View {
 extension InsettableShape {
     /// A glassy sheen, as light from above catches it: a bright edge along its top that fades out down its sides, and
     /// the faintest glow inside its top, gone a little way down. Subtle, and only to look at.
-    func sheen() -> some View {
+    /// `strength` scales it, 1 being the window's.
+    func sheen(_ strength: Double = 1) -> some View {
         ZStack {
-            strokeBorder(LinearGradient(stops: [.init(color: .white.opacity(0.32), location: 0), .init(color: .white.opacity(0), location: 0.5)],
+            strokeBorder(LinearGradient(stops: [.init(color: .white.opacity(0.32 * strength), location: 0), .init(color: .white.opacity(0), location: 0.5)],
                                         startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.12)), lineWidth: 1)
-            fill(LinearGradient(colors: [.white.opacity(0.06), .white.opacity(0)], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.06)))
+            fill(LinearGradient(colors: [.white.opacity(0.06 * strength), .white.opacity(0)], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.06)))
         }
         .blendMode(.plusLighter)
         .allowsHitTesting(false)
