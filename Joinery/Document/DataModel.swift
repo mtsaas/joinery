@@ -87,13 +87,13 @@ struct Table: Codable, Identifiable, Equatable {
     var notes = ""
     /// As wide as it's been dragged, in canvas points; nil for the usual width (`Metrics.tableWidth`).
     var width: CGFloat?
-    /// Indexes on more than one column, unique or not: a single column's uniqueness is its own `isUnique`, and a
-    /// compound primary key is every column marked `isPrimaryKey`.
+    /// Indexes on one or more columns, unique or not. A compound primary key is every column marked `isPrimaryKey`.
     var indexes: [TableIndex] = []
 }
 
-/// An index on two or more of a table's columns, in order: unique by default, as a compound unique constraint. Drawn
-/// in the table designer as a cable between its columns' sockets, in its own color.
+/// An index on one or more of a table's columns, in order: on several, unique by default, as a compound unique
+/// constraint. Drawn in the table designer as a cable between its columns' sockets, in its own color; on one column, a
+/// cable from its socket that ends in a dot.
 struct TableIndex: Codable, Identifiable, Equatable {
     var id = UUID()
     var columns: [Column.ID]
@@ -124,8 +124,8 @@ extension Table {
         index.columns.compactMap { id in columns.first { $0.id == id } }
     }
 
-    /// Its indexes with at least two of their columns still in the table: the ones that mean anything.
-    var liveIndexes: [TableIndex] { indexes.filter { columns(of: $0).count >= 2 } }
+    /// Its indexes with at least one of their columns still in the table.
+    var liveIndexes: [TableIndex] { indexes.filter { !columns(of: $0).isEmpty } }
 
     /// An index's name in SQL: its own, or the table's and its columns' names, as Postgres makes one.
     func name(of index: TableIndex) -> String {
@@ -147,10 +147,10 @@ extension Table {
         indexes[index].columns.append(column)
     }
 
-    /// Takes a column out of its indexes, and drops any left with fewer than two.
+    /// Takes a column out of its indexes, and drops any left with none.
     mutating func removeFromIndexes(_ column: Column.ID) {
         for index in indexes.indices { indexes[index].columns.removeAll { $0 == column } }
-        indexes.removeAll { $0.columns.count < 2 }
+        indexes.removeAll { $0.columns.isEmpty }
     }
 
     /// A sample row's value for a column.

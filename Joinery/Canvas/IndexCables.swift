@@ -23,7 +23,8 @@ struct CableLayout {
     static let socketDiameter: CGFloat = 10
     /// From a socket's edge to the nearest lane, and between lanes.
     static let stub: CGFloat = 10
-    static let laneSpacing: CGFloat = 8
+    /// Between two lanes, as between two cables into the same socket (`fan`), so the gaps are the same both ways.
+    static let laneSpacing: CGFloat = fan
     static let lineWidth: CGFloat = 2
     /// The rounding of a cable's turns: no more than half the lane's own reach, so a short one still turns cleanly.
     static let cornerRadius: CGFloat = 5
@@ -48,6 +49,10 @@ struct CableLayout {
 
     /// Between two cables into the same socket, fanned out up and down it so each one's color shows.
     static let fan: CGFloat = 3
+    /// A lane's strip to drag from: wider than the lanes are apart, to be easy to catch.
+    static let grabWidth: CGFloat = 8
+    /// The dot that ends a single column's cable, in its lane.
+    static let endDiameter: CGFloat = 5
 
     /// How far up or down its socket each index's cable meets each of its columns: apart, when more than one meets the
     /// same socket, in lane order, centered on it.
@@ -74,6 +79,12 @@ struct CableLayout {
         Path { path in
             guard let top = points.min(by: { $0.y < $1.y }), let bottom = points.max(by: { $0.y < $1.y }) else { return }
             let edge = { (point: CGPoint) in CGPoint(x: point.x - socketDiameter / 2, y: point.y) }
+            // On one column: out to its lane, where a dot ends it.
+            guard points.count > 1 else {
+                path.move(to: edge(top))
+                path.addLine(to: CGPoint(x: laneX, y: top.y))
+                return
+            }
             path.addPath(rounded([edge(top), CGPoint(x: laneX, y: top.y), CGPoint(x: laneX, y: bottom.y), edge(bottom)]))
             for point in points where point != top && point != bottom {
                 path.move(to: edge(point))
@@ -128,6 +139,10 @@ struct IndexCables: View {
                     let x = CableLayout.laneX(layout.lanes[index.id] ?? 0, socketX: socketX)
                     context.stroke(CableLayout.path(through: points, laneX: x), with: .color(index.color.color),
                                    style: StrokeStyle(lineWidth: CableLayout.lineWidth, lineCap: .round, lineJoin: .round))
+                    if points.count == 1, let point = points.first {
+                        let d = CableLayout.endDiameter
+                        context.fill(Path(ellipseIn: CGRect(x: x - d / 2, y: point.y - d / 2, width: d, height: d)), with: .color(index.color.color))
+                    }
                 }
                 if let drag, let start = sockets[drag.from] {
                     // Out to its lane (a new one past the rest, or the index's own), along it, and on to the pointer.
@@ -159,7 +174,7 @@ struct IndexCables: View {
         if let top = ys.min(), let bottom = ys.max(), let first = index.columns.first(where: { sockets[$0] != nil }) {
             let x = CableLayout.laneX(layout.lanes[index.id] ?? 0, socketX: socketX)
             Color.clear
-                .frame(width: CableLayout.laneSpacing, height: bottom - top + CableLayout.laneSpacing)
+                .frame(width: CableLayout.grabWidth, height: bottom - top + CableLayout.grabWidth)
                 .contentShape(.rect)
                 .position(x: x, y: (top + bottom) / 2)
                 .pointerStyle(.grabIdle)
@@ -172,7 +187,7 @@ struct IndexCables: View {
                             change { table in
                                 if let row = table.indexes.firstIndex(where: { $0.id == index.id }) {
                                     table.indexes[row].columns.removeAll { $0 == column.id }
-                                    table.indexes.removeAll { $0.columns.count < 2 }
+                                    table.indexes.removeAll { $0.columns.isEmpty }
                                 }
                             }
                         }

@@ -288,8 +288,12 @@ struct TableDesigner: View {
             .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.columnsSpace))
                 .onChanged { cableDrag = CableDrag(from: column.id, index: nil, location: $0.location) }
                 .onEnded { _ in finishCable(in: table) })
+            .contextMenu {
+                Button("Add Index on “\(column.name)”") { change { $0.addIndex(on: [column.id], isUnique: false) } }
+                Button("Add Unique Index on “\(column.name)”") { change { $0.addIndex(on: [column.id]) } }
+            }
             .disabled(isReadOnly)
-            .help("Drag to another column's socket to make a compound unique index")
+            .help("Drag to another column's socket to make a compound unique index; right-click for an index on this column alone")
     }
 
     /// The socket a cable would plug into: the one nearest the pointer, up or down, within half a row; not its own
@@ -315,7 +319,7 @@ struct TableDesigner: View {
             VStack(spacing: 0) {
                 let indexes = table.liveIndexes
                 if indexes.isEmpty {
-                    Text("Drag from one column's socket to another's to make a compound unique index.")
+                    Text("Drag from one column's socket to another's to make a compound unique index, or right-click a socket for an index on that column alone.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .padding(10)
