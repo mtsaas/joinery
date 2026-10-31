@@ -17,9 +17,9 @@ struct LibraryView: View {
                     LibraryBrowser(library: library)
                 }
             }
-            // Under the tabs, as far below them as the surface is in from the window's sides. While they're peeked
-            // at, it slides further down, off the window's bottom, rather than shrinking.
-            .padding(.top, titleBarHeight + Panel.inset - Panel.tabInset)
+            // Under the tabs, as far below them as they are below the window's top. While they're peeked at, it
+            // slides further down, off the window's bottom, rather than shrinking.
+            .padding(.top, titleBarHeight)
             .offset(y: library.isPeeking ? TabBar.peekHeight : 0)
             TabBar(library: library, height: titleBarHeight)
         }
@@ -46,23 +46,35 @@ enum Panel {
     static let inset: CGFloat = 8
     /// The space above and below the tabs in their row.
     static let tabInset: CGFloat = 4
-    /// Grayer than any surface on it in light mode, and darker in dark, so they stand off it.
-    static let color = Color(light: NSColor(white: 0.9, alpha: 1), dark: NSColor(white: 0.065, alpha: 1))
+    /// The theme's canvas, darkened, so the surfaces on it stand off it and it takes on the theme's tint.
+    static var color: Color {
+        Color(light: Themes.shared.light.canvas.blended(withFraction: 0.09, of: .black) ?? .gray,
+              dark: Themes.shared.dark.canvas.blended(withFraction: 0.45, of: .black) ?? .black)
+    }
+    /// The window's own corners: measured from a snapshot, on macOS 26 with the title bar hidden.
+    static let windowCornerRadius: CGFloat = 16
     /// The height of the capsules of controls floating along a surface's top.
     static let controlHeight: CGFloat = 36
     /// The gap between those controls and the surface's edges.
     static let controlInset = inset
-    /// Concentric with the capsules in its top corners: their radius plus the gap between them.
+    /// Each control's square in its capsule, and its gap from the capsule's ends and top and bottom, so a round
+    /// highlight on it is concentric with the capsule.
+    static let controlIconInset: CGFloat = 4
+    static let controlIconSize = controlHeight - 2 * controlIconInset
+    /// The surface's top corners: concentric with the capsules in them, their radius plus the gap between them.
     static let surfaceCornerRadius = controlHeight / 2 + controlInset
+    /// Its bottom corners: concentric with the window's, its radius less the gap between them.
+    static let surfaceBottomCornerRadius = windowCornerRadius - inset
+
+    static let surfaceShape = UnevenRoundedRectangle(topLeadingRadius: surfaceCornerRadius, bottomLeadingRadius: surfaceBottomCornerRadius,
+                                                     bottomTrailingRadius: surfaceBottomCornerRadius, topTrailingRadius: surfaceCornerRadius)
 }
 
 extension View {
     /// Raised off the back panel: rounded, edged and shadowed, and inset from the window's sides and bottom.
     func surface() -> some View {
-        clipShape(.rect(cornerRadius: Panel.surfaceCornerRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: Panel.surfaceCornerRadius).strokeBorder(.separator.opacity(0.6))
-            }
+        clipShape(Panel.surfaceShape)
+            .overlay { Panel.surfaceShape.strokeBorder(.separator.opacity(0.6)) }
             .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
             .padding([.horizontal, .bottom], Panel.inset)
     }
@@ -77,6 +89,7 @@ extension View {
 private struct TabBar: View {
     let library: Library
     let height: CGFloat
+    @AppStorage("showsSidebar") private var showsSidebar = true
 
     /// Clear of the window's close, minimize and zoom buttons.
     static let leading: CGFloat = 78
@@ -99,12 +112,23 @@ private struct TabBar: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: Self.spacing) {
-            Tab(isFront: library.open == nil, cornerRadius: cornerRadius, select: { choose(nil) }, peek: peek) {
-                Image(systemName: "square.grid.2x2")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Button("Show Sidebar", systemImage: "sidebar.left") {
+                withAnimation(.smooth(duration: 0.3)) { showsSidebar.toggle() }
             }
-            // A circle: as wide as it's tall.
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
             .frame(width: tabHeight, height: tabHeight)
+            // Only the library has a sidebar.
+            .disabled(library.open != nil)
+            .help(showsSidebar ? "Hide the sidebar (⌃⌘S)" : "Show the sidebar (⌃⌘S)")
+            Tab(isFront: library.open == nil, cornerRadius: cornerRadius, select: { choose(nil) }, peek: peek) {
+                Label("Library", systemImage: "square.grid.2x2")
+                    .labelStyle(.titleAndIcon)
+                    .padding(.horizontal, 10)
+                    .frame(maxHeight: .infinity)
+            }
+            .fixedSize(horizontal: true, vertical: false)
+            .frame(height: tabHeight)
             .help("All data models (⌘↑)")
             ForEach(library.tabs, id: \.url) { tab in
                 ModelTab(tab: tab, isFront: tab === library.open, isPeeking: library.isPeeking, height: tabHeight,
@@ -462,16 +486,23 @@ struct ControlGroupGlass<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        HStack(spacing: 2) { content }
-            .labelStyle(.iconOnly)
+        HStack(spacing: 0) { content }
+            .labelStyle(IconSquare())
             .buttonStyle(.borderless)
             .toggleStyle(.button)
             .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
             .imageScale(.large)
-            .controlSize(.large)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, Panel.controlIconInset)
             .frame(height: Panel.controlHeight)
             .glassEffect(.regular, in: .capsule)
+    }
+
+    /// Each icon centered in the same square, whatever its symbol's shape, so they line up and space evenly.
+    private struct IconSquare: LabelStyle {
+        func makeBody(configuration: Configuration) -> some View {
+            configuration.icon.frame(width: Panel.controlIconSize, height: Panel.controlIconSize)
+        }
     }
 }
 
@@ -491,9 +522,13 @@ private struct ZoomMenu: View {
             }
         } label: {
             Text(Self.percent(canvas.zoom))
+                // Text, not an icon square: room either side, as much as an icon's.
+                .padding(.horizontal, Panel.controlIconInset * 2)
         }
         .monospacedDigit()
         .fixedSize()
+        // Its arrow shown, unlike the icon menus': without, it reads as a label.
+        .menuIndicator(.visible)
         .help("Zoom")
     }
 

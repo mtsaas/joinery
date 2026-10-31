@@ -14,6 +14,8 @@ struct JoineryApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             LibraryCommands(library: .shared)
+            // View ▸ Show Sidebar (⌃⌘S), for the library's.
+            SidebarCommands()
             CanvasCommands()
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") { Updates.controller?.checkForUpdates(nil) }

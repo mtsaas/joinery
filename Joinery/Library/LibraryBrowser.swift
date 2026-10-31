@@ -16,6 +16,8 @@ struct LibraryBrowser: View {
     }
 
     @State private var scope = Scope.all
+    /// Shown or hidden with the button beside the window's own, or ⌃⌘S.
+    @AppStorage("showsSidebar") private var showsSidebar = true
     @AppStorage("libraryLayout") private var layout = Layout.grid
     @State private var search = ""
     /// The model picked out with a click, to open with Return.
@@ -28,17 +30,19 @@ struct LibraryBrowser: View {
     @State private var showsJoin = false
 
     var body: some View {
-        HStack(spacing: 0) {
+        // A native sidebar, which resizes and collapses as other apps' do, beside the surface.
+        NavigationSplitView(columnVisibility: Binding { showsSidebar ? .all : .detailOnly } set: { showsSidebar = $0 != .detailOnly }) {
             sidebar
-                .frame(width: 220)
+                .navigationSplitViewColumnWidth(min: 180, ideal: 220, max: 320)
+                .toolbar(removing: .sidebarToggle)
+        } detail: {
             VStack(spacing: 0) {
                 controls
                 content
             }
             .background(.background)
             .surface()
-            // The sidebar's already clear of the window's left edge.
-            .padding(.leading, -Panel.inset)
+            .background(Panel.color)
         }
         .confirmationDialog("Move “\(collectionToTrash?.name ?? "")” to the Trash?", isPresented: Binding {
             collectionToTrash != nil
