@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The window: a back panel with the tabs on it, along its top beside the window's buttons or down its leading side,
-/// and a raised surface with the model in front: its canvas and controls. The library slides in over the surface from
-/// its leading edge; it's out for good while no model is open.
+/// The window: a back panel with the app's own things on it, the tabs (along its top beside the window's buttons, or
+/// down its leading side) and the library, and on it a raised surface with the model in front: its canvas and
+/// controls. The library is a column of the back panel, beside the surface, which makes room for it rather than being
+/// covered; it's out for good while no model is open.
 struct LibraryView: View {
     @Bindable var library: Library
     /// The title bar's height, which the tab row matches so the window's buttons sit centered in it.
@@ -10,20 +11,22 @@ struct LibraryView: View {
     @AppStorage("verticalTabs") private var isVertical = false
     @AppStorage("tabColumnWidth") private var tabColumnWidth: Double = 220
 
+    private var showsLibrary: Bool { library.showsLibrary || library.open == nil }
+
     var body: some View {
         Group {
             if isVertical {
                 HStack(spacing: 0) {
                     VerticalTabBar(library: library, titleBarHeight: titleBarHeight, width: $tabColumnWidth)
-                    // As far below the window's top as in from its other edges, its top trailing corner following the
-                    // window's (see `Panel.surfaceShape`).
-                    surface(besideTabs: true).padding(.top, Panel.inset)
+                    // As far below the window's top as in from its other edges, the surface's top trailing corner
+                    // following the window's (see `Panel.surfaceShape`).
+                    content(nearWindowTop: true).padding(.top, Panel.inset)
                 }
             } else {
                 ZStack(alignment: .top) {
                     // Under the tabs, as far below them as they are below the window's top. While they're peeked at,
                     // it slides further down, off the window's bottom, rather than shrinking.
-                    surface(besideTabs: false)
+                    content(nearWindowTop: false)
                         .padding(.top, titleBarHeight)
                         .offset(y: library.isPeeking ? TabBar.peekHeight : 0)
                     TabBar(library: library, height: titleBarHeight)
@@ -38,6 +41,7 @@ struct LibraryView: View {
                 .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { if $0 > 0 { titleBarHeight = $0 } }
         }
         .animation(.smooth(duration: 0.3), value: isVertical)
+        .animation(.smooth(duration: 0.3), value: showsLibrary)
         // For the Window menu and Mission Control. The window's title bar is hidden (see `JoineryApp`): the tabs are
         // in its place, and what each shows has its own controls, on its surface.
         .navigationTitle(library.open?.name ?? "Joinery")
@@ -48,48 +52,38 @@ struct LibraryView: View {
         }
     }
 
-    /// The model in front, or with none, a note beside the library; the library over either, when it's out.
-    private func surface(besideTabs: Bool) -> some View {
-        let showsLibrary = library.showsLibrary || library.open == nil
-        return Group {
-            if let open = library.open {
-                ModelEditor(open: open)
-                    .id(ObjectIdentifier(open))
-            } else {
-                ContentUnavailableView {
-                    Label("No Data Model Open", systemImage: "tablecells")
-                } description: {
-                    Text("Open one from the library, or start a new one.")
-                } actions: {
-                    Button("New Data Model") { library.newModel() }
-                }
-                .padding(.leading, LibraryPanel.width)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Theme.canvas)
-            }
-        }
-        .overlay(alignment: .leading) {
+    /// The library, when it's out, then the surface beside it.
+    private func content(nearWindowTop: Bool) -> some View {
+        HStack(spacing: 0) {
             if showsLibrary {
-                ZStack(alignment: .leading) {
-                    // A click anywhere else puts it away, as a popover goes, if there's a model to go back to.
-                    if library.open != nil {
-                        Color.black.opacity(0.06)
-                            .contentShape(.rect)
-                            .onTapGesture { withAnimation(.smooth(duration: 0.25)) { library.showsLibrary = false } }
-                            .transition(.opacity)
-                    }
-                    LibraryPanel(library: library)
-                        .frame(maxHeight: .infinity)
-                        .glassEffect(.regular, in: .rect)
-                        .overlay(alignment: .trailing) { Rectangle().fill(.separator).frame(width: 1) }
-                        .shadow(color: .black.opacity(0.12), radius: 8, x: 2)
-                        .transition(.move(edge: .leading))
-                }
+                LibraryPanel(library: library)
+                    // As far in from the window's edge, or the tabs, as the surface is; its top and bottom level with
+                    // the surface's, so its search lines up with the canvas's controls.
+                    .padding(.leading, Panel.inset)
+                    .padding(.bottom, Panel.inset)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
             }
+            surface.surface(nearWindowTop: nearWindowTop)
         }
-        .animation(.smooth(duration: 0.25), value: showsLibrary)
-        // Clipped to the surface, so the library's corners are the surface's.
-        .surface(nearWindowTop: besideTabs)
+    }
+
+    /// The model in front, or with none, a note.
+    @ViewBuilder
+    private var surface: some View {
+        if let open = library.open {
+            ModelEditor(open: open)
+                .id(ObjectIdentifier(open))
+        } else {
+            ContentUnavailableView {
+                Label("No Data Model Open", systemImage: "tablecells")
+            } description: {
+                Text("Open one from the library, or start a new one.")
+            } actions: {
+                Button("New Data Model") { library.newModel() }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Theme.canvas)
+        }
     }
 }
 

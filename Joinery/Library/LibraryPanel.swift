@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The library, as a panel that slides in from the surface's left edge over what's there: search, then Recents,
-/// Favorites, the data models in no collection, and each collection's. Choosing one opens it in a tab and puts the
-/// panel away. It isn't a page of its own: with nothing open, it stays out beside an empty surface.
+/// The library, a column of the back panel beside the surface: search, then Recents, Favorites, the data models in no
+/// collection, and each collection's. Choosing one opens it in a tab and puts the library away. It isn't a page of its
+/// own: with nothing open, it stays out beside an empty surface.
 struct LibraryPanel: View {
     @Bindable var library: Library
 
@@ -83,8 +83,7 @@ struct LibraryPanel: View {
         #endif
     }
 
-    /// Search, and starting or joining a model, in glass along the top, where the canvas's first controls are, so
-    /// they're concentric with the surface's corner as those are.
+    /// Search, and starting or joining a model, in glass along the top, level with the canvas's controls.
     private var controls: some View {
         HStack(spacing: 8) {
             HStack(spacing: 6) {
@@ -109,7 +108,7 @@ struct LibraryPanel: View {
                     .help("New data model, in a tab (⌘N)")
             }
         }
-        .padding(Panel.controlInset)
+        .padding(.vertical, Panel.controlInset)
     }
 
     private var query: String { search.trimmingCharacters(in: .whitespaces) }
