@@ -88,21 +88,22 @@ struct LibraryBrowser: View {
     }
 
     /// Along the surface's top, at the trailing end, as Freeform's toolbar has them.
+    /// In glass, as the canvas's controls are, and as far in from the surface's corner, so its corners are
+    /// concentric with theirs.
     private var controls: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Spacer()
-            Button("Join", systemImage: "person.2.badge.plus") { showsJoin.toggle() }
-                .help("Join a data model someone is sharing, from their link")
-                .popover(isPresented: $showsJoin, arrowEdge: .bottom) { JoinPanel() }
-            Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: selectedCollection) }
-                .help("New data model (⌘N)")
-            Picker("View", selection: $layout) {
-                Label("Grid", systemImage: "square.grid.2x2").tag(Layout.grid)
-                Label("List", systemImage: "list.bullet").tag(Layout.list)
+            ControlGroupGlass {
+                Button("Join", systemImage: "person.2.badge.plus") { showsJoin.toggle() }
+                    .help("Join a data model someone is sharing, from their link")
+                    .popover(isPresented: $showsJoin, arrowEdge: .bottom) { JoinPanel() }
+                Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: selectedCollection) }
+                    .help("New data model (⌘N)")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
+            ControlGroupGlass {
+                layoutToggle(.grid, "Grid", systemImage: "square.grid.2x2")
+                layoutToggle(.list, "List", systemImage: "list.bullet")
+            }
             .help("Show as a grid or a list")
             HStack(spacing: 6) {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
@@ -110,20 +111,21 @@ struct LibraryBrowser: View {
                     .textFieldStyle(.plain)
                 if !search.isEmpty {
                     Button("Clear", systemImage: "xmark.circle.fill") { search = "" }
+                        .labelStyle(.iconOnly)
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)
                 }
             }
-            .labelStyle(.iconOnly)
-            .padding(.horizontal, 10)
-            .frame(width: 220, height: 30)
-            .background(.quaternary.opacity(0.6), in: .capsule)
+            .padding(.horizontal, 14)
+            .frame(width: 240, height: Panel.controlHeight)
+            .glassEffect(.regular, in: .capsule)
         }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .imageScale(.large)
-        .padding(.horizontal, 16)
-        .frame(height: 52)
+        .padding(Panel.controlInset)
+    }
+
+    /// One of the grid and list buttons: on while it's the layout shown.
+    private func layoutToggle(_ shown: Layout, _ title: String, systemImage: String) -> some View {
+        Toggle(title, systemImage: systemImage, isOn: Binding { layout == shown } set: { if $0 { layout = shown } })
     }
 
     private func smartRow(_ scope: Scope, _ title: String, symbol: String, color: Color, count: Int) -> some View {

@@ -458,7 +458,7 @@ struct ModelEditor: View {
 }
 
 /// Controls floating over the canvas, together in one piece of glass, as a toolbar's group would be.
-private struct ControlGroupGlass<Content: View>: View {
+struct ControlGroupGlass<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
