@@ -147,6 +147,13 @@ extension Table {
         indexes[index].columns.append(column)
     }
 
+    /// Takes a column out of one index, and drops the index if it's left with none.
+    mutating func remove(_ column: Column.ID, fromIndex id: TableIndex.ID) {
+        guard let index = indexes.firstIndex(where: { $0.id == id }) else { return }
+        indexes[index].columns.removeAll { $0 == column }
+        if indexes[index].columns.isEmpty { indexes.remove(at: index) }
+    }
+
     /// Takes a column out of its indexes, and drops any left with none.
     mutating func removeFromIndexes(_ column: Column.ID) {
         for index in indexes.indices { indexes[index].columns.removeAll { $0 == column } }
