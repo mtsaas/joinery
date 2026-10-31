@@ -1,37 +1,28 @@
 import SwiftUI
 
-/// The window: a back panel with the app's own things on it, the tabs (along its top beside the window's buttons, or
-/// down its leading side) and the library, and on it a raised surface with the model in front: its canvas and
-/// controls. The library is a column of the back panel, beside the surface, which makes room for it rather than being
-/// covered; it's out for good while no model is open.
+/// The window: a back panel with the tabs along its top, beside the window's buttons, and on it a raised surface with
+/// the model in front, its canvas and controls, or with none, home: the library's sidebar and its data models.
 struct LibraryView: View {
     @Bindable var library: Library
     /// The title bar's height, which the tab row matches so the window's buttons sit centered in it.
     @State private var titleBarHeight: CGFloat = 32
-    @AppStorage("verticalTabs") private var isVertical = false
-    @AppStorage("tabColumnWidth") private var tabColumnWidth: Double = 220
-
-    private var showsLibrary: Bool { library.showsLibrary || library.open == nil }
 
     var body: some View {
-        Group {
-            if isVertical {
-                HStack(spacing: 0) {
-                    VerticalTabBar(library: library, titleBarHeight: titleBarHeight, width: $tabColumnWidth)
-                    // As far below the window's top as in from its other edges, the surface's top trailing corner
-                    // following the window's (see `Panel.surfaceShape`).
-                    content(nearWindowTop: true).padding(.top, Panel.inset)
-                }
-            } else {
-                ZStack(alignment: .top) {
-                    // Under the tabs, as far below them as they are below the window's top. While they're peeked at,
-                    // it slides further down, off the window's bottom, rather than shrinking.
-                    content(nearWindowTop: false)
-                        .padding(.top, titleBarHeight)
-                        .offset(y: library.isPeeking ? TabBar.peekHeight : 0)
-                    TabBar(library: library, height: titleBarHeight)
+        ZStack(alignment: .top) {
+            Group {
+                if let open = library.open {
+                    ModelEditor(open: open)
+                        .id(ObjectIdentifier(open))
+                        .surface()
+                } else {
+                    LibraryBrowser(library: library)
                 }
             }
+            // Under the tabs, as far below them as they are below the window's top. While they're peeked at, it
+            // slides further down, off the window's bottom, rather than shrinking.
+            .padding(.top, titleBarHeight)
+            .offset(y: library.isPeeking ? TabBar.peekHeight : 0)
+            TabBar(library: library, height: titleBarHeight)
         }
         .background(Panel.color)
         .ignoresSafeArea(edges: .top)
@@ -40,8 +31,6 @@ struct LibraryView: View {
             Color.clear.ignoresSafeArea()
                 .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { if $0 > 0 { titleBarHeight = $0 } }
         }
-        .animation(.smooth(duration: 0.3), value: isVertical)
-        .animation(.smooth(duration: 0.3), value: showsLibrary)
         // For the Window menu and Mission Control. The window's title bar is hidden (see `JoineryApp`): the tabs are
         // in its place, and what each shows has its own controls, on its surface.
         .navigationTitle(library.open?.name ?? "Joinery")
@@ -49,40 +38,6 @@ struct LibraryView: View {
             Button("OK") { library.failure = nil }
         } message: {
             Text(library.failure ?? "")
-        }
-    }
-
-    /// The library, when it's out, then the surface beside it.
-    private func content(nearWindowTop: Bool) -> some View {
-        HStack(spacing: 0) {
-            if showsLibrary {
-                LibraryPanel(library: library)
-                    // As far in from the window's edge, or the tabs, as the surface is; its top and bottom level with
-                    // the surface's, so its search lines up with the canvas's controls.
-                    .padding(.leading, Panel.inset)
-                    .padding(.bottom, Panel.inset)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-            }
-            surface.surface(nearWindowTop: nearWindowTop)
-        }
-    }
-
-    /// The model in front, or with none, a note.
-    @ViewBuilder
-    private var surface: some View {
-        if let open = library.open {
-            ModelEditor(open: open)
-                .id(ObjectIdentifier(open))
-        } else {
-            ContentUnavailableView {
-                Label("No Data Model Open", systemImage: "tablecells")
-            } description: {
-                Text("Open one from the library, or start a new one.")
-            } actions: {
-                Button("New Data Model") { library.newModel() }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Theme.canvas)
         }
     }
 }
@@ -114,43 +69,18 @@ enum Panel {
     /// Its bottom corners: concentric with the window's, its radius less the gap between them.
     static let surfaceBottomCornerRadius = windowCornerRadius - inset
 
-    /// Each corner follows what's nearest it: the controls in it, or the window's corner just outside it. Its top
-    /// trailing corner is near the window's when the surface reaches up beside vertical tabs.
-    static func surfaceShape(nearWindowTop: Bool) -> UnevenRoundedRectangle {
-        UnevenRoundedRectangle(topLeadingRadius: surfaceCornerRadius, bottomLeadingRadius: surfaceBottomCornerRadius,
-                               bottomTrailingRadius: surfaceBottomCornerRadius,
-                               topTrailingRadius: nearWindowTop ? surfaceBottomCornerRadius : surfaceCornerRadius)
-    }
+    /// Each corner follows what's nearest it: the controls in its top ones, the window's just outside its bottom ones.
+    static let surfaceShape = UnevenRoundedRectangle(topLeadingRadius: surfaceCornerRadius, bottomLeadingRadius: surfaceBottomCornerRadius,
+                                                     bottomTrailingRadius: surfaceBottomCornerRadius, topTrailingRadius: surfaceCornerRadius)
 }
 
 extension View {
     /// Raised off the back panel: rounded, edged and shadowed, and inset from the window's sides and bottom.
-    func surface(nearWindowTop: Bool = false) -> some View {
-        let shape = Panel.surfaceShape(nearWindowTop: nearWindowTop)
-        return clipShape(shape)
-            .overlay { shape.strokeBorder(.separator.opacity(0.6)) }
+    func surface() -> some View {
+        clipShape(Panel.surfaceShape)
+            .overlay { Panel.surfaceShape.strokeBorder(.separator.opacity(0.6)) }
             .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
             .padding([.horizontal, .bottom], Panel.inset)
-    }
-}
-
-/// Shows or hides the library, beside the window's own buttons. While no model is open the library's out for good,
-/// so it isn't there at all, rather than there and doing nothing.
-private struct LibraryButton: View {
-    let library: Library
-    let size: CGFloat
-
-    var body: some View {
-        if library.open != nil {
-            Button("Library", systemImage: "sidebar.left") {
-                withAnimation(.smooth(duration: 0.25)) { library.showsLibrary.toggle() }
-            }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.borderless)
-            .foregroundStyle(library.showsLibrary ? Color.accentColor : .secondary)
-            .frame(width: size, height: size)
-            .help("Show or hide the library (⌘↑)")
-        }
     }
 }
 
@@ -183,17 +113,8 @@ private struct NewTabButton: View {
     }
 }
 
-/// Switches between tabs along the top and down the side.
-private struct TabLayoutMenu: View {
-    @AppStorage("verticalTabs") private var isVertical = false
-
-    var body: some View {
-        Toggle("Vertical Tabs", isOn: $isVertical)
-    }
-}
-
-/// The open models, one tab each, from the leading edge, after the library button: glass pills with an icon of the
-/// model and its name, the one in front clearest. Each closes with the × that takes its icon's place on hover, or ⌘W.
+/// Home, then the open models, one tab each, from the leading edge: glass pills with an icon of the model and its
+/// name, the one in front clearest. Each closes with the × that takes its icon's place on hover, or ⌘W.
 /// Drag one to put it elsewhere.
 ///
 /// Rest on a tab a moment and they peek: the row grows down, each model's tab showing the model as it is now, and the
@@ -220,7 +141,13 @@ private struct TabBar: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: Self.spacing) {
-            LibraryButton(library: library, size: tabHeight)
+            // Home, the library, left of all the tabs: a circle, as wide as it's tall.
+            Tab(isFront: library.open == nil, cornerRadius: tabHeight / 2, select: { choose(nil) }, peek: {}) {
+                Image(systemName: "house")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .frame(width: tabHeight, height: tabHeight)
+            .help("Home: all data models (⌘↑)")
             ForEach(library.tabs, id: \.url) { tab in
                 ModelTab(tab: tab, isFront: tab === library.open, isPeeking: library.isPeeking, height: tabHeight,
                          select: { choose(tab.url) }, close: { library.close(tab) }, peek: peek)
@@ -241,7 +168,6 @@ private struct TabBar: View {
         // Anywhere in the row, grown or not, keeps them peeking; leaving it stops.
         .contentShape(.rect)
         .onHover { if !$0 { setPeeking(false) } }
-        .contextMenu { TabLayoutMenu() }
     }
 
     private func peek() {
@@ -253,66 +179,9 @@ private struct TabBar: View {
         withAnimation(.smooth(duration: 0.3)) { library.isPeeking = isPeeking }
     }
 
-    private func choose(_ url: URL) {
+    private func choose(_ url: URL?) {
         setPeeking(false)
         library.selection = url
-    }
-}
-
-/// The open models down the back panel's leading side, under the window's buttons, the library button and +: a pill
-/// each, full width. Drag its trailing edge to make it wider or narrower.
-private struct VerticalTabBar: View {
-    let library: Library
-    let titleBarHeight: CGFloat
-    @Binding var width: Double
-    @State private var widthAtDragStart: Double?
-
-    /// A tab's height: a little taller than along the top, to be an easy target in a list.
-    static let rowHeight: CGFloat = 28
-    static let widths = 160.0...360.0
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: TabBar.spacing) {
-            HStack(spacing: TabBar.spacing) {
-                // Clear of the window's buttons.
-                Spacer().frame(width: TabBar.leading - Panel.inset)
-                LibraryButton(library: library, size: Panel.tabHeight)
-                Spacer(minLength: 0)
-                NewTabButton(library: library, size: Panel.tabHeight)
-            }
-            .frame(height: titleBarHeight)
-            ScrollView {
-                VStack(spacing: TabBar.spacing) {
-                    ForEach(library.tabs, id: \.url) { tab in
-                        ModelTab(tab: tab, isFront: tab === library.open, isPeeking: false, height: Self.rowHeight,
-                                 select: { library.selection = tab.url }, close: { library.close(tab) }, peek: {})
-                            .frame(height: Self.rowHeight)
-                            .help(tab.name)
-                            .reorderable(in: library, tab: tab)
-                    }
-                }
-            }
-            .scrollIndicators(.never)
-        }
-        // As far in from the window's edge as the surface is.
-        .padding(.leading, Panel.inset)
-        .frame(width: width)
-        .animation(.smooth(duration: 0.25), value: library.tabs.map(\.url))
-        .animation(.smooth(duration: 0.25), value: library.open.map(ObjectIdentifier.init))
-        .contextMenu { TabLayoutMenu() }
-        .overlay(alignment: .trailing) {
-            // The gap between the tabs and the surface, as the handle for resizing.
-            Color.clear
-                .frame(width: Panel.inset)
-                .contentShape(.rect)
-                .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
-                .gesture(DragGesture(coordinateSpace: .global).onChanged { drag in
-                    let start = widthAtDragStart ?? width
-                    widthAtDragStart = start
-                    width = min(max(start + drag.translation.width, Self.widths.lowerBound), Self.widths.upperBound)
-                }.onEnded { _ in widthAtDragStart = nil })
-                .offset(x: Panel.inset)
-        }
     }
 }
 

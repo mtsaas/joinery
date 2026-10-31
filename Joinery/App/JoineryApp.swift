@@ -54,7 +54,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// File menu items for the library.
 struct LibraryCommands: Commands {
     let library: Library
-    @AppStorage("verticalTabs") private var isVertical = false
 
     var body: some Commands {
         CommandGroup(replacing: .newItem) {
@@ -91,12 +90,8 @@ struct LibraryCommands: Commands {
                 .keyboardShortcut("z", modifiers: [.command, .shift])
         }
         CommandGroup(before: .windowList) {
-            Button("Show or Hide Library") {
-                withAnimation(.smooth(duration: 0.25)) { library.showsLibrary.toggle() }
-            }
-            .keyboardShortcut(.upArrow, modifiers: .command)
-            .disabled(library.open == nil)
-            Toggle("Vertical Tabs", isOn: $isVertical)
+            Button("Home") { library.selection = nil }
+                .keyboardShortcut(.upArrow, modifiers: .command)
             Button("Show Next Tab") { library.showTab(offset: 1) }
                 .keyboardShortcut(.tab, modifiers: .control)
                 .disabled(library.tabs.isEmpty)
