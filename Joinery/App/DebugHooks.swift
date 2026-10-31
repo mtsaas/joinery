@@ -14,7 +14,7 @@ import SwiftUI
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
 ///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection), `place <x> <y>` (puts the selected ties there),
 ///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>|shift+cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `feedback-on`, `handle <n> <dx> <dy>`, `feedback-note <text>`, `feedback-save`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point), `focus <table> <zoom>` (centers on that table), `shake <table> <seconds>` (drags it about and prints frame stats), `generate <tables> <foreign keys>` (replaces the model with a made-up one; see `scripts/scale-test.sh`), `quit`, `select-ties`, `group <table> <table>…` (groups them, as ⌘G), `groups` (prints them), `hold-drag <table> <dx> <dy>` (drags it that far in view points and holds), `wheel` (prints it), `wheel-pick <direction>` (east, northWest, …), `wheel-color <color>`, `ties` (prints them),
-///   `end-review` (as End Comparison), `theme <name>` (chooses that palette), `history [index]` (opens version history at that version), `wait <seconds>`.
+///   `end-review` (as End Comparison), `theme <name>` (chooses that palette), `open-model <name>` (in a tab), `next-tab`, `tabs` (prints them, and the zoom of the one in front),`history [index]` (opens version history at that version), `wait <seconds>`.
 @MainActor
 enum DebugHooks {
     private static let environment = ProcessInfo.processInfo.environment
@@ -228,6 +228,16 @@ enum DebugHooks {
             case "library":
                 let library = Library.shared
                 print("library open: \(library.open?.name ?? "none"), recents: \(library.recents.map(Library.name(of:)).prefix(3))")
+            case "open-model" where words.count > 1:
+                let library = Library.shared
+                let name = words.dropFirst().joined(separator: " ")
+                library.selection = library.allModels.first { Library.name(of: $0) == name }
+            case "next-tab":
+                Library.shared.showTab(offset: 1)
+            case "tabs":
+                let library = Library.shared
+                print("tabs:", library.tabs.map { $0 === library.open ? "[\($0.name)]" : $0.name }.joined(separator: " "),
+                      "zoom:", library.open.map { String(format: "%.2f", $0.canvas.zoom) } ?? "-")
             case "mcp" where words.count > 2:
                 // An assistant's tool call, as the MCP server would make it: "mcp create_tables {json}".
                 let json = words.dropFirst(2).joined(separator: " ")

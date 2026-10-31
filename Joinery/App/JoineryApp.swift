@@ -67,9 +67,23 @@ struct LibraryCommands: Commands {
         }
         CommandGroup(replacing: .saveItem) {
             // Changes save themselves; this keeps the data model as it is in its version history.
+            // With a tab in front, ⌘W closes it rather than the window.
+            Button(library.open == nil ? "Close" : "Close Tab") {
+                if let open = library.open { library.close(open) } else { NSApp.keyWindow?.performClose(nil) }
+            }
+            .keyboardShortcut("w")
             Button("Save Version") { library.open?.saveVersionNow() }
                 .keyboardShortcut("s")
                 .disabled(library.open == nil)
+        }
+        CommandGroup(before: .windowList) {
+            Button("Show Next Tab") { library.showTab(offset: 1) }
+                .keyboardShortcut(.tab, modifiers: .control)
+                .disabled(library.tabs.isEmpty)
+            Button("Show Previous Tab") { library.showTab(offset: -1) }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+                .disabled(library.tabs.isEmpty)
+            Divider()
         }
     }
 

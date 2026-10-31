@@ -1,25 +1,101 @@
 import SwiftUI
 
-/// The window: the library's browser, or when a model is open, its canvas, with a way back.
+/// The window: the library's browser, or the canvas of the model in front, with the open models' tabs above.
 struct LibraryView: View {
     @Bindable var library: Library
     @Environment(\.undoManager) private var undoManager
 
     var body: some View {
-        Group {
-            if let open = library.open {
-                ModelEditor(open: open) { library.selection = nil }
-                    .id(ObjectIdentifier(open))
-            } else {
-                LibraryBrowser(library: library)
+        VStack(spacing: 0) {
+            if !library.tabs.isEmpty { TabBar(library: library) }
+            Group {
+                if let open = library.open {
+                    ModelEditor(open: open) { library.selection = nil }
+                        .id(ObjectIdentifier(open))
+                } else {
+                    LibraryBrowser(library: library)
+                }
             }
         }
-        // Undo belongs to the model it was done in, renamed or not.
+        // Undo belongs to the model it was done in, renamed or not. The window has one undo stack, so it's cleared
+        // when another tab comes to the front.
+        // ponytail: one stack per window; give each tab its own UndoManager if losing undo on a switch bothers people.
         .onChange(of: library.open.map(ObjectIdentifier.init)) { undoManager?.removeAllActions() }
         .alert("Something Went Wrong", isPresented: Binding { library.failure != nil } set: { if !$0 { library.failure = nil } }) {
             Button("OK") { library.failure = nil }
         } message: {
             Text(library.failure ?? "")
+        }
+    }
+}
+
+/// The open models, one tab each, as Safari's tab bar has them: the one in front is raised, and each closes with its
+/// × (shown on hover, or always on the one in front) or ⌘W.
+private struct TabBar: View {
+    let library: Library
+
+    static let height: CGFloat = 30
+    static let inset: CGFloat = 3
+    /// A tab's corners, concentric with the bar's inset.
+    static let cornerRadius: CGFloat = 7
+
+    var body: some View {
+        HStack(spacing: Self.inset) {
+            ForEach(library.tabs, id: \.url) { tab in
+                Tab(tab: tab, isFront: tab === library.open, select: { library.selection = tab.url },
+                    close: { library.close(tab) })
+            }
+            Button("Show All Data Models", systemImage: "plus") { library.selection = nil }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .frame(width: Self.height - 2 * Self.inset)
+                .help("All data models, to open another (⌘↑)")
+        }
+        .padding(Self.inset)
+        .frame(height: Self.height)
+        // Grayer than the tab in front, so it stands out.
+        .background(Color(nsColor: .underPageBackgroundColor))
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private struct Tab: View {
+        let tab: OpenModel
+        let isFront: Bool
+        let select: () -> Void
+        let close: () -> Void
+        @State private var isHovered = false
+
+        var body: some View {
+            ZStack {
+                Text(tab.name)
+                    .font(.callout.weight(isFront ? .medium : .regular))
+                    .foregroundStyle(isFront ? .primary : .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    // Clear of the × at either side, so it stays centered.
+                    .padding(.horizontal, 22)
+                HStack {
+                    Button("Close Tab", systemImage: "xmark", action: close)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .font(.caption2.weight(.semibold))
+                        .opacity(isFront || isHovered ? 1 : 0)
+                        .help("Close tab (⌘W)")
+                    Spacer()
+                }
+                .padding(.leading, 6)
+            }
+            // Sharing the bar's width equally, as Safari's tabs do.
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                RoundedRectangle(cornerRadius: TabBar.cornerRadius)
+                    .fill(isFront ? AnyShapeStyle(.background) : isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+                    .shadow(color: .black.opacity(isFront ? 0.12 : 0), radius: 1, y: 0.5)
+            }
+            .contentShape(.rect)
+            .onTapGesture(perform: select)
+            .onHover { isHovered = $0 }
+            .help(tab.name)
         }
     }
 }
@@ -54,7 +130,7 @@ struct ModelEditor: View {
     let open: OpenModel
     /// Back to the library.
     let close: () -> Void
-    @State private var canvas = CanvasController()
+    private var canvas: CanvasController { open.canvas }
     @State private var showsHistory = false
     @State private var showsSharing = false
     /// Where the canvas is in the window: it reaches up under the toolbar, so its views' origins aren't its own.

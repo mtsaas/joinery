@@ -14,6 +14,9 @@ final class OpenModel {
     @ObservationIgnored var onChange: (([Replica.Op]) -> Void)?
     /// The window's, set by the editor, for registering changes.
     @ObservationIgnored weak var undoManager: UndoManager?
+    /// Where it's scrolled and zoomed to, and what's selected: kept with it, so they're as they were when its tab
+    /// comes back to the front.
+    @ObservationIgnored let canvas = CanvasController()
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
     private(set) var history: History
     /// When an AI assistant last changed it, to save a version before the first of each spell of changes.
