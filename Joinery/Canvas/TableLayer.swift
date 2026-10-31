@@ -11,6 +11,29 @@ import SwiftUI
 ///
 /// Each table is a grid like a small spreadsheet: a name header, then a row per column with its key, name and type.
 /// The cell being edited gets a `CellEditor` laid over it in the same place and type.
+/// Glass under the tables, as the tabs are: the wires and dots behind them diffused. In the view's points.
+struct TableGlass: View {
+    let frames: [CGRect]
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        Color.clear
+            .glassEffect(.regular, in: Cards(frames: frames, cornerRadius: cornerRadius))
+            .allowsHitTesting(false)
+    }
+
+    private struct Cards: Shape {
+        let frames: [CGRect]
+        let cornerRadius: CGFloat
+
+        func path(in rect: CGRect) -> Path {
+            var path = Path()
+            for frame in frames { path.addRoundedRect(in: frame, cornerSize: CGSize(width: cornerRadius, height: cornerRadius)) }
+            return path
+        }
+    }
+}
+
 struct TableLayer: View {
     let tables: [Table]
     /// Where tables being dragged have got to, not yet saved.
@@ -34,9 +57,15 @@ struct TableLayer: View {
     var renaming: Table.ID? = nil
     /// Comparing two versions: what changed, marked on its tables and rows.
     var diff: SchemaDiff? = nil
+    /// Over `TableGlass`: the cards a little see-through, its diffused canvas showing through them. Elsewhere, as in
+    /// a thumbnail, they're solid.
+    var isOnGlass = false
 
     /// How faint what's out of focus is.
     static let fadedOpacity = 0.22
+    /// How solid a card's body and its header are over the glass: the glass's diffused canvas shows through the rest.
+    static let glassBodyOpacity = 0.25
+    static let glassHeaderOpacity = 0.7
 
     @Environment(\.displayScale) private var displayScale
 
@@ -105,15 +134,30 @@ struct TableLayer: View {
         let radius = Metrics.cornerRadius
         let cards = visible.map { Path(roundedRect: $0.frame, cornerRadius: radius, style: .circular) }
 
-        // The cards and their shadows, all at once. Filters work in the view's points, so this layer is scaled inside.
-        context.drawLayer { layer in
-            layer.addFilter(.shadow(color: .black.opacity(0.09), radius: 14 * zoom, y: 6 * zoom))
-            layer.addFilter(.shadow(color: .black.opacity(0.07), radius: 1.5 * zoom, y: 0.5 * zoom))
-            layer.translateBy(x: viewOffset.x, y: viewOffset.y)
-            layer.scaleBy(x: zoom, y: zoom)
-            var all = Path()
-            for card in cards { all.addPath(card) }
-            layer.fill(all, with: .color(Theme.card))
+        var all = Path()
+        for card in cards { all.addPath(card) }
+        if isOnGlass {
+            // Tables below cut away under these, so through them is only the glass, not another table.
+            var cut = context
+            cut.blendMode = .destinationOut
+            cut.translateBy(x: viewOffset.x, y: viewOffset.y)
+            cut.scaleBy(x: zoom, y: zoom)
+            cut.fill(all, with: .color(.black))
+        }
+        // The cards' shadows, all at once, with the cards cut out of them: the cards are glass, and would show them
+        // through. Filters work in the view's points, so these layers are scaled inside.
+        context.drawLayer { shadows in
+            shadows.drawLayer { layer in
+                layer.addFilter(.shadow(color: .black.opacity(0.09), radius: 14 * zoom, y: 6 * zoom))
+                layer.addFilter(.shadow(color: .black.opacity(0.07), radius: 1.5 * zoom, y: 0.5 * zoom))
+                layer.translateBy(x: viewOffset.x, y: viewOffset.y)
+                layer.scaleBy(x: zoom, y: zoom)
+                layer.fill(all, with: .color(.black))
+            }
+            shadows.blendMode = .destinationOut
+            shadows.translateBy(x: viewOffset.x, y: viewOffset.y)
+            shadows.scaleBy(x: zoom, y: zoom)
+            shadows.fill(all, with: .color(.black))
         }
 
         context.translateBy(x: viewOffset.x, y: viewOffset.y)
@@ -174,7 +218,11 @@ struct TableLayer: View {
             }
         }
 
-        for (color, path) in headers { context.fill(path, with: .color(color.headerFill)) }
+        // The cards and their headers, on glass a light tint over it, its diffused canvas showing through; headers more,
+        // to keep their color. Their lines and text, over them, are solid.
+        let body = isOnGlass ? Self.glassBodyOpacity : 1, top = isOnGlass ? Self.glassHeaderOpacity : 1
+        context.fill(all, with: .color(Theme.card.opacity(body)))
+        for (color, path) in headers { context.fill(path, with: .color(color.headerFill.opacity(top))) }
         for (change, path) in tints { context.fill(path, with: .color(change.color.opacity(0.16))) }
         context.fill(highlights, with: .color(Color.accentColor.opacity(0.14)))
         context.fill(lines, with: .color(Theme.cardBorder))

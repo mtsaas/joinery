@@ -69,6 +69,11 @@ struct CanvasView: View {
                            Set(model.tables.filter { focused.contains($0.id) }.compactMap(\.group))
                        })
             wireLayer(routing, colors: colors)
+            TableGlass(frames: routedModel.tables.map { table in
+                let offset = canvas.tableOffsets[table.id] ?? .zero
+                let frame = Metrics.frame(of: table).offsetBy(dx: offset.x, dy: offset.y)
+                return CGRect(origin: frame.origin * canvas.zoom + canvas.offset, size: frame.size * canvas.zoom)
+            }, cornerRadius: Metrics.cornerRadius * canvas.zoom)
             tableLayer(socketColors: socketColors, foreignKeys: foreignKeys)
             copyMoreAnchor
             ForEach(model.zipTies) { tie in
@@ -889,7 +894,8 @@ struct CanvasView: View {
                           viewSize: canvas.viewSize, selected: selected, cursor: canvas.cell, targetColumn: targetColumn,
                           foreignKeys: foreignKeys, socketColors: socketColors, hoveredSocket: hoveredSocket, layouts: textLayouts,
                           focused: focusedTables,
-                          renaming: canvas.isEditingCell && canvas.cell?.row == .header ? canvas.cell?.table : nil, diff: diff)
+                          renaming: canvas.isEditingCell && canvas.cell?.row == .header ? canvas.cell?.table : nil, diff: diff,
+                          isOnGlass: true)
             .contentShape(.rect)
             .gesture(surfaceGesture)
             .onContinuousHover { phase in
