@@ -2127,18 +2127,19 @@ private final class RoutingCache {
     /// The routing last worked out.
     var current: Routing? { routing }
 
-    private var colors: (model: DataModel, colors: [Relationship.ID: Color])?
+    private var colors: (model: DataModel, light: Palette, dark: Palette, colors: [Relationship.ID: Color])?
 
     /// Each wire's color, the color of the table it references, and each port's bus's, worked out again only when the
-    /// model changes.
+    /// model or the theme changes.
     func wireColors(for model: DataModel) -> [Relationship.ID: Color] {
-        if let colors, colors.model == model { return colors.colors }
+        let (light, dark) = (Themes.shared.light, Themes.shared.dark)
+        if let colors, colors.model == model, colors.light == light, colors.dark == dark { return colors.colors }
         let locations = model.columnLocations
         var wireColors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
                                     uniquingKeysWith: { first, _ in first })
         // A port's bus, by its ID, is its column's table's color, as the wires to that column are.
         for port in model.groups.flatMap(\.ports) { wireColors[port.id] = port.column.flatMap { locations[$0]?.table.color.color } }
-        colors = (model, wireColors)
+        colors = (model, light, dark, wireColors)
         return wireColors
     }
 

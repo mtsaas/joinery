@@ -1,20 +1,26 @@
 import SwiftUI
 
+/// The canvas's colors, from the palettes chosen in Settings ▸ Themes (see `Themes`).
 enum Theme {
-    static let canvas = Color(light: .white, dark: NSColor(white: 0.118, alpha: 1))
-    static let card = Color(light: .white, dark: NSColor(white: 0.172, alpha: 1))
-    static let cardBorder = Color(light: NSColor(white: 0, alpha: 0.1), dark: NSColor(white: 1, alpha: 0.1))
-    static let gridDot = Color(light: NSColor(white: 0, alpha: 0.13), dark: NSColor(white: 1, alpha: 0.11))
-    static let tie = Color(light: NSColor(white: 0.56, alpha: 1), dark: NSColor(white: 0.64, alpha: 1))
-    static let tieHovered = Color(light: NSColor(white: 0.36, alpha: 1), dark: NSColor(white: 0.86, alpha: 1))
+    static var canvas: Color { pair(\.canvas) }
+    static var card: Color { pair(\.card) }
+    static var cardBorder: Color { pair(\.cardBorder) }
+    static var gridDot: Color { pair(\.gridDot) }
+    static var tie: Color { pair(\.tie) }
+    static var tieHovered: Color { pair(\.tieHovered) }
     static let stroke = Color.red
     /// How much darker a selected wire's outline is than the wire.
     static let selectedWireDarkening = 0.2
     /// How much darker a header's edge is than the header.
     static let headerEdgeDarkening = 0.07
-    static let socket = Color(light: NSColor(white: 0, alpha: 0.28), dark: NSColor(white: 1, alpha: 0.3))
+    static var socket: Color { pair(\.socket) }
     /// Lines showing a dragged table lining up with another: there, but quiet.
     static let guide = Color.accentColor.opacity(0.45)
+
+    /// Read now, so a view drawing it redraws when the choice changes.
+    private static func pair(_ color: KeyPath<Palette, NSColor>) -> Color {
+        Color(light: Themes.shared.light[keyPath: color], dark: Themes.shared.dark[keyPath: color])
+    }
 }
 
 extension TableColor {
@@ -26,20 +32,7 @@ extension TableColor {
     var headerBorder: Color { headerFill.mix(with: .black, by: Theme.headerEdgeDarkening) }
 
     var color: Color {
-        switch self {
-        case .blue: .blue
-        case .purple: .purple
-        case .pink: .pink
-        case .red: .red
-        case .orange: .orange
-        case .yellow: .yellow
-        case .green: .green
-        case .teal: .teal
-        case .indigo: .indigo
-        case .mint: .mint
-        case .cyan: .cyan
-        case .brown: .brown
-        }
+        Color(light: Themes.shared.light.color(self), dark: Themes.shared.dark.color(self))
     }
 }
 
