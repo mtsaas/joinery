@@ -46,10 +46,12 @@ enum Panel {
     static let tabInset: CGFloat = 4
     /// Grayer than any surface on it in light mode, and darker in dark, so they stand off it.
     static let color = Color(light: NSColor(white: 0.9, alpha: 1), dark: NSColor(white: 0.065, alpha: 1))
-    /// The window's own corners, at its edge: measured from a snapshot, on macOS 26 with the title bar hidden.
-    static let windowCornerRadius: CGFloat = 16
-    /// Concentric with the window's: its radius less the gap between them.
-    static let surfaceCornerRadius = windowCornerRadius - inset
+    /// The height of the capsules of controls floating along a surface's top.
+    static let controlHeight: CGFloat = 36
+    /// The gap between those controls and the surface's edges.
+    static let controlInset = inset
+    /// Concentric with the capsules in its top corners: their radius plus the gap between them.
+    static let surfaceCornerRadius = controlHeight / 2 + controlInset
 }
 
 extension View {
@@ -274,7 +276,7 @@ struct ModelEditor: View {
                         .disabled(isComparing)
                     }
                 }
-                .padding(Panel.inset)
+                .padding(Panel.controlInset)
             }
             .overlay(alignment: .top) {
                 if let notice = open.notice {
@@ -338,8 +340,6 @@ struct ModelEditor: View {
 private struct ControlGroupGlass<Content: View>: View {
     @ViewBuilder let content: Content
 
-    static var height: CGFloat { 36 }
-
     var body: some View {
         HStack(spacing: 2) { content }
             .labelStyle(.iconOnly)
@@ -349,7 +349,7 @@ private struct ControlGroupGlass<Content: View>: View {
             .imageScale(.large)
             .controlSize(.large)
             .padding(.horizontal, 10)
-            .frame(height: Self.height)
+            .frame(height: Panel.controlHeight)
             .glassEffect(.regular, in: .capsule)
     }
 }
