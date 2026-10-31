@@ -285,6 +285,7 @@ private struct ModelTab: View {
     let peek: () -> Void
     @State private var preview: ModelPreviews.Preview?
     @State private var layouts = TextLayouts()
+    @State private var isHovered = false
 
     /// The icon as far in from the pill's leading end as from its top and bottom, so it's concentric with the pill.
     private var iconInset: CGFloat { (height - ModelIcon.size.height) / 2 }
@@ -301,6 +302,9 @@ private struct ModelTab: View {
                     // As far in from the pill's trailing end as the icon is from its leading end: a circle the
                     // icon's height, concentric with the pill's end.
                     CloseButton(size: ModelIcon.size.height, action: close)
+                        // On the tab in front, or while the pointer is on one; its space kept, so the name does not shift.
+                        .opacity(isFront || isHovered ? 1 : 0)
+                        .allowsHitTesting(isFront || isHovered)
                 }
                 .padding(.horizontal, iconInset)
                 .frame(height: height)
@@ -317,12 +321,14 @@ private struct ModelTab: View {
                 }
             }
         }
+        .onHover { isHovered = $0 }
+        .animation(.smooth(duration: 0.15), value: isHovered)
         // Laid out and routed once each time they peek, not every frame of the row growing.
         .onChange(of: isPeeking, initial: true) { if isPeeking { preview = ModelPreviews.make(tab.model) } }
     }
 }
 
-/// A tab's ×: always there, a circle behind it on hover.
+/// A tab's ×, on the tab in front or a hovered one, a circle behind it when the × itself is hovered.
 private struct CloseButton: View {
     let size: CGFloat
     let action: () -> Void
