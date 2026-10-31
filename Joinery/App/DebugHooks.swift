@@ -14,7 +14,7 @@ import SwiftUI
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
 ///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection), `place <x> <y>` (puts the selected ties there),
 ///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>|shift+cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `feedback-on`, `handle <n> <dx> <dy>`, `feedback-note <text>`, `feedback-save`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point), `focus <table> <zoom>` (centers on that table), `shake <table> <seconds>` (drags it about and prints frame stats), `generate <tables> <foreign keys>` (replaces the model with a made-up one; see `scripts/scale-test.sh`), `quit`, `select-ties`, `group <table> <table>…` (groups them, as ⌘G), `groups` (prints them), `hold-drag <table> <dx> <dy>` (drags it that far in view points and holds), `wheel` (prints it), `wheel-pick <direction>` (east, northWest, …), `wheel-color <color>`, `ties` (prints them),
-///   `end-review` (as End Comparison), `theme <name>` (chooses that palette), `history [index]` (opens version history at that version), `wait <seconds>`.
+///   `end-review` (as End Comparison), `theme <name>` (chooses that palette), `open-model <name>` (in a tab), `show-library` (goes home), `peek [seconds]` (toggles the tabs' previews, animated over that long), `next-tab`, `window` (prints its title bar), `tabs` (prints them, and the zoom and undo state of the one in front),`history [index]` (opens version history at that version), `wait <seconds>`.
 @MainActor
 enum DebugHooks {
     private static let environment = ProcessInfo.processInfo.environment
@@ -63,7 +63,10 @@ enum DebugHooks {
             unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0)?.takeRetainedValue()
         }
         var windows = NSApp.windows.filter(\.isVisible).sorted { $0.orderedIndex > $1.orderedIndex }
-        if environment["JOINERY_SETTINGS"] != nil { windows.removeAll { $0.title == "Joinery" } }
+        // Settings rather than the main window, the largest, whatever it's titled.
+        if environment["JOINERY_SETTINGS"] != nil, let main = windows.max(by: { $0.frame.width < $1.frame.width }) {
+            windows.removeAll { $0 === main }
+        }
         guard let main = windows.max(by: { $0.frame.width < $1.frame.width }), let base = image(main) else { return print("snapshot failed") }
         // Wide enough for what hangs over its edges, as a popover by the toolbar can.
         let over = windows.filter { $0 !== main && $0.frame.intersects(main.frame) }
@@ -228,6 +231,52 @@ enum DebugHooks {
             case "library":
                 let library = Library.shared
                 print("library open: \(library.open?.name ?? "none"), recents: \(library.recents.map(Library.name(of:)).prefix(3))")
+            case "open-model" where words.count > 1:
+                let library = Library.shared
+                let name = words.dropFirst().joined(separator: " ")
+                library.selection = library.allModels.first { Library.name(of: $0) == name }
+            case "window":
+                // Where the window's own buttons are, and how tall its title bar is.
+                if let window = NSApp.windows.first(where: { $0.title != "" && $0.isVisible }) {
+                    let close = window.standardWindowButton(.closeButton)
+                    print("window: close \(close.map { "\($0.frame) hidden \($0.isHidden) in \($0.superview?.frame ?? .zero)" } ?? "none"),",
+                          "title bar \(window.frame.height - window.contentLayoutRect.height)")
+                    var view = close?.superview
+                    while let v = view { print("  \(type(of: v)) hidden \(v.isHidden) alpha \(v.alphaValue)"); view = v.superview }
+                }
+            case "peek":
+                // Slower with a duration, so a burst of snapshots can catch it moving.
+                withAnimation(.smooth(duration: numbers.first ?? 0.3)) { Library.shared.isPeeking.toggle() }
+            case "show-library":
+                // Home, as the home button goes.
+                Library.shared.selection = nil
+            case "next-tab":
+                Library.shared.showTab(offset: 1)
+            case "window-click" where numbers.count == 2 || numbers.count == 4:
+                // A click at a window point (top-left origin), through AppKit's own routing, title bar and all; with
+                // two more numbers, a drag that far from it, in steps.
+                guard let window = NSApp.windows.first(where: { $0.title != "" && $0.isVisible }),
+                      let height = window.contentView?.bounds.height else { break }
+                let start = NSPoint(x: numbers[0], y: height - numbers[1])
+                let by = numbers.count == 4 ? CGSize(width: numbers[2], height: -numbers[3]) : .zero
+                let frame = window.frame
+                var steps: [(NSEvent.EventType, NSPoint)] = [(.leftMouseDown, start)]
+                if by != .zero { steps += (1...10).map { (.leftMouseDragged, start + CGPoint(x: by.width, y: by.height) * (CGFloat($0) / 10)) } }
+                steps.append((.leftMouseUp, steps.last!.1))
+                for (type, point) in steps {
+                    if let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                                                      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                      context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        window.sendEvent(event)
+                    }
+                    try? await Task.sleep(for: .milliseconds(30))
+                }
+                if by != .zero { print("window-click: window moved", window.frame.origin - frame.origin) }
+            case "tabs":
+                let library = Library.shared
+                print("tabs:", library.tabs.map { $0 === library.open ? "[\($0.name)]" : $0.name }.joined(separator: " "),
+                      "zoom:", library.open.map { String(format: "%.2f", $0.canvas.zoom) } ?? "-",
+                      "can undo:", library.open?.undoManager.canUndo ?? false, "can redo:", library.open?.undoManager.canRedo ?? false)
             case "mcp" where words.count > 2:
                 // An assistant's tool call, as the MCP server would make it: "mcp create_tables {json}".
                 let json = words.dropFirst(2).joined(separator: " ")
@@ -428,12 +477,12 @@ enum DebugHooks {
             case "share-panel":
                 NotificationCenter.default.post(name: .showSharing, object: nil)
             case "join-panel":
-                // Back to the library, with the Join popover open.
+                // Home, with the Join popover open.
                 Library.shared.selection = nil
                 try? await Task.sleep(for: .seconds(0.5))
                 NotificationCenter.default.post(name: .showJoin, object: nil)
             case "undo", "redo":
-                // The window's own undo, as ⌘Z and ⇧⌘Z would.
+                // The model in front's undo, as ⌘Z and ⇧⌘Z would.
                 let manager = Library.shared.open?.undoManager
                 words[0] == "undo" ? manager?.undo() : manager?.redo()
                 print("\(words[0]): can undo \(manager?.canUndo ?? false), can redo \(manager?.canRedo ?? false)")

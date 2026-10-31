@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// The library, as Freeform shows its boards: All Models, Recents, Favorites and the collections in the sidebar, and
-/// the models in whichever is chosen as a grid of previews or a list, searchable by model or table name. Opening one
-/// gives the window over to it.
+/// Home: the library, as Freeform shows its boards. All Models, Recents, Favorites and the collections in a sidebar on
+/// the back panel, under the tabs; on a surface beside it the models in whichever is chosen, as a grid of previews or a
+/// list, searchable by model or table name. Opening one opens a tab for it. The home button left of the tabs comes
+/// back here.
 struct LibraryBrowser: View {
     @Bindable var library: Library
 
@@ -16,7 +17,10 @@ struct LibraryBrowser: View {
     }
 
     @State private var scope = Scope.all
-    @State private var columns = NavigationSplitViewVisibility.all
+    /// Dragged wider or narrower by the gap between it and the surface.
+    @AppStorage("sidebarWidth") private var sidebarWidth: Double = 220
+    @State private var widthAtDragStart: Double?
+    static let sidebarWidths = 180.0...320.0
     @AppStorage("libraryLayout") private var layout = Layout.grid
     @State private var search = ""
     /// The model picked out with a click, to open with Return.
@@ -29,14 +33,20 @@ struct LibraryBrowser: View {
     @State private var showsJoin = false
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
+        // The sidebar on the back panel itself, not a floating one over it, as the tabs are; the surface beside it.
+        HStack(spacing: 0) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 320)
-        } detail: {
-            content
+                .padding(.leading, Panel.inset)
+                .padding(.bottom, Panel.inset)
+                .frame(width: sidebarWidth)
+                .overlay(alignment: .trailing) { resizeHandle }
+            VStack(spacing: 0) {
+                controls
+                content
+            }
+            .background(Panel.homeColor)
+            .surface()
         }
-        .searchable(text: $search, placement: .toolbar, prompt: "Search")
-        .toolbar(removing: .title)
         .confirmationDialog("Move “\(collectionToTrash?.name ?? "")” to the Trash?", isPresented: Binding {
             collectionToTrash != nil
         } set: { if !$0 { collectionToTrash = nil } }, presenting: collectionToTrash) { collection in
@@ -70,17 +80,79 @@ struct LibraryBrowser: View {
             }
         }
         .listStyle(.sidebar)
-        .toolbar {
-            ToolbarItem {
-                Button("New Collection", systemImage: "folder.badge.plus") {
-                    if let url = library.newCollection() {
-                        scope = .collection(url)
-                        renaming = url
-                    }
+        .scrollContentBackground(.hidden)
+        .safeAreaInset(edge: .bottom, alignment: .leading) {
+            Button("New Collection", systemImage: "folder.badge.plus") {
+                if let url = library.newCollection() {
+                    scope = .collection(url)
+                    renaming = url
                 }
-                .help("New collection (⇧⌘N)")
             }
+            .buttonStyle(.borderless)
+            .help("New collection (⇧⌘N)")
+            .padding(12)
         }
+    }
+
+    /// Along the surface's top: what's shown, and how many, then the controls at the trailing end, as Freeform's
+    /// toolbar has them. In glass, as the canvas's controls are, and as far in from the surface's corner, so its
+    /// corners are concentric with theirs.
+    private var controls: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.tint)
+                .lineLimit(1)
+            // Level with the models' leading edge below.
+            .padding(.leading, Self.contentInset - Panel.controlInset)
+            Spacer(minLength: 0)
+            ControlGroupGlass {
+                Button("Join", systemImage: "person.2.badge.plus") { showsJoin.toggle() }
+                    .help("Join a data model someone is sharing, from their link")
+                    .popover(isPresented: $showsJoin, arrowEdge: .bottom) { JoinPanel() }
+                Button("New Data Model", systemImage: "plus") { library.newModel(in: selectedCollection) }
+                    .help("New data model (⌘N)")
+            }
+            ControlGroupGlass {
+                layoutToggle(.grid, "Grid", systemImage: "square.grid.2x2")
+                layoutToggle(.list, "List", systemImage: "list.bullet")
+            }
+            .help("Show as a grid or a list")
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search", text: $search)
+                    .textFieldStyle(.plain)
+                if !search.isEmpty {
+                    Button("Clear", systemImage: "xmark.circle.fill") { search = "" }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(width: 240, height: Panel.controlHeight)
+            .glassEffect(.regular, in: .capsule)
+        }
+        .padding(Panel.controlInset)
+    }
+
+    /// One of the grid and list buttons: on while it's the layout shown.
+    private func layoutToggle(_ shown: Layout, _ title: String, systemImage: String) -> some View {
+        Toggle(title, systemImage: systemImage, isOn: Binding { layout == shown } set: { if $0 { layout = shown } })
+    }
+
+    /// The gap between the sidebar and the surface: drag it to make the sidebar wider or narrower.
+    private var resizeHandle: some View {
+        Color.clear
+            .frame(width: Panel.inset)
+            .contentShape(.rect)
+            .onHover { if $0 { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() } }
+            .gesture(DragGesture(coordinateSpace: .global).onChanged { drag in
+                let start = widthAtDragStart ?? sidebarWidth
+                widthAtDragStart = start
+                sidebarWidth = min(max(start + drag.translation.width, Self.sidebarWidths.lowerBound), Self.sidebarWidths.upperBound)
+            }.onEnded { _ in widthAtDragStart = nil })
+            .offset(x: Panel.inset)
     }
 
     private func smartRow(_ scope: Scope, _ title: String, symbol: String, color: Color, count: Int) -> some View {
@@ -116,7 +188,7 @@ struct LibraryBrowser: View {
         .tag(Scope.collection(collection.url))
         .dropDestination(for: URL.self) { urls, _ in move(urls, into: collection.url) }
         .contextMenu {
-            Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: collection.url) }
+            Button("New Data Model", systemImage: "plus") { library.newModel(in: collection.url) }
             Button("Rename", systemImage: "pencil") { renaming = collection.url }
             Button("Show in Finder", systemImage: "finder") { library.showInFinder(collection.url) }
             Divider()
@@ -167,48 +239,31 @@ struct LibraryBrowser: View {
         previews.preview(of: url, modified: modified(url))
     }
 
-    private func header(count: Int) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title)
-                .font(.system(size: 30, weight: .bold))
-                .foregroundStyle(.tint)
-            Text(count == 1 ? "1 Data Model" : "\(count) Data Models")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 28)
-        .padding(.top, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
+    /// The models' gap from the surface's sides.
+    static let contentInset: CGFloat = 28
 
     private var content: some View {
         let shown = shown
         return Group {
             if shown.isEmpty {
-                VStack(spacing: 0) {
-                    header(count: 0)
-                    emptyState
-                        .frame(maxHeight: .infinity)
-                }
+                emptyState
+                    .frame(maxHeight: .infinity)
             } else if layout == .grid {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 18) {
-                        header(count: shown.count)
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 196, maximum: 240), spacing: 20, alignment: .top)],
                                   alignment: .leading, spacing: 20) {
                             ForEach(shown, id: \.self) { card($0) }
                         }
-                        .padding(.horizontal, 28)
+                        .padding(.horizontal, Self.contentInset)
+                        .padding(.top, 8)
                         .padding(.bottom, 20)
                     }
                 }
                 // A click on the background lets go of the highlighted model.
                 .background { Color.clear.contentShape(.rect).onTapGesture { highlighted = nil } }
             } else {
-                VStack(alignment: .leading, spacing: 14) {
-                    header(count: shown.count)
-                    list(shown)
-                }
+                list(shown)
             }
         }
         .focusable()
@@ -222,27 +277,6 @@ struct LibraryBrowser: View {
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: .showJoin)) { _ in showsJoin = true }
         #endif
-        .toolbar {
-            // At the trailing end, with the search, as in Freeform.
-            ToolbarSpacer(.flexible)
-            ToolbarItem(placement: .primaryAction) {
-                Button("Join", systemImage: "person.2.badge.plus") { showsJoin.toggle() }
-                    .help("Join a data model someone is sharing, from their link")
-                    .popover(isPresented: $showsJoin, arrowEdge: .bottom) { JoinPanel() }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: selectedCollection) }
-                    .help("New data model (⌘N)")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Picker("View", selection: $layout) {
-                    Label("Grid", systemImage: "square.grid.2x2").tag(Layout.grid)
-                    Label("List", systemImage: "list.bullet").tag(Layout.list)
-                }
-                .pickerStyle(.segmented)
-                .help("Show as a grid or a list")
-            }
-        }
     }
 
     /// Where a new model goes: the collection being shown.
@@ -425,17 +459,17 @@ private struct ModelCard: View {
     }
 }
 
-/// A model in miniature: its tables and wires, fitted to the space, drawn as on the canvas.
-private struct ModelThumbnail: View {
+/// A model in miniature: its tables and wires, drawn as on the canvas, fitted to the space, or as a canvas `view` shows
+/// them, scaled down.
+struct ModelThumbnail: View {
     let preview: ModelPreviews.Preview?
     let layouts: TextLayouts
+    /// A canvas's zoom, scroll and size, to show what it does; the whole model, fitted, without.
+    var view: (zoom: CGFloat, offset: CGPoint, size: CGSize)? = nil
 
     var body: some View {
         GeometryReader { geometry in
-            if let preview, let bounds = preview.bounds {
-                let inset: CGFloat = 14
-                let zoom = min((geometry.size.width - inset * 2) / bounds.width, (geometry.size.height - inset * 2) / bounds.height, 0.6)
-                let offset = CGPoint(x: geometry.size.width / 2 - bounds.midX * zoom, y: geometry.size.height / 2 - bounds.midY * zoom)
+            if let preview, let (zoom, offset) = placement(of: preview, in: geometry.size) {
                 ZStack {
                     GroupLayer(groups: preview.model.groups.compactMap { group in preview.model.frame(of: group.id).map { (group, $0) } },
                                zoom: zoom, viewOffset: offset, selected: [])
@@ -455,6 +489,19 @@ private struct ModelThumbnail: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
+
+    private func placement(of preview: ModelPreviews.Preview, in size: CGSize) -> (zoom: CGFloat, offset: CGPoint)? {
+        if let view, view.size.width > 0, view.size.height > 0 {
+            // Filling the space, centered, cutting off what's over at the sides or top and bottom.
+            let scale = max(size.width / view.size.width, size.height / view.size.height)
+            return (view.zoom * scale, CGPoint(x: view.offset.x * scale + (size.width - view.size.width * scale) / 2,
+                                               y: view.offset.y * scale + (size.height - view.size.height * scale) / 2))
+        }
+        guard let bounds = preview.bounds else { return nil }
+        let inset: CGFloat = 14
+        let zoom = min((size.width - inset * 2) / bounds.width, (size.height - inset * 2) / bounds.height, 0.6)
+        return (zoom, CGPoint(x: size.width / 2 - bounds.midX * zoom, y: size.height / 2 - bounds.midY * zoom))
+    }
 }
 
 /// Each model read and routed once for its preview, again only when its file changes.
@@ -471,21 +518,24 @@ final class ModelPreviews {
 
     func preview(of url: URL, modified: Date) -> Preview? {
         if let cached = previews[url], cached.modified == modified { return cached.preview }
-        let preview = (try? DataModel(contentsOf: url)).map { model in
-            let routing = Routing(model: model)
-            let locations = model.columnLocations
-            let colors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
-                                    uniquingKeysWith: { first, _ in first })
-            return Preview(
-                model: model,
-                wires: model.relationships.compactMap { r in
-                    routing.routes[r.id].map { (Path(smoothing: $0.points), colors[r.id] ?? .gray) }
-                },
-                foreignKeys: Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
-                                        uniquingKeysWith: { first, _ in first }),
-                bounds: model.bounds)
-        }
+        let preview = (try? DataModel(contentsOf: url)).map(Self.make)
         previews[url] = (modified, preview)
         return preview
+    }
+
+    /// A model's preview, routed afresh.
+    static func make(_ model: DataModel) -> Preview {
+        let routing = Routing(model: model)
+        let locations = model.columnLocations
+        let colors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
+                                uniquingKeysWith: { first, _ in first })
+        return Preview(
+            model: model,
+            wires: model.relationships.compactMap { r in
+                routing.routes[r.id].map { (Path(smoothing: $0.points), colors[r.id] ?? .gray) }
+            },
+            foreignKeys: Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
+                                    uniquingKeysWith: { first, _ in first }),
+            bounds: model.bounds)
     }
 }

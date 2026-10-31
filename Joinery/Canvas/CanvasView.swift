@@ -69,6 +69,11 @@ struct CanvasView: View {
                            Set(model.tables.filter { focused.contains($0.id) }.compactMap(\.group))
                        })
             wireLayer(routing, colors: colors)
+            TableGlass(frames: routedModel.tables.map { table in
+                let offset = canvas.tableOffsets[table.id] ?? .zero
+                let frame = Metrics.frame(of: table).offsetBy(dx: offset.x, dy: offset.y)
+                return CGRect(origin: frame.origin * canvas.zoom + canvas.offset, size: frame.size * canvas.zoom)
+            }, cornerRadius: Metrics.cornerRadius * canvas.zoom)
             tableLayer(socketColors: socketColors, foreignKeys: foreignKeys)
             copyMoreAnchor
             ForEach(model.zipTies) { tie in
@@ -124,6 +129,18 @@ struct CanvasView: View {
                 .padding(.vertical, 8)
                 .glassEffect()
                 .padding(.top, 64)
+            }
+        }
+        // A click anywhere off the table designer puts it away, as a popover goes: what's being typed in it is kept
+        // first, since its fields keep their text when they lose focus.
+        .overlay {
+            if canvas.designing != nil {
+                Color.clear
+                    .contentShape(.rect)
+                    .onTapGesture {
+                        NSApp.keyWindow?.makeFirstResponder(nil)
+                        DispatchQueue.main.async { withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil } }
+                    }
             }
         }
         .overlay(alignment: .trailing) {
@@ -877,7 +894,8 @@ struct CanvasView: View {
                           viewSize: canvas.viewSize, selected: selected, cursor: canvas.cell, targetColumn: targetColumn,
                           foreignKeys: foreignKeys, socketColors: socketColors, hoveredSocket: hoveredSocket, layouts: textLayouts,
                           focused: focusedTables,
-                          renaming: canvas.isEditingCell && canvas.cell?.row == .header ? canvas.cell?.table : nil, diff: diff)
+                          renaming: canvas.isEditingCell && canvas.cell?.row == .header ? canvas.cell?.table : nil, diff: diff,
+                          isOnGlass: true)
             .contentShape(.rect)
             .gesture(surfaceGesture)
             .onContinuousHover { phase in
@@ -999,13 +1017,16 @@ struct CanvasView: View {
         case port(GroupPort.ID)
         /// Drawing a wire out of a port's inside or outside socket.
         case portSocket(GroupPort.ID, isOutside: Bool, at: CGPoint)
-        /// On the + by a group's edge: a new port there.
+        /// On the + by a group's edge: a click is a new port there, a drag moves the group.
         case newPort(TableGroup.ID, side: Side4, along: CGFloat)
         case table(Table)
         /// On a header's right edge: dragging the table wider or narrower, or a double-click to fit it to its text.
         case resize(Table)
-        /// On a group's name: selecting and moving the group.
+        /// On a group's grip or border: selecting and moving the group.
         case group(TableGroup.ID)
+        /// On the rest of a group's name band: a click selects it, a double-click renames it, a drag draws a selection
+        /// rectangle, as on the canvas.
+        case groupName(TableGroup.ID)
         case background
     }
 
@@ -1034,7 +1055,11 @@ struct CanvasView: View {
             if !isOneOfMany, case .column(let id) = cell(at: point, in: table).row { return .row(table, column: id) }
             return .table(table)
         }
-        if let group = group(at: point) { return .group(group) }
+        if let group = groupBorder(at: point) { return .group(group) }
+        if let group = group(at: point) {
+            let onGrip = model.frame(of: group).map { GroupLayer.grip(of: $0).contains(point) } == true
+            return onGrip ? .group(group) : .groupName(group)
+        }
         return .background
     }
 
@@ -1105,6 +1130,16 @@ struct CanvasView: View {
         return nil
     }
 
+    /// The group whose border `point` is on, in canvas points, within reach either side; the last drawn, if they overlap.
+    private func groupBorder(at point: CGPoint) -> TableGroup.ID? {
+        let reach = Metrics.portHintRadius / canvas.zoom
+        return model.groups.last { group in
+            guard let frame = model.frame(of: group.id) else { return false }
+            return Path(roundedRect: frame, cornerRadius: Metrics.groupCornerRadius, style: .continuous)
+                .strokedPath(StrokeStyle(lineWidth: reach * 2)).contains(point)
+        }?.id
+    }
+
     /// The group whose name band is under `point`, in canvas points; the last drawn, if they overlap.
     private func group(at point: CGPoint) -> TableGroup.ID? {
         model.groups.last { group in model.frame(of: group.id).map { GroupLayer.labelBand(of: $0).contains(point) } == true }?.id
@@ -1159,12 +1194,12 @@ struct CanvasView: View {
                     guard canvas.connection != nil || CGPoint(value.translation).length >= 2 else { return }
                     canvas.portHint = nil
                     dragConnection(fromPort: id, isOutside: isOutside, at: socket, to: canvas.canvasPoint(value.location))
-                case .newPort:
-                    // Moved, it wasn't for a port: it's a drag on the canvas, a selection rectangle say.
+                case .newPort(let group, _, _):
+                    // Moved, it wasn't for a port: it's the group's border, dragged to move the group.
                     guard CGPoint(value.translation).length >= 3 else { break }
-                    self.press = .background
+                    self.press = .group(group)
                     canvas.portHint = nil
-                    dragBackground(from: value.startLocation, to: value.location)
+                    dragItem(.group(group), by: value.translation)
                 case .port(let id):
                     // Along the edge, to the spot nearest the pointer, around corners and all.
                     guard canvas.portDrag != nil || CGPoint(value.translation).length >= 2,
@@ -1183,6 +1218,11 @@ struct CanvasView: View {
                     dragColumn(column, in: table, to: canvas.canvasPoint(value.location))
                 case .group(let id):
                     dragItem(.group(id), by: value.translation)
+                case .groupName:
+                    // Moved, it's a selection rectangle, not a click.
+                    guard CGPoint(value.translation).length >= 3 else { break }
+                    self.press = .background
+                    dragBackground(from: value.startLocation, to: value.location)
                 case .resize(let table):
                     guard canvas.resizeDrag != nil || CGPoint(value.translation).length >= 2 else { break }
                     resize(table, to: canvas.canvasPoint(value.location).x)
@@ -1258,6 +1298,10 @@ struct CanvasView: View {
                 case .group(let id):
                     // A double-click on its name renames it.
                     dropItem(.group(id), at: location, translation: translation, click: nil) { _ in canvas.renamingGroup = id }
+                case .groupName(let id):
+                    // A click: selected, as a press on its grip would, and a double-click renames it.
+                    dragItem(.group(id), by: .zero)
+                    dropItem(.group(id), at: location, translation: .zero, click: nil) { _ in canvas.renamingGroup = id }
                 case .background:
                     if canvas.backgroundDrag == nil { click(at: canvas.canvasPoint(location)) } else { finishBackgroundDrag() }
                 }
@@ -1269,7 +1313,7 @@ struct CanvasView: View {
         if let id = canvas.renamingGroup, let (group, frame) = frames.first(where: { $0.0.id == id }) {
             let zoom = canvas.zoom
             let origin = GroupLayer.labelOrigin(of: frame) * zoom + canvas.offset
-            let width = max(160, (frame.width - Metrics.groupPadding * 2) * zoom)
+            let width = max(160, (frame.width - Metrics.groupPadding * 2 - GroupLayer.nameOffset) * zoom)
             RenameField(name: group.name) { name in
                 canvas.renamingGroup = nil
                 let name = name?.trimmingCharacters(in: .whitespaces) ?? ""

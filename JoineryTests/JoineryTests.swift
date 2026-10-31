@@ -1339,9 +1339,8 @@ struct JoineryTests {
         let url = folder.appending(path: "Storefront.joinery")
         try FileManager.default.copyItem(at: example, to: url)
         let open = try OpenModel(url: url)
-        let undo = UndoManager()
+        let undo = open.undoManager
         undo.groupsByEvent = false
-        open.undoManager = undo
 
         var random = Seeded(state: seed)
         var states = [open.model]
@@ -1408,9 +1407,8 @@ struct JoineryTests {
         let client = try #require(SessionClient(link: link ?? host.links?.edit ?? "") { _, _ in opened = try? self.openStorefront() })
         try await until { opened != nil }
         let model = try #require(opened)
-        let undo = UndoManager()
+        let undo = model.undoManager
         undo.groupsByEvent = false
-        model.undoManager = undo
         client.attach(to: model)
         return (client, model, undo)
     }
@@ -1419,9 +1417,9 @@ struct JoineryTests {
     private func edit(_ open: OpenModel, _ change: (inout DataModel) -> Void) {
         var model = open.model
         change(&model)
-        open.undoManager?.beginUndoGrouping()
+        open.undoManager.beginUndoGrouping()
         open.change(to: model)
-        open.undoManager?.endUndoGrouping()
+        open.undoManager.endUndoGrouping()
     }
 
     @Test func aJoinedCopyStaysTheSameAsTheHosts() async throws {
@@ -1690,5 +1688,116 @@ struct JoineryTests {
         #expect(replica.digest == Digest(replica.replica.entities.values))
         replica.apply([.delete(id: "T")])
         #expect(replica.digest == Digest() && replica.digest.description == "0000000000000000")
+    }
+}
+
+
+// MARK: Indexes
+
+extension JoineryTests {
+    /// `orders` from `storefront()`, with three more columns to index.
+    private func indexedOrders() -> DataModel {
+        var model = storefront()
+        model.tables[1].columns += [Column(name: "status", type: .text), Column(name: "total", type: .numeric),
+                                    Column(name: "placed_at", type: .timestamp)]
+        return model
+    }
+
+    @Test func indexesKeepTwoOrMoreColumnsAndGoWithTheirColumns() throws {
+        var model = indexedOrders()
+        let columns = model.tables[1].columns.map(\.id)  // id, user_id, status, total, placed_at
+        model.tables[1].addIndex(on: [columns[1], columns[4]])
+        let triple = model.tables[1].addIndex(on: [columns[1], columns[2]], isUnique: false)
+        model.tables[1].add(columns[4], toIndex: triple)
+        model.tables[1].add(columns[4], toIndex: triple)  // Already in it: not twice.
+        #expect(model.tables[1].indexes.first { $0.id == triple }?.columns == [columns[1], columns[2], columns[4]])
+        // Each in a color of its own.
+        #expect(Set(model.tables[1].indexes.map(\.color)).count == 2)
+        #expect(model.tables[1].name(of: model.tables[1].indexes[0]) == "orders_user_id_placed_at_key")
+        #expect(model.tables[1].name(of: model.tables[1].indexes[1]) == "orders_user_id_status_placed_at_idx")
+
+        // Dropping placed_at leaves the pair on user_id alone, and the triple with its other two; dropping user_id
+        // leaves the pair with none, so it goes.
+        model.removeColumn(columns[4])
+        #expect(model.tables[1].indexes.map(\.columns) == [[columns[1]], [columns[1], columns[2]]])
+        model.removeColumn(columns[1])
+        #expect(model.tables[1].indexes.map(\.id) == [triple] && model.tables[1].indexes[0].columns == [columns[2]])
+
+        // A file from before indexes reads as having none; one with them reads them back.
+        let older = try JSONDecoder().decode(Table.self, from: Data(#"{"id": "6A2D0F0E-3B8B-4C47-9E5A-1F2E3D4C5B6A", "name": "t", "position": [0, 0], "color": "blue"}"#.utf8))
+        #expect(older.indexes.isEmpty)
+        let again = try JSONDecoder().decode(Table.self, from: JSONEncoder().encode(model.tables[1]))
+        #expect(again.indexes == model.tables[1].indexes)
+    }
+
+    @Test func indexCablesNestShortestNearestAndFanOutAtSharedSockets() {
+        let a = UUID(), b = UUID(), c = UUID(), d = UUID()
+        let y: [Column.ID: CGFloat] = [a: 0, b: 30, c: 60, d: 90]
+        let long = TableIndex(columns: [a, d], color: .blue), short = TableIndex(columns: [b, c], color: .red),
+            middle = TableIndex(columns: [a, c], color: .green)
+        let layout = CableLayout(indexes: [long, short, middle], socketY: y)
+        #expect(layout.lanes == [short.id: 0, middle.id: 1, long.id: 2])
+        // Lanes step out to the left of the sockets.
+        #expect(CableLayout.laneX(1, socketX: 100) < CableLayout.laneX(0, socketX: 100))
+        // Two cables meet a: apart, centered on it, the nearer lane above.
+        let offsets = layout.offsets([long, short, middle])
+        #expect(offsets[middle.id]?[a] == -CableLayout.fan / 2 && offsets[long.id]?[a] == CableLayout.fan / 2)
+        #expect(offsets[short.id]?[b] == 0)
+        // A cable reaches from its lane to its sockets' edges, its turns rounded rather than square.
+        let path = CableLayout.path(through: [CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 45), CGPoint(x: 100, y: 90)], laneX: 70)
+        let bounds = path.boundingRect
+        #expect(bounds.minX == 70 && bounds.maxX == 100 - CableLayout.socketDiameter / 2)
+        #expect(bounds.minY == 0 && bounds.maxY == 90)
+        #expect(!path.contains(CGPoint(x: 70, y: 0.5)), "the top corner is rounded off")
+    }
+
+    @Test func indexesExportAsSQLAndComeFromAssistants() throws {
+        var model = indexedOrders()
+        _ = try ModelTools.call("alter_table", ["table": "orders", "add_indexes": [
+            ["columns": ["user_id", "placed_at"]],
+            ["columns": ["status", "total"], "unique": false, "name": "orders_by_status"],
+        ]], on: &model)
+        #expect(model.tables[1].indexes.count == 2)
+        #expect(throws: ModelTools.Failure.self) {
+            try ModelTools.call("alter_table", ["table": "orders", "add_indexes": [["columns": ["status", "status"]]]], on: &model)
+        }
+        // On one column, too.
+        _ = try ModelTools.call("alter_table", ["table": "orders", "add_indexes": [["columns": ["placed_at"], "unique": false]]], on: &model)
+        #expect(model.markdown(of: [model.tables[1].id], title: "Shop").contains("CREATE INDEX orders_placed_at_idx ON orders (placed_at);"))
+        _ = try ModelTools.call("alter_table", ["table": "orders", "drop_indexes": ["orders_placed_at_idx"]], on: &model)
+        #expect(throws: ModelTools.Failure.self) {
+            try ModelTools.call("alter_table", ["table": "orders", "add_indexes": [["columns": []]]], on: &model)
+        }
+        let described = try ModelTools.describe(model)
+        #expect(described.contains("orders_user_id_placed_at_key") && described.contains("orders_by_status"))
+
+        let markdown = model.markdown(of: [model.tables[1].id], title: "Shop")
+        #expect(markdown.contains("  CONSTRAINT orders_user_id_placed_at_key UNIQUE (user_id, placed_at)\n);"))
+        #expect(markdown.contains("CREATE INDEX orders_by_status ON orders (status, total);"))
+
+        _ = try ModelTools.call("alter_table", ["table": "orders", "drop_indexes": ["orders_by_status"]], on: &model)
+        #expect(model.tables[1].indexes.count == 1)
+    }
+}
+
+
+// MARK: Tab dragging
+
+extension JoineryTests {
+    @Test func aDraggedTabIsPulledBackPastTheGroupAndFindsItsSlot() {
+        // Inside the group, as it is; past it, pulled back, more the further, never past the reach.
+        #expect(TabDrag.rubberBand(50, in: 0...100, reach: 24) == 50)
+        let near = TabDrag.rubberBand(110, in: 0...100, reach: 24), far = TabDrag.rubberBand(400, in: 0...100, reach: 24)
+        #expect(near > 100 && near < 110)
+        #expect(far > near && far < 124)
+        // The same pull at either end.
+        #expect(abs(-TabDrag.rubberBand(-10, in: 0...100, reach: 24) - (near - 100)) < 0.0001)
+        // Up and down, held to the row.
+        #expect(abs(TabDrag.rubberBand(1000, in: 0...0, reach: 12)) < 12)
+        // Its slot is the one its middle is over, within the group.
+        #expect(TabDrag.slot(forCenter: 50, width: 200, count: 3) == 0)
+        #expect(TabDrag.slot(forCenter: 250, width: 200, count: 3) == 1)
+        #expect(TabDrag.slot(forCenter: 900, width: 200, count: 3) == 2)
+        #expect(TabDrag.slot(forCenter: -40, width: 200, count: 3) == 0)
     }
 }

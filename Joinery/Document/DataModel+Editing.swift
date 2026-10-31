@@ -213,7 +213,10 @@ extension DataModel {
     }
 
     mutating func removeColumn(_ id: Column.ID) {
-        for index in tables.indices { tables[index].columns.removeAll { $0.id == id } }
+        for index in tables.indices {
+            tables[index].columns.removeAll { $0.id == id }
+            tables[index].removeFromIndexes(id)
+        }
         removeRelationships { $0.from == id || $0.to == id }
     }
 
