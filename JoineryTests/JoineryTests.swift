@@ -1790,7 +1790,8 @@ extension JoineryTests {
         let near = TabDrag.rubberBand(110, in: 0...100, reach: 24), far = TabDrag.rubberBand(400, in: 0...100, reach: 24)
         #expect(near > 100 && near < 110)
         #expect(far > near && far < 124)
-        #expect(TabDrag.rubberBand(-10, in: 0...100, reach: 24) == 100 - TabDrag.rubberBand(110, in: 0...100, reach: 24))
+        // The same pull at either end.
+        #expect(abs(-TabDrag.rubberBand(-10, in: 0...100, reach: 24) - (near - 100)) < 0.0001)
         // Up and down, held to the row.
         #expect(abs(TabDrag.rubberBand(1000, in: 0...0, reach: 12)) < 12)
         // Its slot is the one its middle is over, within the group.
