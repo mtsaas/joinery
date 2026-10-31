@@ -1,7 +1,21 @@
-# zig build bench, 4c389bb + step 4, Apple M5 Pro, 2026-10-28
-step                                           ns/frame  allocations
-read a header                                       1.3            0
-append to the log, trimming it                      2.5            0
-a host's change, to 31 guests                      45.9            0
-a guest's change, to the host                       7.0            0
-41031772 frames sent in all
+# zig build bench, presence over UDP, Apple M5 Pro, 2026-10-30
+step                                                   ns/frame  allocations
+read a header                                               0.7            0
+unmask a 124-byte change                                    0.9            0
+unmask a 1 MiB snapshot                                 14551.3            0
+append to the log, trimming it                              1.5            0
+a host's change, to 31 guests                              39.9            0
+a guest's change, to the host                               7.0            0
+a host's change, to 31 guests, across 2,000 rooms         137.3            0
+361274626 frames sent in all
+seal a pointer update for a client                         16.0            0
+  its counter blocks: 3 of AES-128                          8.3            0
+  its tag: GHASH over 9 blocks                              8.2            0
+  its counter's mask: 1 of AES-128                          1.6            0
+the same, keys expanded every time (std AES-128-GCM)      122.3            0
+open a pointer update from a client                        19.4            0
+find and open one, among 100,000 connections              103.4            0
+the same, a batch of 32 asked for first                    56.1            0
+one in, three out, among 100,000 connections              369.0            0
+the same, batched as the relay does                       183.4            0
+a session: 512 bytes (128-byte cache lines), at: mask key 0, GCM key 176, GHASH powers 352, ID 480, counters 488..512

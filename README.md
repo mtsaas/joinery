@@ -8,7 +8,8 @@ with version history, can be edited live with others through an end-to-end encry
 by AI assistants over MCP. It needs macOS 26 and Xcode 26: open `Joinery.xcodeproj` and press ⌘R. The full guide is in
 [docs/guide.md](docs/guide.md), and building and releasing it in [docs/development.md](docs/development.md).
 
-The relay in [relay/](relay/) is a small Zig server that passes live sessions between people without reading them. One
-16-core, 64 GB machine holds 80,000 people in rooms of four, or 32,000 in full rooms of 32, using a quarter of its CPU
-and under 2 GB. It ships as the container `ghcr.io/mtsaas/joinery-relay` and the Helm chart
+The relay in [relay/](relay/) is a small Zig server that passes live sessions between people without reading them. A
+2-core host with 2 GB holds 13,000 rooms of four at typical use (52,000 people) with presence over UDP, or 5,500 by
+WebSocket alone; CPU runs out first, not memory. Flat out, it delivers 1.5 million messages a second on 2 cores and 5.4
+million on 16. It ships as the container `ghcr.io/mtsaas/joinery-relay` and the Helm chart
 `oci://ghcr.io/mtsaas/charts/joinery-relay`.

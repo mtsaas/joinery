@@ -29,6 +29,9 @@ pub const Kind = enum(u8) {
     joined,
     left,
     bye,
+    /// Presence over UDP (server/udp.zig): a connection's ticket; over UDP, a probe; from a client over its WebSocket,
+    /// "send me nothing more by UDP".
+    udp_ticket,
 };
 
 pub const Malformed = error{Malformed};

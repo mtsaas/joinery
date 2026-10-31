@@ -7,6 +7,7 @@ const Relay = @import("relay/Relay.zig");
 const Log = @import("relay/Log.zig");
 const websocket = @import("server/websocket.zig");
 const wire = @import("relay/wire.zig");
+const udp = @import("server/udp.zig");
 
 pub fn main(init: std.process.Init) !void {
     const io = init.io;
@@ -59,7 +60,170 @@ pub fn main(init: std.process.Init) !void {
     defer rooms.deinit();
     try bench(io, &counting, "a host's change, to 31 guests, across 2,000 rooms", 1_000_000, Rooms.publish, .{&rooms});
     std.debug.print("{d} frames sent in all\n", .{room.sink.sent + rooms.sink.sent});
+
+    // Presence over UDP: a pointer update's frame, as the app seals one (a 64-byte presence, a nonce and a tag).
+    var presence: [wire.header_size + 92]u8 = @splat(3);
+    _ = writeHeader(&presence, .presence, 1);
+    var one: Udp = .init(udp.vector.ticket, &presence);
+    try bench(io, &counting, "seal a pointer update for a client", 10_000_000, Udp.seal, .{&one});
+    try bench(io, &counting, "  its counter blocks: 3 of AES-128", 10_000_000, struct {
+        fn run(u: *Udp, i: usize) void {
+            var n: [12]u8 = @splat(0);
+            n[11] = @truncate(i);
+            std.mem.doNotOptimizeAway(u.session.gcm.keystream(n));
+        }
+    }.run, .{&one});
+    try bench(io, &counting, "  its tag: GHASH over 9 blocks", 10_000_000, struct {
+        fn run(u: *Udp, i: usize) void {
+            var j: [16]u8 = @splat(@truncate(i));
+            std.mem.doNotOptimizeAway(u.session.gcm.tagOf(&j, u.frame[0..24], u.frame[24..]));
+        }
+    }.run, .{&one});
+    try bench(io, &counting, "  its counter's mask: 1 of AES-128", 10_000_000, struct {
+        fn run(u: *Udp, i: usize) void {
+            var b: [16]u8 = @splat(@truncate(i));
+            std.mem.doNotOptimizeAway(u.session.maskOf(&b));
+        }
+    }.run, .{&one});
+
+    try bench(io, &counting, "the same, keys expanded every time (std AES-128-GCM)", 10_000_000, Udp.sealUncached, .{&one});
+    try bench(io, &counting, "open a pointer update from a client", 10_000_000, Udp.open, .{&one});
+    const many = try Udps.init(gpa, 100_000, &presence);
+    defer many.deinit(gpa);
+    try bench(io, &counting, "find and open one, among 100,000 connections", 1_000_000, Udps.open, .{many});
+    try bench(io, &counting, "the same, a batch of 32 asked for first", 1_000_000, Udps.openBatched, .{many});
+    try bench(io, &counting, "one in, three out, among 100,000 connections", 1_000_000, Udps.fanOut, .{many});
+    try bench(io, &counting, "the same, batched as the relay does", 1_000_000, Udps.fanOutBatched, .{many});
+    std.debug.print("a session: {d} bytes ({d}-byte cache lines), at: mask key {d}, GCM key {d}, GHASH powers {d}, ID {d}, counters {d}..{d}\n", .{
+        @sizeOf(udp.Session),                                                               std.atomic.cache_line,
+        @offsetOf(udp.Session, "mask"),                                                     @offsetOf(udp.Session, "gcm"),
+        @offsetOf(udp.Session, "gcm") + @offsetOf(@FieldType(udp.Session, "gcm"), "ghash"), @offsetOf(udp.Session, "id"),
+        @offsetOf(udp.Session, "sent"),                                                     @offsetOf(udp.Session, "seen") + 8,
+    });
 }
+
+/// One connection's session, a datagram from its client kept as it came (opening it works in place), and the counter
+/// window put back each time, so the same datagram opens again.
+const Udp = struct {
+    session: udp.Session,
+    ticket: udp.Ticket,
+    frame: []const u8,
+    out: [udp.max_datagram]u8 = undefined,
+    datagram: [udp.max_datagram]u8 = undefined,
+    len: usize = 0,
+    work: [udp.max_datagram]u8 = undefined,
+
+    fn init(ticket: udp.Ticket, frame: []const u8) Udp {
+        var u: Udp = .{ .session = .init(ticket), .ticket = ticket, .frame = frame };
+        var client: udp.Session = .init(ticket);
+        u.len = client.seal(.to_relay, frame, &u.datagram).len;
+        return u;
+    }
+
+    fn seal(u: *Udp, _: usize) void {
+        std.mem.doNotOptimizeAway(u.session.seal(.to_client, u.frame, &u.out).ptr);
+    }
+
+    /// What sealing costs with the standard library's AES-GCM, which works out the key's schedule and GHASH's key for
+    /// every message, as a first version of this did.
+    fn sealUncached(u: *Udp, i: usize) void {
+        const body = u.frame[wire.header_size..];
+        var nonce: [12]u8 = @splat(0);
+        std.mem.writeInt(u64, nonce[4..12], i, .little);
+        std.crypto.aead.aes_gcm.Aes128Gcm.encrypt(u.out[udp.prefix..][0..wire.header_size], u.out[16..32], u.frame[0..wire.header_size], body, nonce, u.ticket.key);
+        const mask = std.crypto.core.aes.Aes128.initEnc(u.ticket.mask_key);
+        var block: [16]u8 = undefined;
+        mask.encrypt(&block, u.out[udp.prefix..][0..16]);
+        std.mem.doNotOptimizeAway(&block);
+    }
+
+    /// A fixed-size copy (2 ns), not `@memcpy` of a runtime length: that's a call into libc, and reading straight back
+    /// what it wrote stalled store forwarding and doubled what this measured.
+    fn open(u: *Udp, _: usize) void {
+        u.work[0 .. udp.prefix + wire.header_size + 92].* = u.datagram[0 .. udp.prefix + wire.header_size + 92].*;
+        u.session.newest = 0;
+        u.session.seen = 0;
+        std.mem.doNotOptimizeAway((u.session.open(.to_relay, u.work[0..u.len]) orelse unreachable).ptr);
+    }
+};
+
+/// Many connections, each a session and a datagram from its client, visited in a scattered order so each is cold, as a
+/// relay's are when thousands are sending.
+const Udps = struct {
+    sessions: []udp.Session,
+    datagrams: [][udp.prefix + wire.header_size + 92]u8,
+    order: []u32,
+    frame: []const u8,
+    work: [udp.max_datagram]u8 = undefined,
+    out: [3][udp.max_datagram]u8 = undefined,
+    queued: [96][udp.prefix + wire.header_size + 92]u8 = undefined,
+    recipients: [96]u32 = undefined,
+
+    fn init(gpa: std.mem.Allocator, count: usize, frame: []const u8) !*Udps {
+        const u = try gpa.create(Udps);
+        u.* = .{ .sessions = try gpa.alloc(udp.Session, count), .datagrams = try gpa.alloc([udp.prefix + wire.header_size + 92]u8, count), .order = try gpa.alloc(u32, count), .frame = frame };
+        var prng: std.Random.DefaultPrng = .init(3);
+        for (u.sessions, u.datagrams, u.order, 0..) |*s, *d, *o, i| {
+            var ticket = udp.vector.ticket;
+            ticket.id = i;
+            prng.random().bytes(&ticket.key);
+            s.* = .init(ticket);
+            var client: udp.Session = .init(ticket);
+            _ = client.seal(.to_relay, frame, d);
+            o.* = @intCast(i);
+        }
+        prng.random().shuffle(u32, u.order);
+        return u;
+    }
+
+    fn deinit(u: *Udps, gpa: std.mem.Allocator) void {
+        gpa.free(u.sessions);
+        gpa.free(u.datagrams);
+        gpa.free(u.order);
+        gpa.destroy(u);
+    }
+
+    /// As the relay does for a datagram: its connection by the slot in its ID, then open it.
+    fn open(u: *Udps, i: usize) void {
+        const d = &u.datagrams[u.order[i % u.order.len]];
+        @memcpy(u.work[0..d.len], d);
+        const s = &u.sessions[udp.slotOf(udp.idOf(&u.work).?)];
+        s.newest = 0;
+        s.seen = 0;
+        std.mem.doNotOptimizeAway((s.open(.to_relay, u.work[0..d.len]) orelse unreachable).ptr);
+    }
+
+    /// As `open`, but at each 32nd, the next 32's sessions asked for first, as the relay does for each batch it reads.
+    fn openBatched(u: *Udps, i: usize) void {
+        if (i % 32 == 0) for (0..32) |k| u.sessions[u.order[(i + k) % u.order.len]].prefetch();
+        u.open(i);
+    }
+
+    /// As `fanOut`, but sealing as the relay does: the frames queued, then at each 32nd, every recipient's session
+    /// asked for first and all sealed in place.
+    fn fanOutBatched(u: *Udps, i: usize) void {
+        u.openBatched(i);
+        const n = u.order.len;
+        for (0..3) |k| {
+            const at = (i % 32) * 3 + k;
+            @memcpy(u.queued[at][udp.prefix..][0..u.frame.len], u.frame);
+            u.recipients[at] = u.order[(i * 7 + k * 7919 + 1) % n];
+        }
+        if (i % 32 != 31) return;
+        for (u.recipients) |r| u.sessions[r].prefetch();
+        for (&u.queued, u.recipients) |*q, r| std.mem.doNotOptimizeAway(u.sessions[r].sealInPlace(.to_client, q[0 .. udp.prefix + u.frame.len]).ptr);
+    }
+
+    /// A guest's pointer update in a room of four: opened, then sealed for each of the three others, each cold.
+    fn fanOut(u: *Udps, i: usize) void {
+        u.open(i);
+        const n = u.order.len;
+        for (0..3) |k| {
+            const s = &u.sessions[u.order[(i * 7 + k * 7919 + 1) % n]];
+            std.mem.doNotOptimizeAway(s.seal(.to_client, u.frame, &u.out[k]).ptr);
+        }
+    }
+};
 
 /// Runs `step` `n` times, five times over, and prints the best of the five, per step, and the allocations made, which
 /// must be none. The best, not the mean: what else the machine's doing only ever adds time.

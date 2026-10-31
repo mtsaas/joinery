@@ -59,12 +59,27 @@ spec:
             - --threads
             - {{ . | quote }}
             {{- end }}
+            {{- if .Values.udp.enabled }}
+            - --udp
+            - "on"
+            - --udp-port
+            - {{ .Values.udp.port | quote }}
+            {{- with .Values.udp.host }}
+            - --udp-host
+            - {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
           ports:
             - name: relay
               containerPort: {{ .Values.service.port }}
+            {{- if .Values.udp.enabled }}
+            - name: presence
+              containerPort: {{ .Values.service.port }}
+              protocol: UDP
+            {{- end }}
             - name: metrics
               containerPort: {{ .Values.metrics.port }}
           readinessProbe:

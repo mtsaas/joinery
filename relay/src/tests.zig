@@ -10,4 +10,5 @@ test {
     _ = @import("server/http.zig");
     _ = @import("server/metrics.zig");
     _ = @import("server/websocket.zig");
+    _ = @import("server/udp.zig");
 }

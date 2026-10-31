@@ -30,6 +30,7 @@ const http = @import("http.zig");
 const metrics = @import("metrics.zig");
 const socket = @import("socket.zig");
 const websocket = @import("websocket.zig");
+const udp = @import("udp.zig");
 const Poller = @import("poller.zig").Poller;
 const Event = @import("poller.zig").Event;
 
@@ -77,6 +78,14 @@ started: i64,
 /// `--outbox-mib`.
 out_used: usize = 0,
 out_budget: usize = 128 << 20,
+/// Presence over UDP (udp.zig): this loop's socket, the port tickets name, each connection's path by its slot, the
+/// slots free, and the datagrams that go at the end of the turn.
+udp_fd: c.fd_t = -1,
+udp_port: u16 = 0,
+udp_host: []const u8 = "",
+udp_paths: std.ArrayList(UdpPath) = .empty,
+udp_free: std.ArrayList(u32) = .empty,
+udp_out: ?*UdpOut = null,
 
 /// Lets go of silent connections, and ends rooms whose host has gone, this often.
 const tick_ms = 1000;
@@ -157,12 +166,16 @@ pub fn deinit(server: *Server) void {
     server.waiting.deinit(server.gpa);
     server.done.deinit(server.gpa);
     server.leaving.deinit(server.gpa);
+    server.udp_paths.deinit(server.gpa);
+    server.udp_free.deinit(server.gpa);
+    if (server.udp_out) |out| server.gpa.destroy(out);
 }
 
 /// What the poller hands back for the listeners and the wake pipe; connections are their own addresses.
 const listener_tag: usize = 1;
 const metrics_tag: usize = 2;
 const wake_tag: usize = 3;
+const udp_tag: usize = 4;
 
 /// Runs until something's badly wrong with the event queue.
 pub fn run(server: *Server) !void {
@@ -178,6 +191,7 @@ pub fn run(server: *Server) !void {
             listener_tag => server.accept(server.listener, .http),
             metrics_tag => server.accept(server.metrics_listener, .metrics),
             wake_tag => server.takeHandedOver(),
+            udp_tag => server.readUdp(),
             else => {
                 const conn: *Conn = @ptrFromInt(event.tag);
                 if (conn.hot.state == .gone) continue;
@@ -348,7 +362,10 @@ fn messages(server: *Server, conn: *Conn) usize {
             websocket.Opcode.binary => {
                 server.counts.frames_in += 1;
                 server.counts.bytes_in += payload.len;
-                server.relay.received(&conn.link, payload, server.time);
+                // "Send me nothing more by UDP": the transport's, not the relay's.
+                if (payload.len > 1 and payload[1] == @backingInt(wire.Kind.udp_ticket)) {
+                    if (conn.udp_slot) |slot| server.udp_paths.items[slot].heard = 0;
+                } else server.relay.received(&conn.link, payload, server.time);
             },
             websocket.Opcode.close => server.lose(conn, null),
             websocket.Opcode.ping => server.queueFrame(conn, websocket.Opcode.pong, payload),
@@ -487,6 +504,7 @@ fn queueFrame(server: *Server, conn: *Conn, opcode: u8, payload: []const u8) voi
 
 /// Sends what each connection has queued, in one `send` each, and lets go of what's done with.
 fn finishTurn(server: *Server) void {
+    server.flushUdp();
     // Telling the relay of lagging connections can queue more, for others, so this goes until nothing's new.
     var i: usize = 0;
     while (i < server.dirty.items.len) : (i += 1) {
@@ -563,6 +581,10 @@ fn free(server: *Server, conn: *Conn) void {
     Relay.release(pages, conn.in);
     Relay.release(pages, conn.hot.out);
     if (conn.pointers) |pointers| pages.rawFree(std.mem.asBytes(pointers), .of(Pointers), @returnAddress());
+    if (conn.udp_slot) |slot| {
+        server.udp_paths.items[slot].conn = null;
+        server.udp_free.append(server.gpa, slot) catch {};
+    }
     server.gpa.destroy(conn);
 }
 
@@ -638,12 +660,19 @@ fn relaySend(ptr: *anyopaque, link: *Relay.Link, frame: []const u8) void {
     server.counts.bytes_out += frame.len;
     const kind = frame[1];
     const peer = std.mem.readInt(u32, frame[16..20], .little);
+    if (kind == @backingInt(wire.Kind.presence)) if (conn.udp_slot) |slot| {
+        const path = &server.udp_paths.items[slot];
+        if (path.isUp(server.time) and udp.prefix + frame.len <= udp.max_datagram) return server.queueUdp(slot, frame);
+        server.counts.udp_by_websocket += 1;
+    };
     if (kind == @backingInt(wire.Kind.presence) and frame.len <= Pointers.slot_size) {
         return server.holdPointer(conn, peer, frame);
     }
     // Gone: an update from before can't follow it, or they'd seem to be back.
     if (kind == @backingInt(wire.Kind.left)) if (conn.pointers) |pointers| pointers.drop(peer);
     server.queueFrame(conn, websocket.Opcode.binary, frame);
+    // A welcome: then its ticket, if presence can go over UDP.
+    if (kind == @backingInt(wire.Kind.hello) and server.udp_fd >= 0 and conn.udp_slot == null) server.offerUdp(conn);
 }
 
 fn holdPointer(server: *Server, conn: *Conn, peer: u32, frame: []const u8) void {
@@ -843,4 +872,194 @@ fn connectTo(listener: c.fd_t) !c.fd_t {
     if (fd < 0) return error.SystemResources;
     if (c.connect(fd, @ptrCast(&address), len) < 0) return error.ConnectionRefused;
     return fd;
+}
+
+// Presence over UDP (udp.zig, docs/relay.md)
+
+/// A connection's UDP side: its connection while it has one, where its datagrams go, and its session. Each starts a
+/// cache line, so none shares one with its neighbours: 576 bytes, which a batch of datagrams asks for ahead.
+const UdpPath = struct {
+    conn: ?*Conn align(std.atomic.cache_line),
+    /// When a datagram from it last opened, in ms: 0 before one has, and once the client turns UDP off.
+    heard: i64 = 0,
+    addr: c.sockaddr.in = undefined,
+    session: udp.Session,
+
+    fn isUp(path: *const UdpPath, time: i64) bool {
+        return path.heard != 0 and time - path.heard < udp.silence_ms;
+    }
+
+    comptime {
+        assert(@sizeOf(UdpPath) % std.atomic.cache_line == 0);
+    }
+};
+
+/// The datagrams to send at the end of the turn, or sooner when it's full: each frame copied in after room for its
+/// prefix, and the slot of the path it goes by, to seal it at once with the others.
+const UdpOut = struct {
+    count: usize,
+    lens: [batch]u16,
+    slots: [batch]u32,
+    addrs: [batch]c.sockaddr.in,
+    buffers: [batch][udp.max_datagram]u8,
+    const batch = 64;
+};
+
+/// Takes presence over UDP on `fd`, this loop's socket on the relay's port; tickets name `port` and `host` (empty: the
+/// WebSocket's).
+pub fn enableUdp(server: *Server, fd: c.fd_t, port: u16, host: []const u8) !void {
+    assert(host.len <= udp.max_host);
+    const out = try server.gpa.create(UdpOut);
+    out.count = 0;
+    server.udp_out = out;
+    server.udp_fd = fd;
+    server.udp_port = port;
+    server.udp_host = host;
+    try server.poller.add(fd, udp_tag);
+}
+
+/// After its welcome, a connection's ticket, over its WebSocket.
+fn offerUdp(server: *Server, conn: *Conn) void {
+    const slot: u32 = server.udp_free.pop() orelse slot: {
+        server.udp_paths.append(server.gpa, undefined) catch return;
+        break :slot @intCast(server.udp_paths.items.len - 1);
+    };
+    const ticket = udp.Ticket.random(server.io, server.index, slot, server.udp_port) catch {
+        server.udp_paths.items[slot].conn = null;
+        return server.udp_free.append(server.gpa, slot) catch {};
+    };
+    server.udp_paths.items[slot] = .{ .session = .init(ticket), .conn = conn };
+    conn.udp_slot = slot;
+    var buffer: [wire.header_size + udp.ticket_size + udp.max_host]u8 = undefined;
+    var w: wire.FrameWriter = .{ .buffer = &buffer, .len = wire.header_size + udp.ticket_size };
+    ticket.write(buffer[wire.header_size..][0..udp.ticket_size]);
+    w.raw(server.udp_host);
+    server.queueFrame(conn, websocket.Opcode.binary, w.finish(.udp_ticket, 0, 0));
+}
+
+/// Every datagram waiting, a batch at a time: each batch's paths found and asked for first, so their cache misses
+/// overlap, then each datagram handled.
+fn readUdp(server: *Server) void {
+    const batch = 32;
+    var buffers: [batch][udp.max_datagram]u8 = undefined;
+    var lens: [batch]usize = undefined;
+    var froms: [batch]c.sockaddr.in = undefined;
+    var paths: [batch]?*UdpPath = undefined;
+    while (true) {
+        var n: usize = 0;
+        if (builtin.os.tag == .linux) {
+            const linux = std.os.linux;
+            var iovs: [batch]std.posix.iovec = undefined;
+            var msgs: [batch]linux.mmsghdr = undefined;
+            for (0..batch) |i| {
+                iovs[i] = .{ .base = &buffers[i], .len = udp.max_datagram };
+                msgs[i] = .{ .hdr = .{ .name = @ptrCast(&froms[i]), .namelen = @sizeOf(c.sockaddr.in), .iov = @ptrCast(&iovs[i]), .iovlen = 1, .control = null, .controllen = 0, .flags = 0 }, .len = 0 };
+            }
+            const rc = linux.recvmmsg(server.udp_fd, &msgs, batch, linux.MSG.DONTWAIT, null);
+            if (linux.errno(rc) != .SUCCESS) return;
+            n = rc;
+            for (msgs[0..n], lens[0..n]) |msg, *len| len.* = msg.len;
+        } else {
+            while (n < batch) : (n += 1) {
+                var len: c.socklen_t = @sizeOf(c.sockaddr.in);
+                const got = c.recvfrom(server.udp_fd, &buffers[n], udp.max_datagram, 0, @ptrCast(&froms[n]), &len);
+                if (got < 0) break;
+                lens[n] = @intCast(got);
+            }
+        }
+        for (buffers[0..n], lens[0..n], paths[0..n]) |*buffer, len, *path| {
+            path.* = server.pathOf(buffer[0..len]);
+            if (path.*) |p| p.session.prefetch();
+        }
+        for (buffers[0..n], lens[0..n], froms[0..n], paths[0..n]) |*buffer, len, from, path| server.datagram(path, buffer[0..len], from);
+        if (n < batch) return;
+    }
+}
+
+fn datagram(server: *Server, found: ?*UdpPath, bytes: []u8, from: c.sockaddr.in) void {
+    const path = found orelse {
+        server.counts.udp_rejected += 1;
+        return;
+    };
+    // Nothing changes for one that doesn't open, or isn't new: a forgery or a replay can't move a connection, cost it
+    // anything, or end it.
+    const frame = path.session.open(.to_relay, bytes) orelse {
+        server.counts.udp_rejected += 1;
+        return;
+    };
+    server.counts.udp_received += 1;
+    path.addr = from;
+    path.heard = server.time;
+    switch (frame[1]) {
+        // A probe: answered with one the same size, so it proves the way back, and the relay sends no more than it's
+        // sent.
+        @backingInt(wire.Kind.udp_ticket) => if (frame.len == wire.header_size) server.queueUdp(server.slotOfPath(path), frame),
+        @backingInt(wire.Kind.presence) => {
+            server.counts.frames_in += 1;
+            server.counts.bytes_in += frame.len;
+            server.relay.received(&path.conn.?.link, frame, server.time);
+        },
+        else => {},
+    }
+}
+
+/// The path a datagram names, if it's a connection's here that the relay holds.
+fn pathOf(server: *Server, bytes: []const u8) ?*UdpPath {
+    const id = udp.idOf(bytes) orelse return null;
+    const slot = udp.slotOf(id);
+    if (slot >= server.udp_paths.items.len) return null;
+    const path = &server.udp_paths.items[slot];
+    const conn = path.conn orelse return null;
+    if (path.session.id != id or conn.hot.state != .open or !conn.in_relay) return null;
+    return path;
+}
+
+fn slotOfPath(server: *const Server, path: *const UdpPath) u32 {
+    return @intCast(path - server.udp_paths.items.ptr);
+}
+
+/// Queues `frame` to go by the path in `slot`, sealed when the batch goes.
+fn queueUdp(server: *Server, slot: u32, frame: []const u8) void {
+    const out = server.udp_out.?;
+    if (out.count == UdpOut.batch) server.flushUdp();
+    @memcpy(out.buffers[out.count][udp.prefix..][0..frame.len], frame);
+    out.lens[out.count] = @intCast(udp.prefix + frame.len);
+    out.slots[out.count] = slot;
+    out.count += 1;
+}
+
+/// Seals the turn's datagrams, their sessions asked for first so their misses overlap, and sends them, in one system
+/// call where there is one. What the socket won't take is dropped: newer presence follows.
+fn flushUdp(server: *Server) void {
+    const out = server.udp_out orelse return;
+    if (out.count == 0) return;
+    defer out.count = 0;
+    for (out.slots[0..out.count]) |slot| server.udp_paths.items[slot].session.prefetch();
+    for (out.buffers[0..out.count], out.lens[0..out.count], out.slots[0..out.count], out.addrs[0..out.count]) |*buffer, len, slot, *addr| {
+        const path = &server.udp_paths.items[slot];
+        _ = path.session.sealInPlace(.to_client, buffer[0..len]);
+        addr.* = path.addr;
+    }
+    var sent: usize = 0;
+    if (builtin.os.tag == .linux) {
+        const linux = std.os.linux;
+        var iovs: [UdpOut.batch]std.posix.iovec = undefined;
+        var msgs: [UdpOut.batch]linux.mmsghdr = undefined;
+        for (0..out.count) |i| {
+            iovs[i] = .{ .base = &out.buffers[i], .len = out.lens[i] };
+            msgs[i] = .{ .hdr = .{ .name = @ptrCast(&out.addrs[i]), .namelen = @sizeOf(c.sockaddr.in), .iov = @ptrCast(&iovs[i]), .iovlen = 1, .control = null, .controllen = 0, .flags = 0 }, .len = 0 };
+        }
+        while (sent < out.count) {
+            const rc = linux.sendmmsg(server.udp_fd, msgs[sent..].ptr, @intCast(out.count - sent), linux.MSG.DONTWAIT);
+            if (linux.errno(rc) != .SUCCESS or rc == 0) break;
+            sent += rc;
+        }
+    } else {
+        for (0..out.count) |i| {
+            const n = c.sendto(server.udp_fd, &out.buffers[i], out.lens[i], 0, @ptrCast(&out.addrs[i]), @sizeOf(c.sockaddr.in));
+            if (n == out.lens[i]) sent += 1;
+        }
+    }
+    server.counts.udp_sent += sent;
+    server.counts.udp_dropped += out.count - sent;
 }

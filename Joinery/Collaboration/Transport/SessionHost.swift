@@ -2,7 +2,7 @@ import CryptoKit
 import Foundation
 
 /// Hosts a session on the open model, through a relay: connects out to it, and others join with the links it makes.
-/// Connects `RelayHostCore`, which keeps the protocol, to a `RelaySocket`, reconnecting when it drops.
+/// Connects `RelayHostCore`, which keeps the protocol, to a `RelayConnection`, reconnecting when it drops.
 @MainActor @Observable
 final class SessionHost: Session {
     var me: Peer { core.me }
@@ -10,10 +10,12 @@ final class SessionHost: Session {
     private(set) var status = "Connecting to the relay…"
     /// The links to send, once the relay's made the room: one to edit, one only to watch.
     private(set) var links: (edit: String, view: String)?
+    /// Whether presence is going by UDP now, beside the WebSocket.
+    var presenceOverUDP: Bool { socket.presenceOverUDP }
 
     @ObservationIgnored private let core: RelayHostCore
     @ObservationIgnored private let relay: URL
-    @ObservationIgnored private let socket: RelaySocket
+    @ObservationIgnored private let socket: RelayConnection
     @ObservationIgnored private weak var model: OpenModel?
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var reconnecting: Task<Void, Never>?
@@ -23,7 +25,7 @@ final class SessionHost: Session {
         self.model = model
         self.relay = relay
         core = RelayHostCore(model.replica, title: model.name, name: Self.ownName)
-        socket = RelaySocket(Relay.socket(of: relay))
+        socket = RelayConnection(Relay.socket(of: relay))
         socket.onMessage = { [weak self] bytes in
             guard let self else { return }
             self.perform(self.core.received(bytes, at: .now))

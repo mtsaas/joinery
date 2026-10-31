@@ -44,6 +44,9 @@ final class RelayHostCore {
     var onPublish: ((_ seq: UInt64, _ ops: [Replica.Op], _ author: UInt32, _ cseq: UInt64) -> Void)?
 
     private var attempts = 0
+    /// Presence frames sent from here, and the newest number shown from each peer.
+    private var presenceSent: UInt64 = 0
+    private var presenceShown: [UInt32: UInt64] = [:]
     /// Whether there's a connection to send on: from its hello, which the relay reads before anything after it.
     private var isOpen = false
     private var heard = Date.distantPast
@@ -108,8 +111,7 @@ final class RelayHostCore {
             peers[frame.header.peer] = Relay.peer(frame.header.peer, name: frame.body)
             return []
         case .presence:
-            guard let plain = try? frame.opened(with: key), let presence = try? Relay.Presence(plain) else { return [] }
-            peers[frame.header.peer, default: Relay.peer(frame.header.peer, name: [])].show(presence)
+            show(frame)
             return []
         case .left:
             peers[frame.header.peer] = nil
@@ -129,7 +131,7 @@ final class RelayHostCore {
     /// Where the host's pointer is and what it has selected, for everyone else.
     func share(_ presence: Relay.Presence) -> [Effect] {
         guard state == .connected else { return [] }
-        return sendIfConnected(Wire.Frame(.presence, sealing: presence.body, with: key))
+        return sendIfConnected(Wire.Frame(.presence, seq: nextPresence(), sealing: presence.body, with: key))
     }
 
     func tick(at now: Date) -> [Effect] {
@@ -216,4 +218,28 @@ final class RelayHostCore {
         state = .ended
         return [.ended(reason)]
     }
+
+    // MARK: Presence
+
+    /// Numbers this person's presence, so others can tell newer from older whichever way each came (see
+    /// `docs/relay.md`).
+    private func nextPresence() -> UInt64 {
+        presenceSent += 1
+        return presenceSent
+    }
+
+    /// Shows someone's presence, if they're here and it's newer than what's shown of them. Over UDP an update can come
+    /// after a newer one, or after `left`, or before `joined`, which come by WebSocket: one from someone not here is
+    /// dropped, as the next will do.
+    private func show(_ frame: Wire.Frame) {
+        let peer = frame.header.peer, seq = frame.header.seq
+        guard peers[peer] != nil, let plain = try? frame.opened(with: key), let presence = try? Relay.Presence(plain) else { return }
+        // Read only once it opens, as the header is sealed with the body: a relay can't move it on. 0 is an older client's.
+        if seq != 0 {
+            guard seq > presenceShown[peer, default: 0] else { return }
+            presenceShown[peer] = seq
+        }
+        peers[peer]?.show(presence)
+    }
+
 }

@@ -24,6 +24,34 @@ pub fn listen(address: std.Io.net.Ip4Address, reuse_port: bool) !c.fd_t {
     return fd;
 }
 
+/// A non-blocking UDP socket on `address`, for presence (udp.zig), with room for bursts. With
+/// `reuse_port`, each loop has its own, and `steerByLoop` sends each datagram to its connection's loop.
+pub fn bindUdp(address: std.Io.net.Ip4Address, reuse_port: bool) !c.fd_t {
+    const fd = c.socket(c.AF.INET, c.SOCK.DGRAM, 0);
+    if (fd < 0) return error.SystemResources;
+    const one: c_int = 1;
+    if (reuse_port) _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.REUSEPORT, &one, @sizeOf(c_int));
+    const buffer: c_int = 4 << 20;
+    _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.RCVBUF, &buffer, @sizeOf(c_int));
+    _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.SNDBUF, &buffer, @sizeOf(c_int));
+    var sockaddr: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, address.port), .addr = @bitCast(address.bytes) };
+    if (c.bind(fd, @ptrCast(&sockaddr), @sizeOf(c.sockaddr.in)) < 0) return error.AddressInUse;
+    try setNonblocking(fd);
+    return fd;
+}
+
+/// On Linux, sends each datagram on a reuse-port group to the socket of the loop its connection ID names: the ID's
+/// last byte (it's little-endian), the sockets joining in loop order. Classic BPF, from the UDP payload: A = byte 7;
+/// return A.
+pub fn steerByLoop(fd: c.fd_t) !void {
+    const Insn = extern struct { code: u16, jt: u8 = 0, jf: u8 = 0, k: u32 };
+    const program = [_]Insn{ .{ .code = 0x30, .k = 7 }, .{ .code = 0x16, .k = 0 } };
+    const Fprog = extern struct { len: u16, filter: [*]const Insn };
+    const fprog: Fprog = .{ .len = program.len, .filter = &program };
+    const so_attach_reuseport_cbpf = 51;
+    if (c.setsockopt(fd, c.SOL.SOCKET, so_attach_reuseport_cbpf, &fprog, @sizeOf(Fprog)) < 0) return error.Unsupported;
+}
+
 /// A connection just accepted: non-blocking, small messages sent at once, and little waiting in the kernel.
 pub fn configure(fd: c.fd_t) !void {
     try setNonblocking(fd);

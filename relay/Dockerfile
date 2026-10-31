@@ -16,14 +16,16 @@ RUN --mount=type=secret,id=ca \
 WORKDIR /src
 COPY build.zig build.zig.zon ./
 COPY src src
-# ReleaseSafe, as measured: the safety checks stay in.
-RUN case "$TARGETARCH" in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; *) exit 1 ;; esac \
- && /opt/zig/zig build -Doptimize=ReleaseSafe -Dstrip -Dtarget=$arch-linux-musl --prefix /out
+# ReleaseSafe, as measured: the safety checks stay in. With the CPU's AES and carry-less multiplication, which presence
+# over UDP seals every datagram with: every server Arm core has them, and every x86 since Haswell (2013). Without, Zig's
+# software AES runs, several times slower.
+RUN case "$TARGETARCH" in amd64) arch=x86_64 cpu=x86_64_v3+aes+pclmul ;; arm64) arch=aarch64 cpu=generic+aes ;; *) exit 1 ;; esac \
+ && /opt/zig/zig build -Doptimize=ReleaseSafe -Dstrip -Dtarget=$arch-linux-musl -Dcpu=$cpu --prefix /out
 
 FROM scratch
 COPY --from=build /out/bin/joinery-relay /joinery-relay
 USER 65534:65534
-# WebSockets on 8787, Prometheus metrics on 9187.
-EXPOSE 8787 9187
+# WebSockets on 8787, presence over UDP on 8787 (--udp on), Prometheus metrics on 9187.
+EXPOSE 8787 8787/udp 9187
 ENTRYPOINT ["/joinery-relay"]
 CMD ["--address", "0.0.0.0", "--metrics-address", "0.0.0.0"]
