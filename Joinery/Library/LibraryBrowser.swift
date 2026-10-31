@@ -99,16 +99,10 @@ struct LibraryBrowser: View {
     /// corners are concentric with theirs.
     private var controls: some View {
         HStack(spacing: 8) {
-            let count = shown.count
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(title)
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(.tint)
-                Text(count == 1 ? "1 Data Model" : "\(count) Data Models")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
-            .lineLimit(1)
+            Text(title)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.tint)
+                .lineLimit(1)
             // Level with the models' leading edge below.
             .padding(.leading, Self.contentInset - Panel.controlInset)
             Spacer(minLength: 0)
