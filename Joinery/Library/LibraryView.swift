@@ -345,10 +345,34 @@ private struct CloseButton: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        .onHover { isHovered = $0 }
+        // AppKit's tracking, not `onHover`, which stops hearing it while the tabs are peeking.
+        .background(HoverTracker { isHovered = $0 })
         .animation(.smooth(duration: 0.15), value: isHovered)
         .help("Close tab (⌘W)")
         .accessibilityLabel("Close Tab")
+    }
+}
+
+/// Tells when the pointer enters and leaves its frame, by an AppKit tracking area; never in the way of clicks.
+private struct HoverTracker: NSViewRepresentable {
+    let changed: (Bool) -> Void
+
+    func makeNSView(context: Context) -> TrackingView { TrackingView() }
+    func updateNSView(_ view: TrackingView, context: Context) { view.changed = changed }
+
+    final class TrackingView: NSView {
+        var changed: (Bool) -> Void = { _ in }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach(removeTrackingArea)
+            addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                                           owner: self))
+        }
+
+        override func mouseEntered(with event: NSEvent) { changed(true) }
+        override func mouseExited(with event: NSEvent) { changed(false) }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
     }
 }
 
