@@ -150,8 +150,8 @@ private struct NewTabButton: View {
     }
 }
 
-/// Home, then the open models together in one glass group, a tab each with an icon of the model, its name and a ×; the
-/// one in front a raised pill in it. Drag a tab along the group to put it elsewhere: the others make way, and past the
+/// Home, then the open models together in one group on a subtle well, a tab each with an icon of the model, its name
+/// and a ×; the one in front a raised glass pill in it. Drag a tab along the group to put it elsewhere: the others make way, and past the
 /// group's ends it's pulled back (`TabDrag`).
 ///
 /// Rest on a tab a moment and they peek: the row grows down over the surface, each model's tab showing the model as
@@ -180,7 +180,8 @@ private struct TabBar: View {
     static let groupInset: CGFloat = 3
     private var groupRadius: CGFloat { tabHeight / 2 + Self.groupInset }
     static let groupSpace = "tabGroup"
-    static var groupShade: Color { Color(light: NSColor(white: 0, alpha: 0.07), dark: NSColor(white: 0, alpha: 0)) }
+    static var groupShade: Color { Color(light: NSColor(white: 0, alpha: 0.06), dark: NSColor(white: 1, alpha: 0.05)) }
+    static var groupEdge: Color { Color(light: NSColor(white: 0, alpha: 0.06), dark: NSColor(white: 1, alpha: 0.06)) }
 
     /// The tab being dragged: where the pointer took hold of it, from its leading edge, and where the pointer is now,
     /// both in the group.
@@ -215,9 +216,9 @@ private struct TabBar: View {
                 }
                 .coordinateSpace(.named(Self.groupSpace))
                 .padding(Self.groupInset)
-                .glassEffect(.regular, in: .rect(cornerRadius: groupRadius))
-                // A shade behind the glass in light mode, where it's nearly as white as the tab in front would be.
+                // A subtle well behind all the tabs; the glass is the tab in front's alone.
                 .background(RoundedRectangle(cornerRadius: groupRadius).fill(Self.groupShade))
+                .overlay(RoundedRectangle(cornerRadius: groupRadius).strokeBorder(Self.groupEdge, lineWidth: 0.5))
             }
             Spacer(minLength: 0)
             NewTabButton(library: library, size: tabHeight)
@@ -344,8 +345,8 @@ private struct CloseButton: View {
     }
 }
 
-/// A pill: on its own (home), glass; in the tab group, clear, the group's glass behind it. The one in front has a light
-/// fill, raised a little; on hover a fainter one fades in, as Safari's tabs lighten, the glass itself never changing,
+/// A pill: on its own (home), glass; in the tab group, clear on the group's subtle well, except the one in front,
+/// which is glass, over a light fill, raised a little; on hover a fainter one fades in, as Safari's tabs lighten, the glass itself never changing,
 /// so nothing flashes. Resting on it a moment calls `peek`.
 private struct Tab<Content: View>: View {
     let isFront: Bool
@@ -367,7 +368,7 @@ private struct Tab<Content: View>: View {
             .foregroundStyle(isFront ? .primary : .secondary)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             // A pill while it's as tall as its corners are round, and a card of the same corners when it grows.
-            .glassEffect(isGrouped ? .identity : isFront ? .regular : .clear, in: .rect(cornerRadius: cornerRadius))
+            .glassEffect(isFront ? .regular : isGrouped ? .identity : .clear, in: .rect(cornerRadius: cornerRadius))
             // Behind the glass, which shows it through.
             .background {
                 RoundedRectangle(cornerRadius: cornerRadius)
