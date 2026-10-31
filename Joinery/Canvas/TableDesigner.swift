@@ -1,8 +1,11 @@
 import SwiftUI
 
 /// A large panel over the canvas's right side for working on one table: its name and color, its columns (name, type,
-/// key, required, unique, what each references), made-up rows to show the kind of data it holds, as in a spreadsheet,
-/// and notes. Opened from a table's right-click menu or ⌘K.
+/// key, required, unique, what each references), its indexes, made-up rows to show the kind of data it holds, as in a
+/// spreadsheet, and notes. Opened from a table's right-click menu or ⌘K; a click anywhere off it puts it away.
+///
+/// Each column has a socket. Drag from one to another to tie them in a compound unique index, drawn as a cable in a
+/// color of its own; drag from a cable to another socket to add that column to it.
 ///
 /// Made to be used from the keyboard: it opens with the first column's name ready to type over. Tab moves across and on
 /// to the next row (past the last, a new one), and Return down to the same field a row on, past the last adding another; ⌘↩ inserts below and ⌘⌫ deletes the column or
@@ -25,6 +28,13 @@ struct TableDesigner: View {
     @AppStorage("tableDesignerWidth") private var width: Double = 680
     /// Its width when a drag on its edge began.
     @State private var widthBeforeDrag: Double?
+    /// A cable being drawn from a socket.
+    @State private var cableDrag: CableDrag?
+    /// Where the sockets are, in the column grid.
+    @State private var sockets: [Column.ID: CGPoint] = [:]
+
+    /// The column grid's coordinates, which the cables are drawn and dragged in.
+    static let columnsSpace = "designerColumns"
 
     // Corners step in with the padding, each the one around it less the space between: concentric.
     private static let panelRadius: CGFloat = 24
@@ -39,6 +49,7 @@ struct TableDesigner: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 22) {
                         section("Columns") { columns(table) }
+                        section("Indexes") { indexes(table) }
                         section("Sample Data") { samples(table) }
                         section("Notes") {
                             NotesEditor(text: table.notes, radius: Self.cardRadius) { notes in change { $0.notes = notes } }
@@ -177,6 +188,7 @@ struct TableDesigner: View {
             VStack(spacing: 0) {
                 Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 0) {
                     GridRow {
+                        Color.clear.frame(width: CableLayout.socketDiameter, height: 1)
                         Text("Key").gridColumnAlignment(.center)
                         Text("Name"); Text("Type")
                         Text("Required").gridColumnAlignment(.center)
@@ -191,7 +203,19 @@ struct TableDesigner: View {
                         columnRow(column, in: table)
                     }
                 }
+                // Room for every index's lane, and one more for a cable being drawn.
+                .padding(.leading, CableLayout.gutter(lanes: table.liveIndexes.count + 1))
                 .padding(.horizontal, 6)
+                .overlayPreferenceValue(SocketAnchors.self) { anchors in
+                    GeometryReader { proxy in
+                        let points = anchors.mapValues { proxy[$0] }
+                        IndexCables(table: table, sockets: points, drag: cableDrag, target: cableDrag.flatMap { target(of: $0, in: table) },
+                                    isReadOnly: isReadOnly, dragged: { cableDrag = $0 }, dropped: { finishCable(in: table) },
+                                    change: { change($0) })
+                            .onChange(of: points, initial: true) { sockets = points }
+                    }
+                }
+                .coordinateSpace(.named(Self.columnsSpace))
                 if !isReadOnly { Divider() }
                 addRow("Add Column") { addColumn(after: table.columns.last?.id, focusing: DesignerField.name) }
             }
@@ -200,6 +224,7 @@ struct TableDesigner: View {
 
     private func columnRow(_ column: Column, in table: Table) -> some View {
         GridRow {
+            socket(column, in: table)
             Button { changeColumn(column.id) { $0.isPrimaryKey.toggle() } } label: {
                 Image(systemName: column.isPrimaryKey ? "key.fill" : "key")
                     .foregroundStyle(column.isPrimaryKey ? AnyShapeStyle(table.color.color) : AnyShapeStyle(.tertiary))
@@ -248,6 +273,123 @@ struct TableDesigner: View {
                 .help("Delete column (⌘⌫)")
         }
         .padding(.vertical, 4)
+    }
+
+    /// A column's socket, to drag a cable from to another's: a compound unique index on the two.
+    private func socket(_ column: Column, in table: Table) -> some View {
+        let isTarget = cableDrag.flatMap { target(of: $0, in: table) } == column.id
+        return Circle()
+            .fill(isTarget ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.background))
+            .overlay(Circle().strokeBorder(isTarget ? Color.accentColor : Theme.socket, lineWidth: 1.5))
+            .frame(width: CableLayout.socketDiameter, height: CableLayout.socketDiameter)
+            .anchorPreference(key: SocketAnchors.self, value: .center) { [column.id: $0] }
+            .frame(width: 20, height: 24)
+            .contentShape(.rect)
+            .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named(Self.columnsSpace))
+                .onChanged { cableDrag = CableDrag(from: column.id, index: nil, location: $0.location) }
+                .onEnded { _ in finishCable(in: table) })
+            .disabled(isReadOnly)
+            .help("Drag to another column's socket to make a compound unique index")
+    }
+
+    /// The socket a cable would plug into: the one nearest the pointer, up or down, within half a row; not its own
+    /// column, or for more of an index, not one already in it.
+    private func target(of drag: CableDrag, in table: Table) -> Column.ID? {
+        let taken = drag.index.flatMap { id in table.indexes.first { $0.id == id }?.columns } ?? [drag.from]
+        return sockets.filter { !taken.contains($0.key) && abs($0.value.y - drag.location.y) < 16 }
+            .min { abs($0.value.y - drag.location.y) < abs($1.value.y - drag.location.y) }?.key
+    }
+
+    private func finishCable(in table: Table) {
+        guard let drag = cableDrag else { return }
+        cableDrag = nil
+        guard let target = target(of: drag, in: table) else { return }
+        change { table in
+            if let index = drag.index { table.add(target, toIndex: index) } else { table.addIndex(on: [drag.from, target]) }
+        }
+    }
+
+    /// Each compound index: its color, name, columns and whether it's unique.
+    private func indexes(_ table: Table) -> some View {
+        card {
+            VStack(spacing: 0) {
+                let indexes = table.liveIndexes
+                if indexes.isEmpty {
+                    Text("Drag from one column's socket to another's to make a compound unique index.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 0) {
+                        GridRow {
+                            Color.clear.frame(width: 16, height: 1)
+                            Text("Name"); Text("Columns")
+                            Text("Unique").gridColumnAlignment(.center)
+                            Color.clear.frame(width: 1, height: 1)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 6)
+                        ForEach(indexes) { index in
+                            Divider().gridCellUnsizedAxes(.horizontal)
+                            indexRow(index, in: table)
+                        }
+                    }
+                    .padding(.horizontal, 6)
+                }
+            }
+        }
+    }
+
+    private func indexRow(_ index: TableIndex, in table: Table) -> some View {
+        GridRow {
+            Menu {
+                ForEach(TableColor.allCases) { color in
+                    Button { changeIndex(index.id) { $0.color = color } } label: {
+                        Label(color.rawValue.capitalized, systemImage: color == index.color ? "checkmark.circle.fill" : "circle.fill")
+                    }
+                    .tint(color.color)
+                }
+            } label: {
+                Circle().fill(index.color.color.gradient).frame(width: 12, height: 12)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Color")
+            CommitField(text: index.name ?? "", prompt: table.name(of: index), field: .indexName(index.id), focus: $focus) { name in
+                let name = name.trimmingCharacters(in: .whitespaces)
+                changeIndex(index.id) { $0.name = name.isEmpty ? nil : name }
+            } onReturn: {
+                focus = nil
+            }
+            .font(.system(.body, design: .monospaced))
+            .modifier(Cell(isFocused: focus == .indexName(index.id)))
+            .frame(minWidth: 160, maxWidth: 260)
+            Text(table.columns(of: index).map(\.name).joined(separator: ", "))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Toggle("Unique", isOn: Binding { index.isUnique } set: { isOn in changeIndex(index.id) { $0.isUnique = isOn } })
+                .labelsHidden()
+                .help("Unique: no two rows may have the same values in all of these columns")
+            Button("Delete Index", systemImage: "minus.circle.fill") { change { $0.indexes.removeAll { $0.id == index.id } } }
+                .labelStyle(.iconOnly)
+                .symbolRenderingMode(.hierarchical)
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Delete index")
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func changeIndex(_ id: TableIndex.ID, _ body: (inout TableIndex) -> Void) {
+        change { table in
+            if let index = table.indexes.firstIndex(where: { $0.id == id }) { body(&table.indexes[index]) }
+        }
     }
 
     /// The made-up rows, a column per column, as in a spreadsheet: as wide as the panel, shared out, unless there are
@@ -478,6 +620,7 @@ private struct Cell: ViewModifier {
 /// Each field in the table designer, to move between them from the keyboard.
 enum DesignerField: Hashable {
     case tableName
+    case indexName(TableIndex.ID)
     case name(Column.ID)
     case type(Column.ID)
     case sample(Int, Column.ID)

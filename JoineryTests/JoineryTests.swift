@@ -1690,3 +1690,83 @@ struct JoineryTests {
         #expect(replica.digest == Digest() && replica.digest.description == "0000000000000000")
     }
 }
+
+
+// MARK: Indexes
+
+extension JoineryTests {
+    /// `orders` from `storefront()`, with three more columns to index.
+    private func indexedOrders() -> DataModel {
+        var model = storefront()
+        model.tables[1].columns += [Column(name: "status", type: .text), Column(name: "total", type: .numeric),
+                                    Column(name: "placed_at", type: .timestamp)]
+        return model
+    }
+
+    @Test func indexesKeepTwoOrMoreColumnsAndGoWithTheirColumns() throws {
+        var model = indexedOrders()
+        let columns = model.tables[1].columns.map(\.id)  // id, user_id, status, total, placed_at
+        model.tables[1].addIndex(on: [columns[1], columns[4]])
+        let triple = model.tables[1].addIndex(on: [columns[1], columns[2]], isUnique: false)
+        model.tables[1].add(columns[4], toIndex: triple)
+        model.tables[1].add(columns[4], toIndex: triple)  // Already in it: not twice.
+        #expect(model.tables[1].indexes.first { $0.id == triple }?.columns == [columns[1], columns[2], columns[4]])
+        // Each in a color of its own.
+        #expect(Set(model.tables[1].indexes.map(\.color)).count == 2)
+        #expect(model.tables[1].name(of: model.tables[1].indexes[0]) == "orders_user_id_placed_at_key")
+        #expect(model.tables[1].name(of: model.tables[1].indexes[1]) == "orders_user_id_status_placed_at_idx")
+
+        // Dropping placed_at leaves the pair with one column, so it goes; the triple keeps its other two.
+        model.removeColumn(columns[4])
+        #expect(model.tables[1].indexes.map(\.id) == [triple])
+        #expect(model.tables[1].indexes[0].columns == [columns[1], columns[2]])
+
+        // A file from before indexes reads as having none; one with them reads them back.
+        let older = try JSONDecoder().decode(Table.self, from: Data(#"{"id": "6A2D0F0E-3B8B-4C47-9E5A-1F2E3D4C5B6A", "name": "t", "position": [0, 0], "color": "blue"}"#.utf8))
+        #expect(older.indexes.isEmpty)
+        let again = try JSONDecoder().decode(Table.self, from: JSONEncoder().encode(model.tables[1]))
+        #expect(again.indexes == model.tables[1].indexes)
+    }
+
+    @Test func indexCablesNestShortestNearestAndFanOutAtSharedSockets() {
+        let a = UUID(), b = UUID(), c = UUID(), d = UUID()
+        let y: [Column.ID: CGFloat] = [a: 0, b: 30, c: 60, d: 90]
+        let long = TableIndex(columns: [a, d], color: .blue), short = TableIndex(columns: [b, c], color: .red),
+            middle = TableIndex(columns: [a, c], color: .green)
+        let layout = CableLayout(indexes: [long, short, middle], socketY: y)
+        #expect(layout.lanes == [short.id: 0, middle.id: 1, long.id: 2])
+        // Lanes step out to the left of the sockets.
+        #expect(CableLayout.laneX(1, socketX: 100) < CableLayout.laneX(0, socketX: 100))
+        // Two cables meet a: apart, centered on it, the nearer lane above.
+        let offsets = layout.offsets([long, short, middle])
+        #expect(offsets[middle.id]?[a] == -CableLayout.fan / 2 && offsets[long.id]?[a] == CableLayout.fan / 2)
+        #expect(offsets[short.id]?[b] == 0)
+        // A cable reaches from its lane to its sockets' edges, its turns rounded rather than square.
+        let path = CableLayout.path(through: [CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 45), CGPoint(x: 100, y: 90)], laneX: 70)
+        let bounds = path.boundingRect
+        #expect(bounds.minX == 70 && bounds.maxX == 100 - CableLayout.socketDiameter / 2)
+        #expect(bounds.minY == 0 && bounds.maxY == 90)
+        #expect(!path.contains(CGPoint(x: 70, y: 0.5)), "the top corner is rounded off")
+    }
+
+    @Test func indexesExportAsSQLAndComeFromAssistants() throws {
+        var model = indexedOrders()
+        _ = try ModelTools.call("alter_table", ["table": "orders", "add_indexes": [
+            ["columns": ["user_id", "placed_at"]],
+            ["columns": ["status", "total"], "unique": false, "name": "orders_by_status"],
+        ]], on: &model)
+        #expect(model.tables[1].indexes.count == 2)
+        #expect(throws: ModelTools.Failure.self) {
+            try ModelTools.call("alter_table", ["table": "orders", "add_indexes": [["columns": ["status"]]]], on: &model)
+        }
+        let described = try ModelTools.describe(model)
+        #expect(described.contains("orders_user_id_placed_at_key") && described.contains("orders_by_status"))
+
+        let markdown = model.markdown(of: [model.tables[1].id], title: "Shop")
+        #expect(markdown.contains("  CONSTRAINT orders_user_id_placed_at_key UNIQUE (user_id, placed_at)\n);"))
+        #expect(markdown.contains("CREATE INDEX orders_by_status ON orders (status, total);"))
+
+        _ = try ModelTools.call("alter_table", ["table": "orders", "drop_indexes": ["orders_by_status"]], on: &model)
+        #expect(model.tables[1].indexes.count == 1)
+    }
+}

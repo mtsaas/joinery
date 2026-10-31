@@ -63,7 +63,7 @@ enum ModelTools {
         ],
         [
             "name": "alter_table",
-            "description": "Changes a table: renames it, recolors it, adds, drops or changes columns. A changed column's references can be set to a table or column, or to an empty string to drop its foreign key.",
+            "description": "Changes a table: renames it, recolors it, adds, drops or changes columns, and adds or drops indexes on two or more columns (a compound unique constraint, or a plain index). A changed column's references can be set to a table or column, or to an empty string to drop its foreign key. A single column's uniqueness is its own unique flag; a compound primary key is every column marked primary_key.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -91,6 +91,19 @@ enum ModelTools {
                             "required": ["name"],
                         ],
                     ],
+                    "add_indexes": [
+                        "type": "array",
+                        "items": [
+                            "type": "object",
+                            "properties": [
+                                "columns": ["type": "array", "items": ["type": "string"], "description": "Two or more of its columns, in order."],
+                                "unique": ["type": "boolean", "description": "Defaults to true: no two rows with the same values in all of them."],
+                                "name": ["type": "string", "description": "Its name in SQL; left out, one made from the table's and columns' names."],
+                            ],
+                            "required": ["columns"],
+                        ],
+                    ],
+                    "drop_indexes": ["type": "array", "items": ["type": "string"], "description": "Indexes to drop, by name."],
                 ],
                 "required": ["table"],
             ],
@@ -256,6 +269,11 @@ enum ModelTools {
                     return description
                 },
             ]
+            if !table.liveIndexes.isEmpty {
+                description["indexes"] = table.liveIndexes.map { index -> [String: Any] in
+                    ["name": table.name(of: index), "columns": table.columns(of: index).map(\.name), "unique": index.isUnique]
+                }
+            }
             if !table.notes.isEmpty { description["notes"] = table.notes }
             // Its sample rows, by column name.
             if !table.samples.isEmpty {
@@ -420,9 +438,26 @@ enum ModelTools {
             model.connect(column, to: try self.column(named: reference, in: model))
         }
         if !added.isEmpty { changes.append("added \(added.map(\.column.name).joined(separator: ", "))") }
+        for name in arguments["drop_indexes"] as? [String] ?? [] {
+            let table = model.tables[index]
+            guard let dropped = table.indexes.first(where: { table.name(of: $0).lowercased() == name.lowercased() }) else {
+                throw Failure("\(table.name) has no index called \(name).")
+            }
+            model.tables[index].indexes.removeAll { $0.id == dropped.id }
+            changes.append("dropped index \(name)")
+        }
+        for spec in arguments["add_indexes"] as? [[String: Any]] ?? [] {
+            let names = spec["columns"] as? [String] ?? []
+            let columns = try names.map { try column(named: $0, in: model.tables[index]).id }
+            guard Set(columns).count >= 2 else { throw Failure("An index needs two or more different columns; a single column has its own unique flag.") }
+            let name = (spec["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            let id = model.tables[index].addIndex(on: columns, isUnique: spec["unique"] as? Bool ?? true, name: name)
+            let table = model.tables[index]
+            changes.append("added index \(table.indexes.first { $0.id == id }.map(table.name(of:)) ?? names.joined(separator: ", "))")
+        }
         try requireUniqueColumns(model.tables[index])
         guard !changes.isEmpty else {
-            throw Failure("Nothing to change: give rename_to, color, schema, add_columns, drop_columns or change_columns.")
+            throw Failure("Nothing to change: give rename_to, color, schema, add_columns, drop_columns, change_columns, add_indexes or drop_indexes.")
         }
         return "\(model.tables[index].name): " + changes.joined(separator: "; ") + "."
     }
