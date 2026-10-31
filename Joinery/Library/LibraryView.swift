@@ -159,7 +159,7 @@ private struct TabBar: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 .background {
                     Capsule()
-                        .fill(isFront ? AnyShapeStyle(Self.frontFill) : hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+                        .fill(isFront ? Self.frontFill : hovering ? Self.hoverFill : Self.fill)
                         .shadow(color: .black.opacity(isFront ? 0.1 : 0), radius: 1, y: 0.5)
                 }
                 .contentShape(.capsule)
@@ -167,7 +167,10 @@ private struct TabBar: View {
                 .onHover { hovering = $0; isHovered?.wrappedValue = $0 }
         }
 
-        static var frontFill: Color { Color(light: .white, dark: NSColor(white: 1, alpha: 0.12)) }
+        /// Every tab is a pill: faint behind, a little stronger on hover, filled in front.
+        static var fill: Color { Color(light: NSColor(white: 0, alpha: 0.05), dark: NSColor(white: 1, alpha: 0.06)) }
+        static var hoverFill: Color { Color(light: NSColor(white: 0, alpha: 0.09), dark: NSColor(white: 1, alpha: 0.1)) }
+        static var frontFill: Color { Color(light: .white, dark: NSColor(white: 1, alpha: 0.16)) }
     }
 }
 
@@ -197,7 +200,6 @@ private struct TabIcon: View {
         .background(Theme.canvas)
         // Concentric with the tab: a pill whose ends are its ends, less the inset.
         .clipShape(.capsule)
-        .overlay(Capsule().strokeBorder(Theme.cardBorder))
     }
 }
 
