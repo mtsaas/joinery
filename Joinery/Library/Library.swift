@@ -28,8 +28,14 @@ final class Library {
     /// Models not in any collection.
     private(set) var models: [URL] = []
     private(set) var collections: [Collection] = []
-    /// The model being edited.
+    /// Models open in tabs, in the tab bar's order.
+    private(set) var tabs: [OpenModel] = []
+    /// Whether the tabs are grown to show each model as it is now, the pointer having rested on one.
+    var isPeeking = false
+    /// The tab in front, or nil with the library browser shown.
     private(set) var open: OpenModel?
+    /// The model in front: setting it brings its tab forward, opening one if need be; nil goes home, to the library,
+    /// leaving the tabs open.
     var selection: URL? {
         didSet { if selection != oldValue { openSelection() } }
     }
@@ -66,7 +72,7 @@ final class Library {
         }
         reload()
         NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.open?.saveNow() }
+            MainActor.assumeIsolated { self?.tabs.forEach { $0.saveNow() } }
         }
     }
 
@@ -166,7 +172,7 @@ final class Library {
                 client.attach(to: open)
                 client.onEnd = { [weak self] reason in
                     guard let self else { return }
-                    if self.open?.url == url { self.selection = nil }
+                    if let tab = self.tabs.first(where: { $0.url == url }) { self.close(tab) }
                     try? self.files.removeItem(at: folder)
                     // Leaving needs no telling.
                     if reason != SessionClient.leftReason { self.failure = reason }
@@ -226,7 +232,7 @@ final class Library {
 
     func duplicate(_ url: URL) {
         attempt("duplicate it") {
-            open?.saveNow()
+            tabs.first { $0.url == url }?.saveNow()
             let copy = unique(Self.name(of: url) + " copy", extension: "joinery", in: url.deletingLastPathComponent())
             try files.copyItem(at: url, to: copy)
             // A copy starts out ordinary, whatever the original was, though with its history.
@@ -239,7 +245,7 @@ final class Library {
     /// Moves a model or collection to the Trash, where it can be put back from.
     func trash(_ url: URL) {
         attempt("move it to the Trash") {
-            if let selection, selection.path.hasPrefix(url.path) { self.selection = nil }
+            for tab in tabs where tab.url.path.hasPrefix(url.path) { close(tab) }
             try files.trashItem(at: url, resultingItemURL: nil)
             reload()
         }
@@ -277,37 +283,72 @@ final class Library {
 
     // MARK: Helpers
 
+    /// Closes a tab, saving it first; the one beside it comes forward if it was in front.
+    func close(_ tab: OpenModel) {
+        guard let index = tabs.firstIndex(where: { $0 === tab }) else { return }
+        tabs.remove(at: index)
+        // Out of the tabs first, so a session's end, which closes its tab, finds nothing more to do.
+        tab.session?.close()
+        tab.saveNow()
+        guard tab === open else { return }
+        selection = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].url
+    }
+
+    /// Moves the tab showing `url` to `index` in the tab bar.
+    /// - Returns: Whether it's a tab's.
+    @discardableResult
+    func moveTab(_ url: URL, to index: Int) -> Bool {
+        guard let from = tabs.firstIndex(where: { $0.url == url }) else { return false }
+        tabs.insert(tabs.remove(at: from), at: min(index, tabs.count))
+        return true
+    }
+
+    /// Brings forward the tab `offset` along from the one in front, wrapping round.
+    func showTab(offset: Int) {
+        guard !tabs.isEmpty else { return }
+        let current = open.flatMap { open in tabs.firstIndex { $0 === open } } ?? (offset > 0 ? -1 : 0)
+        selection = tabs[(current + offset + tabs.count) % tabs.count].url
+    }
+
     private func openSelection() {
-        // Already open, renamed.
-        if let selection, selection == open?.url { return }
-        open?.session?.close()
+        // Leaving it, for now: saved, but left open.
         open?.saveNow()
-        open = nil
-        // Back in the browser: what was open has changed.
-        guard let selection else { return reload() }
+        guard let selection else {
+            open = nil
+            // Back in the browser: what was open has changed.
+            return reload()
+        }
+        // Already open, perhaps renamed.
+        if let tab = tabs.first(where: { $0.url == selection }) {
+            open = tab
+            return
+        }
         do {
-            open = try OpenModel(url: selection)
+            let tab = try OpenModel(url: selection)
+            // Next to the tab it was opened from, as a browser does.
+            let index = open.flatMap { open in tabs.firstIndex { $0 === open } }.map { $0 + 1 } ?? tabs.endIndex
+            tabs.insert(tab, at: index)
+            open = tab
             selection.setExtendedAttribute(Self.openedAttribute, to: Data(String(Date.now.timeIntervalSinceReferenceDate).utf8))
             details[selection]?.opened = .now
         } catch {
+            open = nil
             failure = "Couldn't open “\(Self.name(of: selection))”: \(error.localizedDescription)"
         }
     }
 
-    /// Moves `url` (a model or collection), keeping the selection on whatever moved.
+    /// Moves `url` (a model or collection). Models open in it stay open, where they've gone.
     private func relocate(_ url: URL, to destination: URL, doing description: String) {
         attempt(description) {
-            open?.saveNow()
-            let selected = selection
-            // The open model, renamed, stays open as it is; anything else selected is let go of while it moves.
-            let isOpen = open?.url == url
-            if !isOpen, let selected, selected.path.hasPrefix(url.path) { selection = nil }
+            let moving = tabs.filter { $0.url.path.hasPrefix(url.path) }
+            moving.forEach { $0.saveNow() }
             try files.moveItem(at: url, to: destination)
-            if isOpen { open?.moved(to: destination) }
-            reload()
-            if let selected, selected.path.hasPrefix(url.path) {
-                selection = URL(filePath: destination.path + selected.path.dropFirst(url.path.count))
+            // Collections hold only models, so a model moving with one is just inside it.
+            for tab in moving {
+                tab.moved(to: tab.url == url ? destination : destination.appending(path: tab.url.lastPathComponent, directoryHint: .notDirectory))
             }
+            reload()
+            if let open, moving.contains(where: { $0 === open }) { selection = open.url }
         }
     }
 

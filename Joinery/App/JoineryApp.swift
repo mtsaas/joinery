@@ -10,6 +10,8 @@ struct JoineryApp: App {
             LibraryView(library: .shared)
         }
         .defaultSize(width: 1440, height: 880)
+        // The tabs take the title bar's place, beside the window's buttons.
+        .windowStyle(.hiddenTitleBar)
         .commands {
             LibraryCommands(library: .shared)
             CanvasCommands()
@@ -66,10 +68,45 @@ struct LibraryCommands: Commands {
             Button("Show Library in Finder") { library.showInFinder(library.root) }
         }
         CommandGroup(replacing: .saveItem) {
+            // As Safari has them. With no tab open, Close Tab closes the window. Titles that don't change with what's
+            // open: a menu's titles aren't always rebuilt when it changes.
+            Button("Close Tab") {
+                if let open = library.open { library.close(open) } else { NSApp.keyWindow?.performClose(nil) }
+            }
+            .keyboardShortcut("w")
+            Button("Close Window") { NSApp.keyWindow?.performClose(nil) }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
+            Divider()
             // Changes save themselves; this keeps the data model as it is in its version history.
             Button("Save Version") { library.open?.saveVersionNow() }
                 .keyboardShortcut("s")
                 .disabled(library.open == nil)
+        }
+        // The model in front's own undo history; text being edited keeps the window's.
+        CommandGroup(replacing: .undoRedo) {
+            Button("Undo") { undo(redo: false) }
+                .keyboardShortcut("z")
+            Button("Redo") { undo(redo: true) }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+        }
+        CommandGroup(before: .windowList) {
+            Button("Home") { library.selection = nil }
+                .keyboardShortcut(.upArrow, modifiers: .command)
+            Button("Show Next Tab") { library.showTab(offset: 1) }
+                .keyboardShortcut(.tab, modifiers: .control)
+                .disabled(library.tabs.isEmpty)
+            Button("Show Previous Tab") { library.showTab(offset: -1) }
+                .keyboardShortcut(.tab, modifiers: [.control, .shift])
+                .disabled(library.tabs.isEmpty)
+            Divider()
+        }
+    }
+
+    private func undo(redo: Bool) {
+        if NSApp.keyWindow?.firstResponder is NSText || library.open == nil {
+            NSApp.sendAction(Selector((redo ? "redo:" : "undo:")), to: nil, from: nil)
+        } else if let manager = library.open?.undoManager {
+            redo ? manager.redo() : manager.undo()
         }
     }
 

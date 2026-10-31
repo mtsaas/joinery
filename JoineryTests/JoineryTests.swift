@@ -1339,9 +1339,8 @@ struct JoineryTests {
         let url = folder.appending(path: "Storefront.joinery")
         try FileManager.default.copyItem(at: example, to: url)
         let open = try OpenModel(url: url)
-        let undo = UndoManager()
+        let undo = open.undoManager
         undo.groupsByEvent = false
-        open.undoManager = undo
 
         var random = Seeded(state: seed)
         var states = [open.model]
@@ -1408,9 +1407,8 @@ struct JoineryTests {
         let client = try #require(SessionClient(link: link ?? host.links?.edit ?? "") { _, _ in opened = try? self.openStorefront() })
         try await until { opened != nil }
         let model = try #require(opened)
-        let undo = UndoManager()
+        let undo = model.undoManager
         undo.groupsByEvent = false
-        model.undoManager = undo
         client.attach(to: model)
         return (client, model, undo)
     }
@@ -1419,9 +1417,9 @@ struct JoineryTests {
     private func edit(_ open: OpenModel, _ change: (inout DataModel) -> Void) {
         var model = open.model
         change(&model)
-        open.undoManager?.beginUndoGrouping()
+        open.undoManager.beginUndoGrouping()
         open.change(to: model)
-        open.undoManager?.endUndoGrouping()
+        open.undoManager.endUndoGrouping()
     }
 
     @Test func aJoinedCopyStaysTheSameAsTheHosts() async throws {
