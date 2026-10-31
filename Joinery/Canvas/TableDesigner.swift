@@ -659,7 +659,7 @@ private struct IndexColumnsField: View {
             ForEach(columns) { column in pill(column) }
             TextField(prompt, text: $draft)
                 .textFieldStyle(.plain)
-                .font(.system(.callout, design: .monospaced))
+                .font(.callout)
                 .frame(minWidth: 80)
                 .focused($isFocused)
                 .textInputSuggestions {
@@ -694,7 +694,7 @@ private struct IndexColumnsField: View {
     private func pill(_ column: Column) -> some View {
         HStack(spacing: 3) {
             Text(column.name)
-                .font(.system(.callout, design: .monospaced))
+                .font(.callout)
                 .lineLimit(1)
             Button("Remove \(column.name)", systemImage: "xmark") { remove(column.id) }
                 .labelStyle(.iconOnly)
