@@ -66,8 +66,9 @@ extension View {
     }
 }
 
-/// The library, then the open models, one tab each, as Safari's tab bar has them: the one in front is raised, and
-/// each closes with its × (shown on hover, or always on the one in front) or ⌘W. Drag one to put it elsewhere.
+/// The library, then the open models, one pill-shaped tab each, from the leading edge: an icon of the model and its
+/// name, the one in front filled. Each closes with the × that takes its icon's place on hover, or ⌘W. Drag one to put
+/// it elsewhere.
 private struct TabBar: View {
     let library: Library
     let height: CGFloat
@@ -76,29 +77,29 @@ private struct TabBar: View {
     static let leading: CGFloat = 78
     static let spacing: CGFloat = 4
     static let inset = Panel.tabInset
-    /// A tab's corners.
-    static let cornerRadius: CGFloat = 7
+    /// The widest a tab gets; a long name is cut short in the middle.
+    static let maxWidth: CGFloat = 200
 
     var body: some View {
         HStack(spacing: Self.spacing) {
             Tab(isFront: library.open == nil, select: { library.selection = nil }) {
-                Label("All Data Models", systemImage: "square.grid.2x2").labelStyle(.iconOnly)
+                Image(systemName: "square.grid.2x2")
+                    .frame(maxWidth: .infinity)
             }
-            .frame(width: height * 1.4)
+            // A circle: as wide as it's tall.
+            .frame(width: height - 2 * Self.inset)
             .help("All data models (⌘↑)")
             ForEach(library.tabs, id: \.url) { tab in
-                Tab(isFront: tab === library.open, select: { library.selection = tab.url }, close: { library.close(tab) }) {
-                    Text(tab.name)
-                }
-                .frame(maxWidth: .infinity)
-                .help(tab.name)
-                .draggable(tab.url)
-                .dropDestination(for: URL.self) { urls, _ in
-                    guard let dragged = urls.first, let index = library.tabs.firstIndex(where: { $0 === tab }) else { return false }
-                    return library.moveTab(dragged, to: index)
-                }
+                ModelTab(tab: tab, isFront: tab === library.open, select: { library.selection = tab.url }, close: { library.close(tab) })
+                    .frame(maxWidth: Self.maxWidth)
+                    .help(tab.name)
+                    .draggable(tab.url)
+                    .dropDestination(for: URL.self) { urls, _ in
+                        guard let dragged = urls.first, let index = library.tabs.firstIndex(where: { $0 === tab }) else { return false }
+                        return library.moveTab(dragged, to: index)
+                    }
             }
-            if library.tabs.isEmpty { Spacer() }
+            Spacer(minLength: 0)
             Button("New Data Model", systemImage: "plus") { library.newModel(in: library.selection.flatMap(library.collection(of:))) }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
@@ -111,45 +112,92 @@ private struct TabBar: View {
         .frame(height: height)
     }
 
-    private struct Tab<Content: View>: View {
+    /// A model's tab: its icon, or the × on hover, then its name.
+    private struct ModelTab: View {
+        let tab: OpenModel
         let isFront: Bool
         let select: () -> Void
-        var close: (() -> Void)?
-        @ViewBuilder let content: Content
+        let close: () -> Void
         @State private var isHovered = false
 
         var body: some View {
-            ZStack {
-                content
-                    .font(.callout.weight(isFront ? .medium : .regular))
-                    .foregroundStyle(isFront ? .primary : .secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    // Clear of the × at either side, so it stays centered.
-                    .padding(.horizontal, close == nil ? 4 : 22)
-                if let close {
-                    HStack {
-                        Button("Close Tab", systemImage: "xmark", action: close)
-                            .labelStyle(.iconOnly)
-                            .buttonStyle(.borderless)
-                            .font(.caption2.weight(.semibold))
-                            .opacity(isFront || isHovered ? 1 : 0)
-                            .help("Close tab (⌘W)")
-                        Spacer()
+            Tab(isFront: isFront, select: select, isHovered: $isHovered) {
+                HStack(spacing: 6) {
+                    ZStack {
+                        TabIcon(model: tab.model).opacity(isHovered ? 0 : 1)
+                        if isHovered {
+                            Button("Close Tab", systemImage: "xmark", action: close)
+                                .labelStyle(.iconOnly)
+                                .buttonStyle(.borderless)
+                                .font(.caption2.weight(.bold))
+                                .help("Close tab (⌘W)")
+                        }
                     }
-                    .padding(.leading, 6)
+                    Text(tab.name)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
                 }
+                // The icon as far in from the pill's leading end as from its top and bottom.
+                .padding(.leading, TabIcon.inset)
+                .padding(.trailing, 12)
             }
-            .frame(maxHeight: .infinity)
-            .background {
-                RoundedRectangle(cornerRadius: TabBar.cornerRadius)
-                    .fill(isFront ? AnyShapeStyle(.background) : isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
-                    .shadow(color: .black.opacity(isFront ? 0.12 : 0), radius: 1, y: 0.5)
-            }
-            .contentShape(.rect)
-            .onTapGesture(perform: select)
-            .onHover { isHovered = $0 }
         }
+    }
+
+    /// A pill, filled in front, faintly on hover.
+    private struct Tab<Content: View>: View {
+        let isFront: Bool
+        let select: () -> Void
+        var isHovered: Binding<Bool>? = nil
+        @ViewBuilder let content: Content
+        @State private var hovering = false
+
+        var body: some View {
+            content
+                .font(.callout.weight(isFront ? .medium : .regular))
+                .foregroundStyle(isFront ? .primary : .secondary)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .background {
+                    Capsule()
+                        .fill(isFront ? AnyShapeStyle(Self.frontFill) : hovering ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
+                        .shadow(color: .black.opacity(isFront ? 0.1 : 0), radius: 1, y: 0.5)
+                }
+                .contentShape(.capsule)
+                .onTapGesture(perform: select)
+                .onHover { hovering = $0; isHovered?.wrappedValue = $0 }
+        }
+
+        static var frontFill: Color { Color(light: .white, dark: NSColor(white: 1, alpha: 0.12)) }
+    }
+}
+
+/// A model in miniature, as a favicon: its tables, in their colors and where they are, in a pill concentric with the
+/// tab's.
+private struct TabIcon: View {
+    let model: DataModel
+
+    /// In from the tab's edges.
+    static let inset: CGFloat = 4
+    static let size = CGSize(width: 24, height: 16)
+
+    var body: some View {
+        Canvas { context, size in
+            let frames = model.tables.map { (Metrics.frame(of: $0), $0.color) }
+            guard let bounds = frames.map(\.0).reduce(nil, { $0?.union($1) ?? $1 }) else { return }
+            let padding: CGFloat = 3
+            let scale = min((size.width - 2 * padding) / bounds.width, (size.height - 2 * padding) / bounds.height)
+            let offset = CGPoint(x: (size.width - bounds.width * scale) / 2, y: (size.height - bounds.height * scale) / 2)
+            for (frame, color) in frames {
+                let rect = CGRect(x: offset.x + (frame.minX - bounds.minX) * scale, y: offset.y + (frame.minY - bounds.minY) * scale,
+                                  width: max(1, frame.width * scale), height: max(1, frame.height * scale))
+                context.fill(Path(rect), with: .color(color.color))
+            }
+        }
+        .frame(width: Self.size.width, height: Self.size.height)
+        .background(Theme.canvas)
+        // Concentric with the tab: a pill whose ends are its ends, less the inset.
+        .clipShape(.capsule)
+        .overlay(Capsule().strokeBorder(Theme.cardBorder))
     }
 }
 
