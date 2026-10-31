@@ -54,9 +54,16 @@ extension DataModel {
                 return part
             }
             if keys.count > 1 { parts.append("  PRIMARY KEY (\(keys.map { Self.sqlName($0.name) }.joined(separator: ", ")))") }
+            let columnList = { (index: TableIndex) in table.columns(of: index).map { Self.sqlName($0.name) }.joined(separator: ", ") }
+            for index in table.liveIndexes where index.isUnique {
+                parts.append("  CONSTRAINT \(Self.sqlName(table.name(of: index))) UNIQUE (\(columnList(index)))")
+            }
             lines.append("CREATE TABLE \(qualified(table)) (")
             lines.append(parts.joined(separator: ",\n"))
             lines.append(");")
+            for index in table.liveIndexes where !index.isUnique {
+                lines.append("CREATE INDEX \(Self.sqlName(table.name(of: index))) ON \(qualified(table)) (\(columnList(index)));")
+            }
             if number < chosen.count - 1 { lines.append("") }
         }
         lines += ["```", ""]
