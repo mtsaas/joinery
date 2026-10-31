@@ -87,6 +87,20 @@ struct Table: Codable, Identifiable, Equatable {
     var notes = ""
     /// As wide as it's been dragged, in canvas points; nil for the usual width (`Metrics.tableWidth`).
     var width: CGFloat?
+    /// Indexes on more than one column, unique or not: a single column's uniqueness is its own `isUnique`, and a
+    /// compound primary key is every column marked `isPrimaryKey`.
+    var indexes: [TableIndex] = []
+}
+
+/// An index on two or more of a table's columns, in order: unique by default, as a compound unique constraint. Drawn
+/// in the table designer as a cable between its columns' sockets, in its own color.
+struct TableIndex: Codable, Identifiable, Equatable {
+    var id = UUID()
+    var columns: [Column.ID]
+    var isUnique = true
+    /// Its name in SQL; nil for one made from the table's and columns' names.
+    var name: String?
+    var color: TableColor
 }
 
 extension Table {
@@ -102,6 +116,41 @@ extension Table {
         samples = try container.decodeIfPresent([[String: String]].self, forKey: .samples) ?? []
         notes = try container.decodeIfPresent(String.self, forKey: .notes) ?? ""
         width = try container.decodeIfPresent(CGFloat.self, forKey: .width)
+        indexes = try container.decodeIfPresent([TableIndex].self, forKey: .indexes) ?? []
+    }
+
+    /// An index's columns that are still in the table, in its order.
+    func columns(of index: TableIndex) -> [Column] {
+        index.columns.compactMap { id in columns.first { $0.id == id } }
+    }
+
+    /// Its indexes with at least two of their columns still in the table: the ones that mean anything.
+    var liveIndexes: [TableIndex] { indexes.filter { columns(of: $0).count >= 2 } }
+
+    /// An index's name in SQL: its own, or the table's and its columns' names, as Postgres makes one.
+    func name(of index: TableIndex) -> String {
+        index.name ?? ([name] + columns(of: index).map(\.name) + [index.isUnique ? "key" : "idx"]).joined(separator: "_")
+    }
+
+    /// Starts a unique index on `columns`, in a color none of its other indexes has, if there's one left.
+    @discardableResult
+    mutating func addIndex(on columns: [Column.ID], isUnique: Bool = true, name: String? = nil, id: TableIndex.ID = UUID()) -> TableIndex.ID {
+        let used = Set(indexes.map(\.color))
+        let color = TableColor.allCases.filter { !used.contains($0) }.randomElement() ?? TableColor.allCases.randomElement() ?? .blue
+        indexes.append(TableIndex(id: id, columns: columns, isUnique: isUnique, name: name, color: color))
+        return id
+    }
+
+    /// Adds a column to the end of an index, unless it's in it already.
+    mutating func add(_ column: Column.ID, toIndex id: TableIndex.ID) {
+        guard let index = indexes.firstIndex(where: { $0.id == id }), !indexes[index].columns.contains(column) else { return }
+        indexes[index].columns.append(column)
+    }
+
+    /// Takes a column out of its indexes, and drops any left with fewer than two.
+    mutating func removeFromIndexes(_ column: Column.ID) {
+        for index in indexes.indices { indexes[index].columns.removeAll { $0 == column } }
+        indexes.removeAll { $0.columns.count < 2 }
     }
 
     /// A sample row's value for a column.

@@ -126,6 +126,18 @@ struct CanvasView: View {
                 .padding(.top, 64)
             }
         }
+        // A click anywhere off the table designer puts it away, as a popover goes: what's being typed in it is kept
+        // first, since its fields keep their text when they lose focus.
+        .overlay {
+            if canvas.designing != nil {
+                Color.clear
+                    .contentShape(.rect)
+                    .onTapGesture {
+                        NSApp.keyWindow?.makeFirstResponder(nil)
+                        DispatchQueue.main.async { withAnimation(.smooth(duration: 0.25)) { canvas.designing = nil } }
+                    }
+            }
+        }
         .overlay(alignment: .trailing) {
             if let id = canvas.designing {
                 TableDesigner(model: $model, id: id, command: $canvas.designerCommand, isInGrid: $canvas.isDesignerInGrid,
