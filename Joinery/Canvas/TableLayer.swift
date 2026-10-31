@@ -180,6 +180,7 @@ struct TableLayer: View {
         context.fill(lines, with: .color(Theme.cardBorder))
         context.stroke(borders, with: .color(Theme.cardBorder), lineWidth: hairline)
         for (color, path) in edges { context.stroke(path, with: .color(color.headerBorder), lineWidth: edgeWidth) }
+        drawSheen(visible, in: &context, hairline: hairline)
         if zoom >= Self.textZoom { drawText(visible, in: &context) }
         context.stroke(cursors, with: .color(.accentColor), lineWidth: max(2, 1.5 / zoom))
         for (change, path) in changeRings {
@@ -187,6 +188,26 @@ struct TableLayer: View {
         }
         context.stroke(rings, with: .color(.accentColor), lineWidth: Metrics.selectionWidth)
         drawSockets(visible, in: &context)
+    }
+
+    /// Glass, as the tabs and window have it: light catching each card's top edge and fading down its sides, and a
+    /// gloss down its header. A gradient each, as each card's is its own.
+    private func drawSheen(_ visible: [(table: Table, frame: CGRect)], in context: inout GraphicsContext, hairline: CGFloat) {
+        let isDark = context.environment.colorScheme == .dark
+        let rimLight = Color.white.opacity(isDark ? 0.2 : 0.9), gloss = Color.white.opacity(isDark ? 0.06 : 0.4)
+        let radius = Metrics.cornerRadius, header = Metrics.headerHeight
+        // A point wide on screen, just inside the border.
+        let rim = 1 / zoom, inset = hairline + rim / 2
+        for (_, frame) in visible {
+            let fade = { (color: Color) in
+                GraphicsContext.Shading.linearGradient(Gradient(colors: [color, color.opacity(0)]), startPoint: CGPoint(x: 0, y: frame.minY),
+                                                       endPoint: CGPoint(x: 0, y: frame.minY + header))
+            }
+            let top = CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: header)
+            context.fill(Path(roundedRect: top, cornerRadii: .init(topLeading: radius, topTrailing: radius), style: .circular), with: fade(gloss))
+            context.stroke(Path(roundedRect: frame.insetBy(dx: inset, dy: inset), cornerRadius: radius - inset, style: .circular),
+                           with: fade(rimLight), lineWidth: rim)
+        }
     }
 
     /// Every cell's text, and the badges and key labels, drawn with Core Text from laid-out lines.
