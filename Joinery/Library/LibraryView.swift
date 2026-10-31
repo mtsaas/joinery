@@ -390,7 +390,7 @@ private struct Tab<Content: View>: View {
     }
 }
 
-/// A model in miniature, as a favicon: its tables, in their colors and where they are, in a pill.
+/// A model in miniature, as a favicon: its tables, in their colors and where they are, straight on the tab.
 struct ModelIcon: View {
     let model: DataModel?
 
@@ -410,8 +410,6 @@ struct ModelIcon: View {
             }
         }
         .frame(width: Self.size.width, height: Self.size.height)
-        .background(Theme.canvas)
-        .clipShape(.capsule)
     }
 }
 
