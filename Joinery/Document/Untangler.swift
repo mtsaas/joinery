@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Moves some tables, a step at a time, toward where fewer wires cross: gradient descent on how tangled things are.
@@ -117,7 +119,7 @@ struct Untangler {
         slopes.withUnsafeMutableBufferPointer { results in
             let results = results
             let work = { (number: Int) in results[number] = self.slope(of: self.moving[number], segments: segments) }
-            if moving.count < 4 { (0..<moving.count).forEach(work) } else { DispatchQueue.concurrentPerform(iterations: moving.count, execute: work) }
+            inParallel(moving.count, work)
         }
         for (number, table) in moving.enumerated() {
             let g = slopes[number]

@@ -1,4 +1,8 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#else
+import Foundation
+#endif
 
 // Points double as vectors: the canvas only ever needs positions and directions in the same plane.
 extension CGPoint {

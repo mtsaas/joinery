@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Where every wire comes to rest: a smooth curve from its foreign key's socket, through its zip ties, to the
@@ -305,8 +307,7 @@ struct Routing {
                 route.avoid(toAvoid[index].obstacles, staying: toAvoid[index].own)
                 results[index] = route
             }
-            // A few aren't worth the handoff.
-            if toAvoid.count < 4 { (0..<toAvoid.count).forEach(work) } else { DispatchQueue.concurrentPerform(iterations: toAvoid.count, execute: work) }
+            inParallel(toAvoid.count, work)
         }
         for (wire, route) in zip(toAvoid, avoided) { routes[wire.id] = route }
     }

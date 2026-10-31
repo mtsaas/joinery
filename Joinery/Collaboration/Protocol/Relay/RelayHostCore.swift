@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 
 /// The host's side of a relayed session, without the network or the app. See `docs/relay.md`.

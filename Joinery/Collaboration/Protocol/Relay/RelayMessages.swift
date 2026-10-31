@@ -1,4 +1,8 @@
+#if canImport(CryptoKit)
 import CryptoKit
+#else
+import Crypto
+#endif
 import Foundation
 
 /// The bodies of a relayed session's messages (see `docs/relay.md`). A relay reads only `Hello`; it writes `Welcome`,

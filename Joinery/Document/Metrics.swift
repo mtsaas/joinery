@@ -1,4 +1,8 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#else
+import Foundation
+#endif
 
 /// Sizes on the canvas, in canvas points (multiply by the zoom for the screen). Tables are laid out from these alone,
 /// so sockets can be placed without measuring views.

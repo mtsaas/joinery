@@ -1,4 +1,8 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#else
+import Foundation
+#endif
 
 /// Each port's shape as drawn, easing toward its routing's, so it widens and narrows smoothly as wires come and go.
 final class PortShapes {

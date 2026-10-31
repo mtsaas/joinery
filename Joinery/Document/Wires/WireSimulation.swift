@@ -1,4 +1,6 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
+#endif
 import Foundation
 
 /// Spring constants for wires, per second squared. Wires should feel like a pressurized air hose: a short lag behind

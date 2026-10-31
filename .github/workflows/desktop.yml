@@ -1,0 +1,206 @@
+name: Desktop
+
+# Joinery for Windows and Linux: the core built to WebAssembly once, tested, then the app built on each. Releases call
+# this with their tag, to attach the installers and update the feed released copies check.
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - desktop/**
+      - '!desktop/CHANGELOG.md'
+      - Joinery/Document/**
+      - Joinery/Collaboration/Protocol/**
+      - Joinery/MCP/Protocol/**
+      - Joinery/Examples/**
+      - Package.swift
+      - Package.resolved
+      - .github/workflows/desktop.yml
+  pull_request:
+    paths: *paths
+  workflow_call:
+    inputs:
+      tag:
+        description: The desktop release to attach the installers to, such as desktop-v0.3.0
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-${{ github.ref }}-${{ inputs.tag || 'build' }}
+  cancel-in-progress: ${{ !inputs.tag }}
+
+env:
+  SWIFT_URL: https://download.swift.org/swift-6.4.2-release/ubuntu2404/swift-6.4.2-RELEASE/swift-6.4.2-RELEASE-ubuntu24.04.tar.gz
+  SWIFT_SDK: swift-6.4.2-RELEASE_wasm
+  WASM_SDK_URL: https://download.swift.org/swift-6.4.2-release/wasm-sdk/swift-6.4.2-RELEASE/swift-6.4.2-RELEASE_wasm.artifactbundle.tar.gz
+  WASM_SDK_CHECKSUM: 83baca83553f8c443cda7b84800912e6e709c3acd2e7ebf277794ca5836c0da5
+  ZIG_VERSION: 0.17.0
+  NODE_VERSION: 24
+
+jobs:
+  # The same Swift core as the Mac app's, compiled to WebAssembly with the bridge in desktop/core.
+  core:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      # swift.org's toolchain, which (unlike Xcode's) builds for WebAssembly.
+      - name: Swift
+        run: |
+          sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libedit2 libpython3-dev libsqlite3-0 libxml2-dev libz3-dev pkg-config tzdata zlib1g-dev
+          curl -fsSL "$SWIFT_URL" | sudo tar -xz -C /opt
+          echo "/opt/swift-6.4.2-RELEASE-ubuntu24.04/usr/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@v4
+        with:
+          path: .build/wasm
+          key: core-${{ hashFiles('Package.resolved') }}-${{ hashFiles('Joinery/Document/**', 'Joinery/Collaboration/Protocol/**', 'Joinery/MCP/Protocol/**', 'desktop/core/Bridge/**') }}
+          restore-keys: core-${{ hashFiles('Package.resolved') }}-
+      - name: WebAssembly SDK
+        run: swift sdk install "$WASM_SDK_URL" --checksum "$WASM_SDK_CHECKSUM"
+      - name: Build
+        run: sh desktop/scripts/build-core.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-pkg
+          path: desktop/core-pkg
+          retention-days: 7
+
+  test:
+    needs: core
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: core-pkg
+          path: desktop/core-pkg
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      # The session test shares a model between two copies of the core through the real relay.
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: zig build -Doptimize=ReleaseSafe
+        working-directory: relay
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+      - name: Shell tests
+        working-directory: desktop/src-tauri
+        run: |
+          sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev librsvg2-dev
+          cargo test
+
+  app:
+    needs: [core, test]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bundles: nsis,msi
+          - os: ubuntu-22.04
+            bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: desktop
+    env:
+      # Signs the update files, when the secret's set (docs/development.md); without it the installers are built alone.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: core-pkg
+          path: desktop/core-pkg
+      # desktop/examples links to the Mac app's examples; Windows checks links out as text, so they're copied in.
+      - name: Examples
+        run: rm -rf examples && cp -R ../Joinery/Examples examples
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xvfb
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+      - run: npm ci
+      - name: Build
+        run: |
+          config='{}'
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            if grep -q REPLACE_WITH_THE_UPDATER_PUBLIC_KEY src-tauri/tauri.conf.json; then
+              echo "::warning::The updater key is set but tauri.conf.json still has the placeholder public key: released copies won't update."
+            fi
+            config='{"bundle":{"createUpdaterArtifacts":true}}'
+          fi
+          # Windows signing goes here: bundle.windows.signCommand in the same config, once there's a certificate.
+          npx tauri build --bundles ${{ matrix.bundles }} --config "$config"
+      # A debug copy opens Storefront, takes an edit over MCP, saves it and snapshots the canvas (scripts/smoke.sh).
+      - name: Smoke test
+        env:
+          JOINERY_SMOKE_CORE: prebuilt
+          JOINERY_SMOKE_OUT: build/smoke
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a' || '' }} ../scripts/smoke.sh desktop
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-${{ runner.os }}
+          path: build/smoke/*.*
+          retention-days: 7
+      - name: Collect
+        run: |
+          mkdir -p ../build/desktop
+          find src-tauri/target/release/bundle -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.sig' \) \
+            -exec cp {} ../build/desktop/ \;
+          ls -la ../build/desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: joinery-${{ runner.os }}
+          path: build/desktop
+          retention-days: 14
+
+  # On a release: the installers on it, and latest.json on `desktop-updates`, which is never the latest release.
+  publish:
+    if: inputs.tag
+    needs: app
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ inputs.tag }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: joinery-*
+          path: build/desktop
+          merge-multiple: true
+      - name: Installers
+        run: gh release upload "$TAG" build/desktop/*.exe build/desktop/*.msi build/desktop/*.deb build/desktop/*.AppImage --clobber
+      - name: Update feed
+        run: |
+          if ! ls build/desktop/*.sig >/dev/null 2>&1; then
+            echo "::warning::No updater signatures (TAURI_SIGNING_PRIVATE_KEY isn't set): the update feed is left as it was."
+            exit 0
+          fi
+          node desktop/scripts/update-feed.mjs "$VERSION" "${{ github.server_url }}/${{ github.repository }}/releases/download/$TAG" build/desktop
+          gh release view desktop-updates >/dev/null 2>&1 || gh release create desktop-updates --prerelease --latest=false \
+            --title "Desktop update feed" --notes "Where released copies of Joinery for Windows and Linux check for updates."
+          gh release upload desktop-updates build/desktop/latest.json --clobber
