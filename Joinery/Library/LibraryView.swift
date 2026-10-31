@@ -1,26 +1,35 @@
 import SwiftUI
 
-/// The window: the library's browser, or the canvas of the model in front, with the open models' tabs above.
+/// The window: a back panel with the tabs along its top, beside the window's buttons, and under them a raised surface
+/// with whatever the tab in front shows: the library's data models, or a model's canvas and its controls.
 struct LibraryView: View {
     @Bindable var library: Library
-    @Environment(\.undoManager) private var undoManager
+    /// The title bar's height, which the tab row matches so the window's buttons sit centered in it.
+    @State private var titleBarHeight: CGFloat = 32
 
     var body: some View {
         VStack(spacing: 0) {
-            if !library.tabs.isEmpty { TabBar(library: library) }
+            TabBar(library: library, height: titleBarHeight)
             Group {
                 if let open = library.open {
-                    ModelEditor(open: open) { library.selection = nil }
+                    ModelEditor(open: open)
                         .id(ObjectIdentifier(open))
                 } else {
                     LibraryBrowser(library: library)
                 }
             }
+            // As far below the tabs as the surface is in from the window's sides.
+            .padding(.top, Panel.inset - Panel.tabInset)
         }
-        // Undo belongs to the model it was done in, renamed or not. The window has one undo stack, so it's cleared
-        // when another tab comes to the front.
-        // ponytail: one stack per window; give each tab its own UndoManager if losing undo on a switch bothers people.
-        .onChange(of: library.open.map(ObjectIdentifier.init)) { undoManager?.removeAllActions() }
+        .background(Panel.color)
+        .ignoresSafeArea(edges: .top)
+        .background {
+            Color.clear.ignoresSafeArea()
+                .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { if $0 > 0 { titleBarHeight = $0 } }
+        }
+        // For the Window menu and Mission Control. The window's title bar is hidden (see `JoineryApp`): the tabs are
+        // in its place, and what each shows has its own controls, on its surface.
+        .navigationTitle(library.open?.name ?? "Joinery")
         .alert("Something Went Wrong", isPresented: Binding { library.failure != nil } set: { if !$0 { library.failure = nil } }) {
             Button("OK") { library.failure = nil }
         } message: {
@@ -29,64 +38,107 @@ struct LibraryView: View {
     }
 }
 
-/// The open models, one tab each, as Safari's tab bar has them: the one in front is raised, and each closes with its
-/// × (shown on hover, or always on the one in front) or ⌘W.
+/// How the back panel and the surface on it fit together.
+enum Panel {
+    /// The gap between the surface and the window's edges, and between it and the tabs.
+    static let inset: CGFloat = 8
+    /// The space above and below the tabs in their row.
+    static let tabInset: CGFloat = 4
+    /// Grayer than any surface on it in light mode, and darker in dark, so they stand off it.
+    static let color = Color(light: NSColor(white: 0.9, alpha: 1), dark: NSColor(white: 0.065, alpha: 1))
+    /// The window's own corners, at its edge: measured from a snapshot, on macOS 26 with the title bar hidden.
+    static let windowCornerRadius: CGFloat = 16
+    /// Concentric with the window's: its radius less the gap between them.
+    static let surfaceCornerRadius = windowCornerRadius - inset
+}
+
+extension View {
+    /// Raised off the back panel: rounded, edged and shadowed, and inset from the window's sides and bottom.
+    func surface() -> some View {
+        clipShape(.rect(cornerRadius: Panel.surfaceCornerRadius))
+            .overlay {
+                RoundedRectangle(cornerRadius: Panel.surfaceCornerRadius).strokeBorder(.separator.opacity(0.6))
+            }
+            .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
+            .padding([.horizontal, .bottom], Panel.inset)
+    }
+}
+
+/// The library, then the open models, one tab each, as Safari's tab bar has them: the one in front is raised, and
+/// each closes with its × (shown on hover, or always on the one in front) or ⌘W. Drag one to put it elsewhere.
 private struct TabBar: View {
     let library: Library
+    let height: CGFloat
 
-    static let height: CGFloat = 30
-    static let inset: CGFloat = 3
-    /// A tab's corners, concentric with the bar's inset.
+    /// Clear of the window's close, minimize and zoom buttons.
+    static let leading: CGFloat = 78
+    static let spacing: CGFloat = 4
+    static let inset = Panel.tabInset
+    /// A tab's corners.
     static let cornerRadius: CGFloat = 7
 
     var body: some View {
-        HStack(spacing: Self.inset) {
-            ForEach(library.tabs, id: \.url) { tab in
-                Tab(tab: tab, isFront: tab === library.open, select: { library.selection = tab.url },
-                    close: { library.close(tab) })
+        HStack(spacing: Self.spacing) {
+            Tab(isFront: library.open == nil, select: { library.selection = nil }) {
+                Label("All Data Models", systemImage: "square.grid.2x2").labelStyle(.iconOnly)
             }
-            Button("Show All Data Models", systemImage: "plus") { library.selection = nil }
+            .frame(width: height * 1.4)
+            .help("All data models (⌘↑)")
+            ForEach(library.tabs, id: \.url) { tab in
+                Tab(isFront: tab === library.open, select: { library.selection = tab.url }, close: { library.close(tab) }) {
+                    Text(tab.name)
+                }
+                .frame(maxWidth: .infinity)
+                .help(tab.name)
+                .draggable(tab.url)
+                .dropDestination(for: URL.self) { urls, _ in
+                    guard let dragged = urls.first, let index = library.tabs.firstIndex(where: { $0 === tab }) else { return false }
+                    return library.moveTab(dragged, to: index)
+                }
+            }
+            if library.tabs.isEmpty { Spacer() }
+            Button("New Data Model", systemImage: "plus") { library.newModel(in: library.selection.flatMap(library.collection(of:))) }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
-                .frame(width: Self.height - 2 * Self.inset)
-                .help("All data models, to open another (⌘↑)")
+                .frame(width: height - 2 * Self.inset)
+                .help("New data model, in a tab (⌘N)")
         }
-        .padding(Self.inset)
-        .frame(height: Self.height)
-        // Grayer than the tab in front, so it stands out.
-        .background(Color(nsColor: .underPageBackgroundColor))
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(.leading, Self.leading)
+        .padding(.trailing, Panel.inset)
+        .padding(.vertical, Self.inset)
+        .frame(height: height)
     }
 
-    private struct Tab: View {
-        let tab: OpenModel
+    private struct Tab<Content: View>: View {
         let isFront: Bool
         let select: () -> Void
-        let close: () -> Void
+        var close: (() -> Void)?
+        @ViewBuilder let content: Content
         @State private var isHovered = false
 
         var body: some View {
             ZStack {
-                Text(tab.name)
+                content
                     .font(.callout.weight(isFront ? .medium : .regular))
                     .foregroundStyle(isFront ? .primary : .secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     // Clear of the × at either side, so it stays centered.
-                    .padding(.horizontal, 22)
-                HStack {
-                    Button("Close Tab", systemImage: "xmark", action: close)
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .font(.caption2.weight(.semibold))
-                        .opacity(isFront || isHovered ? 1 : 0)
-                        .help("Close tab (⌘W)")
-                    Spacer()
+                    .padding(.horizontal, close == nil ? 4 : 22)
+                if let close {
+                    HStack {
+                        Button("Close Tab", systemImage: "xmark", action: close)
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.borderless)
+                            .font(.caption2.weight(.semibold))
+                            .opacity(isFront || isHovered ? 1 : 0)
+                            .help("Close tab (⌘W)")
+                        Spacer()
+                    }
+                    .padding(.leading, 6)
                 }
-                .padding(.leading, 6)
             }
-            // Sharing the bar's width equally, as Safari's tabs do.
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxHeight: .infinity)
             .background {
                 RoundedRectangle(cornerRadius: TabBar.cornerRadius)
                     .fill(isFront ? AnyShapeStyle(.background) : isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear))
@@ -95,7 +147,6 @@ private struct TabBar: View {
             .contentShape(.rect)
             .onTapGesture(perform: select)
             .onHover { isHovered = $0 }
-            .help(tab.name)
         }
     }
 }
@@ -125,21 +176,18 @@ struct RenameField: View {
     }
 }
 
-/// A model's canvas and toolbar.
+/// A model's canvas, with its controls floating along its top, raised off the back panel.
 struct ModelEditor: View {
     let open: OpenModel
-    /// Back to the library.
-    let close: () -> Void
     private var canvas: CanvasController { open.canvas }
     @State private var showsHistory = false
     @State private var showsSharing = false
-    /// Where the canvas is in the window: it reaches up under the toolbar, so its views' origins aren't its own.
+    /// Where the canvas is in the window: inset on its surface, so its views' origins aren't its own.
     @State private var canvasOrigin = CGPoint.zero
     /// An earlier version shown instead of the model, read-only, from the version history.
     @State private var preview: VersionHistory.Preview?
     /// With an earlier version shown: it, it and now together with the changes marked, or now.
     @State private var comparison = Comparison.changes
-    @Environment(\.undoManager) private var undoManager
 
     /// Lays out a version compared as `shown` is, and shows it as it is now if it's the version history's.
     private func layOut(_ target: OpenModel.Laid, as shown: DataModel, only: Set<Table.ID>? = nil) {
@@ -176,70 +224,58 @@ struct ModelEditor: View {
         }
         CanvasView(model: model, canvas: canvas, diff: diff)
             .onGeometryChange(for: CGPoint.self) { $0.frame(in: .global).origin } action: { canvasOrigin = $0 }
-            // Under the toolbar, which floats over it, but not the sidebar, so fitting the model fits what's visible.
-            .ignoresSafeArea(edges: .top)
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button("All Data Models", systemImage: "chevron.left", action: close)
-                        .keyboardShortcut(.upArrow, modifiers: .command)
-                        .help("Back to all data models (⌘↑)")
-                }
-                ToolbarItem(placement: .navigation) {
-                    ZoomMenu(canvas: canvas, bounds: open.model.bounds)
-                }
-                ToolbarItem(placement: .navigation) {
-                    Toggle("Version History", systemImage: "clock.arrow.circlepath", isOn: $showsHistory)
-                        .help("Earlier versions of this data model: step through them with the arrow keys, and restore one")
-                        .popover(isPresented: $showsHistory, arrowEdge: .bottom) {
-                            VersionHistory(open: open, preview: $preview)
-                                .frame(width: 340, height: 520)
+            .overlay(alignment: .top) {
+                ZStack {
+                    HStack(spacing: 8) {
+                        ControlGroupGlass {
+                            ZoomMenu(canvas: canvas, bounds: open.model.bounds)
+                            Toggle("Version History", systemImage: "clock.arrow.circlepath", isOn: $showsHistory)
+                                .help("Earlier versions of this data model: step through them with the arrow keys, and restore one")
+                                .popover(isPresented: $showsHistory, arrowEdge: .bottom) {
+                                    VersionHistory(open: open, preview: $preview)
+                                        .frame(width: 340, height: 520)
+                                }
                         }
-                }
-                ToolbarItem(placement: .navigation) {
-                    ModelTitle(name: open.name) { Library.shared.rename(open.url, to: $0) }
-                }
-                .sharedBackgroundVisibility(.hidden)
-                // Editing tools, with nothing to edit while comparing.
-                ToolbarItemGroup(placement: .principal) {
-                    Button("Table", systemImage: "tablecells") { canvas.addTable(to: &model.wrappedValue) }
-                        .help("Add a table (T)")
-                        .disabled(isComparing)
-                    Menu("Layout", systemImage: "rectangle.3.group") {
-                        // The selection, if there is one; otherwise everything.
-                        let selected = canvas.selectedTablesAndMembers(in: model.wrappedValue)
-                        ForEach(DataModel.Layout.allCases) { layout in
-                            Button(selected.isEmpty ? layout.title : "\(layout.title) (Selection)", systemImage: layout.symbol) {
-                                model.wrappedValue.arrange(layout, only: selected.isEmpty ? nil : selected)
-                                if selected.isEmpty { canvas.zoomToFit(model.wrappedValue.bounds) }
-                            }
+                        ModelTitle(name: open.name) { Library.shared.rename(open.url, to: $0) }
+                        Spacer()
+                        ControlGroupGlass {
+                            Button { showsSharing.toggle() } label: { ShareLabel(open: open) }
+                                .help(open.session == nil ? "Share this data model live, for others to edit with you" : "Who's here, and how to invite others")
+                                .popover(isPresented: $showsSharing, arrowEdge: .bottom) { SharePanel(open: open) }
                         }
-                        Divider()
-                        Button("Untangle Selection", systemImage: "point.3.filled.connected.trianglepath.dotted") {
-                            canvas.untangleSelection(of: model)
-                        }
-                        .disabled(canvas.selectedTablesAndMembers(in: model.wrappedValue).isEmpty)
                     }
-                    .help("Lay the selected tables out afresh, or every table with none selected; ⌘Z puts them back")
-                    Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)
-                        .help("Zip-tie tool: drag across wires to tie them (Z)")
-                    Toggle("Focus", systemImage: "scope", isOn: Binding { canvas.isFocusing } set: { _ in
-                        canvas.toggleFocus(in: model.wrappedValue)
-                    })
-                    .help("Focus mode: fade everything but the selection and what it's joined to, until turned off (F)")
-                    .disabled(isComparing)
+                    // Editing tools, with nothing to edit while comparing.
+                    ControlGroupGlass {
+                        Button("Table", systemImage: "tablecells") { canvas.addTable(to: &model.wrappedValue) }
+                            .help("Add a table (T)")
+                            .disabled(isComparing)
+                        Menu("Layout", systemImage: "rectangle.3.group") {
+                            // The selection, if there is one; otherwise everything.
+                            let selected = canvas.selectedTablesAndMembers(in: model.wrappedValue)
+                            ForEach(DataModel.Layout.allCases) { layout in
+                                Button(selected.isEmpty ? layout.title : "\(layout.title) (Selection)", systemImage: layout.symbol) {
+                                    model.wrappedValue.arrange(layout, only: selected.isEmpty ? nil : selected)
+                                    if selected.isEmpty { canvas.zoomToFit(model.wrappedValue.bounds) }
+                                }
+                            }
+                            Divider()
+                            Button("Untangle Selection", systemImage: "point.3.filled.connected.trianglepath.dotted") {
+                                canvas.untangleSelection(of: model)
+                            }
+                            .disabled(canvas.selectedTablesAndMembers(in: model.wrappedValue).isEmpty)
+                        }
+                        .help("Lay the selected tables out afresh, or every table with none selected; ⌘Z puts them back")
+                        Toggle("Zip Tie", systemImage: "arrow.triangle.merge", isOn: Bindable(canvas).isTying)
+                            .help("Zip-tie tool: drag across wires to tie them (Z)")
+                        Toggle("Focus", systemImage: "scope", isOn: Binding { canvas.isFocusing } set: { _ in
+                            canvas.toggleFocus(in: model.wrappedValue)
+                        })
+                        .help("Focus mode: fade everything but the selection and what it's joined to, until turned off (F)")
+                        .disabled(isComparing)
+                    }
                 }
+                .padding(Panel.inset)
             }
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
-                    Button { showsSharing.toggle() } label: { ShareLabel(open: open) }
-                    .help(open.session == nil ? "Share this data model live, for others to edit with you" : "Who's here, and how to invite others")
-                    .popover(isPresented: $showsSharing, arrowEdge: .bottom) { SharePanel(open: open) }
-                }
-            }
-            .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-            // For the Window menu and Mission Control; shown by `ModelTitle` instead, to be renamed in place.
-            .navigationTitle(open.name)
-            .toolbar(removing: .title)
             .overlay(alignment: .top) {
                 if let notice = open.notice {
                     Label(notice, systemImage: "clock.arrow.circlepath")
@@ -247,13 +283,12 @@ struct ModelEditor: View {
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
                         .glassEffect()
-                        .padding(.top, 64)
+                        .padding(.top, 56)
                 }
             }
             // Everyone else in a session: their pointers and selections.
             .overlay {
                 PresenceLayer(open: open, tables: model.wrappedValue.tables, canvas: canvas)
-                    .ignoresSafeArea(edges: .top)
             }
             .modifier(PresenceSharing(open: open, canvas: canvas, canvasOrigin: canvasOrigin))
             // At the bottom, clear of the version history's popover.
@@ -287,10 +322,9 @@ struct ModelEditor: View {
             .onChange(of: model.wrappedValue.bounds) { old, new in
                 if canvas.isFitted, old == nil || isComparing { canvas.zoomToFit(new) }
             }
-            .onAppear { open.undoManager = undoManager }
-            .onChange(of: undoManager) { open.undoManager = undoManager }
             .focusedSceneValue(\.canvasController, canvas)
             .focusedSceneValue(\.model, model)
+            .surface()
             #if DEBUG
             // Not cancelled if a step opens another model, closing this editor.
             .task { Task { await DebugHooks.script(model, canvas: canvas) } }
@@ -300,12 +334,32 @@ struct ModelEditor: View {
     }
 }
 
+/// Controls floating over the canvas, together in one piece of glass, as a toolbar's group would be.
+private struct ControlGroupGlass<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    static var height: CGFloat { 36 }
+
+    var body: some View {
+        HStack(spacing: 2) { content }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .toggleStyle(.button)
+            .menuStyle(.borderlessButton)
+            .imageScale(.large)
+            .controlSize(.large)
+            .padding(.horizontal, 10)
+            .frame(height: Self.height)
+            .glassEffect(.regular, in: .capsule)
+    }
+}
+
 private struct ZoomMenu: View {
     let canvas: CanvasController
     let bounds: CGRect?
 
     var body: some View {
-        // A text label: the toolbar shows a title string icon-only, which here left just the chevron.
+        // A text label, not an icon: it's the zoom itself that's shown.
         Menu {
             Button("Zoom In") { canvas.zoom(by: 1.25) }
             Button("Zoom Out") { canvas.zoom(by: 0.8) }
@@ -350,7 +404,7 @@ private struct ModelTitle: View {
                     .onAppear {
                         isFocused = true
                         clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { event in
-                            // The window's whole frame, toolbar and all, as the field is in the toolbar.
+                            // The window's whole frame, title bar and all.
                             let hit = event.window?.contentView?.superview?.hitTest(event.locationInWindow)
                             if !(hit is NSText || hit is NSTextField) { commit() }
                             return event

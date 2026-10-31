@@ -292,6 +292,15 @@ final class Library {
         selection = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].url
     }
 
+    /// Moves the tab showing `url` to `index` in the tab bar.
+    /// - Returns: Whether it's a tab's.
+    @discardableResult
+    func moveTab(_ url: URL, to index: Int) -> Bool {
+        guard let from = tabs.firstIndex(where: { $0.url == url }) else { return false }
+        tabs.insert(tabs.remove(at: from), at: min(index, tabs.count))
+        return true
+    }
+
     /// Brings forward the tab `offset` along from the one in front, wrapping round.
     func showTab(offset: Int) {
         guard !tabs.isEmpty else { return }

@@ -1,8 +1,8 @@
 import SwiftUI
 
-/// The library, as Freeform shows its boards: All Models, Recents, Favorites and the collections in the sidebar, and
-/// the models in whichever is chosen as a grid of previews or a list, searchable by model or table name. Opening one
-/// gives the window over to it.
+/// The library, as Freeform shows its boards: All Models, Recents, Favorites and the collections in a sidebar on the
+/// back panel, and on a surface beside it the models in whichever is chosen, as a grid of previews or a list,
+/// searchable by model or table name. Opening one opens a tab for it.
 struct LibraryBrowser: View {
     @Bindable var library: Library
 
@@ -16,7 +16,6 @@ struct LibraryBrowser: View {
     }
 
     @State private var scope = Scope.all
-    @State private var columns = NavigationSplitViewVisibility.all
     @AppStorage("libraryLayout") private var layout = Layout.grid
     @State private var search = ""
     /// The model picked out with a click, to open with Return.
@@ -29,14 +28,18 @@ struct LibraryBrowser: View {
     @State private var showsJoin = false
 
     var body: some View {
-        NavigationSplitView(columnVisibility: $columns) {
+        HStack(spacing: 0) {
             sidebar
-                .navigationSplitViewColumnWidth(min: 190, ideal: 220, max: 320)
-        } detail: {
-            content
+                .frame(width: 220)
+            VStack(spacing: 0) {
+                controls
+                content
+            }
+            .background(.background)
+            .surface()
+            // The sidebar's already clear of the window's left edge.
+            .padding(.leading, -Panel.inset)
         }
-        .searchable(text: $search, placement: .toolbar, prompt: "Search")
-        .toolbar(removing: .title)
         .confirmationDialog("Move “\(collectionToTrash?.name ?? "")” to the Trash?", isPresented: Binding {
             collectionToTrash != nil
         } set: { if !$0 { collectionToTrash = nil } }, presenting: collectionToTrash) { collection in
@@ -70,17 +73,57 @@ struct LibraryBrowser: View {
             }
         }
         .listStyle(.sidebar)
-        .toolbar {
-            ToolbarItem {
-                Button("New Collection", systemImage: "folder.badge.plus") {
-                    if let url = library.newCollection() {
-                        scope = .collection(url)
-                        renaming = url
-                    }
+        .scrollContentBackground(.hidden)
+        .safeAreaInset(edge: .bottom, alignment: .leading) {
+            Button("New Collection", systemImage: "folder.badge.plus") {
+                if let url = library.newCollection() {
+                    scope = .collection(url)
+                    renaming = url
                 }
-                .help("New collection (⇧⌘N)")
             }
+            .buttonStyle(.borderless)
+            .help("New collection (⇧⌘N)")
+            .padding(12)
         }
+    }
+
+    /// Along the surface's top, at the trailing end, as Freeform's toolbar has them.
+    private var controls: some View {
+        HStack(spacing: 10) {
+            Spacer()
+            Button("Join", systemImage: "person.2.badge.plus") { showsJoin.toggle() }
+                .help("Join a data model someone is sharing, from their link")
+                .popover(isPresented: $showsJoin, arrowEdge: .bottom) { JoinPanel() }
+            Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: selectedCollection) }
+                .help("New data model (⌘N)")
+            Picker("View", selection: $layout) {
+                Label("Grid", systemImage: "square.grid.2x2").tag(Layout.grid)
+                Label("List", systemImage: "list.bullet").tag(Layout.list)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Show as a grid or a list")
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search", text: $search)
+                    .textFieldStyle(.plain)
+                if !search.isEmpty {
+                    Button("Clear", systemImage: "xmark.circle.fill") { search = "" }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .labelStyle(.iconOnly)
+            .padding(.horizontal, 10)
+            .frame(width: 220, height: 30)
+            .background(.quaternary.opacity(0.6), in: .capsule)
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .imageScale(.large)
+        .padding(.horizontal, 16)
+        .frame(height: 52)
     }
 
     private func smartRow(_ scope: Scope, _ title: String, symbol: String, color: Color, count: Int) -> some View {
@@ -222,27 +265,6 @@ struct LibraryBrowser: View {
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: .showJoin)) { _ in showsJoin = true }
         #endif
-        .toolbar {
-            // At the trailing end, with the search, as in Freeform.
-            ToolbarSpacer(.flexible)
-            ToolbarItem(placement: .primaryAction) {
-                Button("Join", systemImage: "person.2.badge.plus") { showsJoin.toggle() }
-                    .help("Join a data model someone is sharing, from their link")
-                    .popover(isPresented: $showsJoin, arrowEdge: .bottom) { JoinPanel() }
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button("New Data Model", systemImage: "square.and.pencil") { library.newModel(in: selectedCollection) }
-                    .help("New data model (⌘N)")
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Picker("View", selection: $layout) {
-                    Label("Grid", systemImage: "square.grid.2x2").tag(Layout.grid)
-                    Label("List", systemImage: "list.bullet").tag(Layout.list)
-                }
-                .pickerStyle(.segmented)
-                .help("Show as a grid or a list")
-            }
-        }
     }
 
     /// Where a new model goes: the collection being shown.

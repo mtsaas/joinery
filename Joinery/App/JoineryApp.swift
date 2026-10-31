@@ -10,6 +10,8 @@ struct JoineryApp: App {
             LibraryView(library: .shared)
         }
         .defaultSize(width: 1440, height: 880)
+        // The tabs take the title bar's place, beside the window's buttons.
+        .windowStyle(.hiddenTitleBar)
         .commands {
             LibraryCommands(library: .shared)
             CanvasCommands()
@@ -76,7 +78,17 @@ struct LibraryCommands: Commands {
                 .keyboardShortcut("s")
                 .disabled(library.open == nil)
         }
+        // The model in front's own undo history; text being edited keeps the window's.
+        CommandGroup(replacing: .undoRedo) {
+            Button("Undo") { undo(redo: false) }
+                .keyboardShortcut("z")
+            Button("Redo") { undo(redo: true) }
+                .keyboardShortcut("z", modifiers: [.command, .shift])
+        }
         CommandGroup(before: .windowList) {
+            Button("Show All Data Models") { library.selection = nil }
+                .keyboardShortcut(.upArrow, modifiers: .command)
+                .disabled(library.open == nil)
             Button("Show Next Tab") { library.showTab(offset: 1) }
                 .keyboardShortcut(.tab, modifiers: .control)
                 .disabled(library.tabs.isEmpty)
@@ -84,6 +96,14 @@ struct LibraryCommands: Commands {
                 .keyboardShortcut(.tab, modifiers: [.control, .shift])
                 .disabled(library.tabs.isEmpty)
             Divider()
+        }
+    }
+
+    private func undo(redo: Bool) {
+        if NSApp.keyWindow?.firstResponder is NSText || library.open == nil {
+            NSApp.sendAction(Selector((redo ? "redo:" : "undo:")), to: nil, from: nil)
+        } else if let manager = library.open?.undoManager {
+            redo ? manager.redo() : manager.undo()
         }
     }
 

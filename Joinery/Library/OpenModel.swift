@@ -12,8 +12,9 @@ final class OpenModel {
     var session: (any Session)?
     /// Called with each change's ops, made here (edited, undone or redone), for a session to send.
     @ObservationIgnored var onChange: (([Replica.Op]) -> Void)?
-    /// The window's, set by the editor, for registering changes.
-    @ObservationIgnored weak var undoManager: UndoManager?
+    /// Its own, not the window's, so each tab keeps its undo history while another's in front. Edit ▸ Undo uses the
+    /// one in front (see `LibraryCommands`).
+    @ObservationIgnored let undoManager = UndoManager()
     /// Where it's scrolled and zoomed to, and what's selected: kept with it, so they're as they were when its tab
     /// comes back to the front.
     @ObservationIgnored let canvas = CanvasController()
@@ -235,7 +236,7 @@ final class OpenModel {
     /// Registers `undo` to be applied: as the undo while changing or redoing, as the redo while undoing.
     private func registerUndo(_ undo: [Replica.Op]) {
         guard !undo.isEmpty else { return }
-        undoManager?.registerUndo(withTarget: self) { target in
+        undoManager.registerUndo(withTarget: self) { target in
             MainActor.assumeIsolated { target.apply(undo) }
         }
     }
