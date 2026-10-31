@@ -290,6 +290,8 @@ final class Library {
         // Out of the tabs first, so a session's end, which closes its tab, finds nothing more to do.
         tab.session?.close()
         tab.saveNow()
+        // The last gone, home, with nothing left to peek at.
+        if tabs.isEmpty { isPeeking = false }
         guard tab === open else { return }
         selection = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)].url
     }

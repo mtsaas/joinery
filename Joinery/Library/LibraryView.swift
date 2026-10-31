@@ -133,6 +133,8 @@ private struct TallTitleBar: NSViewRepresentable {
             guard let window, window.toolbar == nil else { return }
             window.toolbar = NSToolbar(identifier: "Joinery")
             window.toolbarStyle = .unifiedCompact
+            // Not moved by any drag in the title bar, which would take the tabs' too: the tab row's empty space moves it.
+            window.isMovable = false
         }
     }
 }
@@ -233,6 +235,15 @@ private struct TabBar: View {
         // Tabs opening, closing, moving and coming to the front all move into place.
         .animation(.smooth(duration: 0.25), value: library.tabs.map(\.url))
         .animation(.smooth(duration: 0.25), value: library.open.map(ObjectIdentifier.init))
+        // Behind the tabs along the title bar, the window's own: dragged, it moves; double-clicked, it zooms.
+        .background(alignment: .top) {
+            Color.clear
+                .frame(height: height)
+                .contentShape(.rect)
+                .gesture(WindowDragGesture())
+                .onTapGesture(count: 2) { NSApp.keyWindow?.performZoom(nil) }
+                .allowsWindowActivationEvents(true)
+        }
         // Anywhere in the row, grown or not, keeps them peeking; leaving it stops.
         .contentShape(.rect)
         .onHover { if !$0 { setPeeking(false) } }
