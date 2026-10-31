@@ -25,7 +25,7 @@ enum Theme {
 
 extension TableColor {
     /// The header's background: the card with a wash of the color.
-    var headerFill: Color { Theme.card.mix(with: color, by: 0.13) }
+    var headerFill: Color { Theme.card.mix(with: color, by: 0.18) }
 
     /// The header's edge: its fill, `Theme.headerEdgeDarkening` darker. Opaque, so the card's own edge doesn't show
     /// through it.

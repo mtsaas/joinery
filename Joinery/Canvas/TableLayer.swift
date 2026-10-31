@@ -65,7 +65,7 @@ struct TableLayer: View {
     static let fadedOpacity = 0.22
     /// How solid a card's body and its header are over the glass: the glass's diffused canvas shows through the rest.
     static let glassBodyOpacity = 0.25
-    static let glassHeaderOpacity = 0.7
+    static let glassHeaderOpacity = 0.8
 
     @Environment(\.displayScale) private var displayScale
 
