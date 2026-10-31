@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// Every group's boundary, behind the wires and tables: a tinted, rounded area around its tables with its name at the
-/// top left, ringed when selected, or when tables dragged over it would join it. A grip left of the name is the only
-/// place a group moves from, so a selection rectangle can start anywhere on it.
+/// top left, ringed when selected, or when tables dragged over it would join it. A group moves by the grip left of its
+/// name or by its border, so a selection rectangle can start anywhere inside it.
 struct GroupLayer: View {
     let groups: [(group: TableGroup, frame: CGRect)]
     let zoom: CGFloat

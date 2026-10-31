@@ -1011,12 +1011,12 @@ struct CanvasView: View {
         case port(GroupPort.ID)
         /// Drawing a wire out of a port's inside or outside socket.
         case portSocket(GroupPort.ID, isOutside: Bool, at: CGPoint)
-        /// On the + by a group's edge: a new port there.
+        /// On the + by a group's edge: a click is a new port there, a drag moves the group.
         case newPort(TableGroup.ID, side: Side4, along: CGFloat)
         case table(Table)
         /// On a header's right edge: dragging the table wider or narrower, or a double-click to fit it to its text.
         case resize(Table)
-        /// On a group's grip: selecting and moving the group.
+        /// On a group's grip or border: selecting and moving the group.
         case group(TableGroup.ID)
         /// On the rest of a group's name band: a click selects it, a double-click renames it, a drag draws a selection
         /// rectangle, as on the canvas.
@@ -1049,6 +1049,7 @@ struct CanvasView: View {
             if !isOneOfMany, case .column(let id) = cell(at: point, in: table).row { return .row(table, column: id) }
             return .table(table)
         }
+        if let group = groupBorder(at: point) { return .group(group) }
         if let group = group(at: point) {
             let onGrip = model.frame(of: group).map { GroupLayer.grip(of: $0).contains(point) } == true
             return onGrip ? .group(group) : .groupName(group)
@@ -1123,6 +1124,16 @@ struct CanvasView: View {
         return nil
     }
 
+    /// The group whose border `point` is on, in canvas points, within reach either side; the last drawn, if they overlap.
+    private func groupBorder(at point: CGPoint) -> TableGroup.ID? {
+        let reach = Metrics.portHintRadius / canvas.zoom
+        return model.groups.last { group in
+            guard let frame = model.frame(of: group.id) else { return false }
+            return Path(roundedRect: frame, cornerRadius: Metrics.groupCornerRadius, style: .continuous)
+                .strokedPath(StrokeStyle(lineWidth: reach * 2)).contains(point)
+        }?.id
+    }
+
     /// The group whose name band is under `point`, in canvas points; the last drawn, if they overlap.
     private func group(at point: CGPoint) -> TableGroup.ID? {
         model.groups.last { group in model.frame(of: group.id).map { GroupLayer.labelBand(of: $0).contains(point) } == true }?.id
@@ -1177,12 +1188,12 @@ struct CanvasView: View {
                     guard canvas.connection != nil || CGPoint(value.translation).length >= 2 else { return }
                     canvas.portHint = nil
                     dragConnection(fromPort: id, isOutside: isOutside, at: socket, to: canvas.canvasPoint(value.location))
-                case .newPort:
-                    // Moved, it wasn't for a port: it's a drag on the canvas, a selection rectangle say.
+                case .newPort(let group, _, _):
+                    // Moved, it wasn't for a port: it's the group's border, dragged to move the group.
                     guard CGPoint(value.translation).length >= 3 else { break }
-                    self.press = .background
+                    self.press = .group(group)
                     canvas.portHint = nil
-                    dragBackground(from: value.startLocation, to: value.location)
+                    dragItem(.group(group), by: value.translation)
                 case .port(let id):
                     // Along the edge, to the spot nearest the pointer, around corners and all.
                     guard canvas.portDrag != nil || CGPoint(value.translation).length >= 2,
