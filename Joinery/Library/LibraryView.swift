@@ -15,15 +15,15 @@ struct LibraryView: View {
             if isVertical {
                 HStack(spacing: 0) {
                     VerticalTabBar(library: library, titleBarHeight: titleBarHeight, width: $tabColumnWidth)
-                    // As far below the window's top as in the horizontal layout, so its top corners stay clear of the
-                    // window's and concentric with the controls in them.
-                    surface.padding(.top, titleBarHeight)
+                    // As far below the window's top as in from its other edges, its top trailing corner following the
+                    // window's (see `Panel.surfaceShape`).
+                    surface(besideTabs: true).padding(.top, Panel.inset)
                 }
             } else {
                 ZStack(alignment: .top) {
                     // Under the tabs, as far below them as they are below the window's top. While they're peeked at,
                     // it slides further down, off the window's bottom, rather than shrinking.
-                    surface
+                    surface(besideTabs: false)
                         .padding(.top, titleBarHeight)
                         .offset(y: library.isPeeking ? TabBar.peekHeight : 0)
                     TabBar(library: library, height: titleBarHeight)
@@ -32,6 +32,7 @@ struct LibraryView: View {
         }
         .background(Panel.color)
         .ignoresSafeArea(edges: .top)
+        .background(TallTitleBar())
         .background {
             Color.clear.ignoresSafeArea()
                 .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { if $0 > 0 { titleBarHeight = $0 } }
@@ -48,7 +49,7 @@ struct LibraryView: View {
     }
 
     /// The model in front, or with none, a note beside the library; the library over either, when it's out.
-    private var surface: some View {
+    private func surface(besideTabs: Bool) -> some View {
         let showsLibrary = library.showsLibrary || library.open == nil
         return Group {
             if let open = library.open {
@@ -88,7 +89,7 @@ struct LibraryView: View {
         }
         .animation(.smooth(duration: 0.25), value: showsLibrary)
         // Clipped to the surface, so the library's corners are the surface's.
-        .surface()
+        .surface(nearWindowTop: besideTabs)
     }
 }
 
@@ -96,8 +97,9 @@ struct LibraryView: View {
 enum Panel {
     /// The gap between the surface and the window's edges, and between it and the tabs.
     static let inset: CGFloat = 8
-    /// The space above and below the tabs in their row.
-    static let tabInset: CGFloat = 4
+    /// A tab's height. The title bar is made taller than this (see `TallTitleBar`), and the tabs sit centered in it,
+    /// as the window's buttons do, the space above them the same as the space below them to the surface.
+    static let tabHeight: CGFloat = 28
     /// The theme's canvas, darkened, so the surfaces on it stand off it and it takes on the theme's tint.
     static var color: Color {
         Color(light: Themes.shared.light.canvas.blended(withFraction: 0.09, of: .black) ?? .gray,
@@ -118,35 +120,58 @@ enum Panel {
     /// Its bottom corners: concentric with the window's, its radius less the gap between them.
     static let surfaceBottomCornerRadius = windowCornerRadius - inset
 
-    static let surfaceShape = UnevenRoundedRectangle(topLeadingRadius: surfaceCornerRadius, bottomLeadingRadius: surfaceBottomCornerRadius,
-                                                     bottomTrailingRadius: surfaceBottomCornerRadius, topTrailingRadius: surfaceCornerRadius)
+    /// Each corner follows what's nearest it: the controls in it, or the window's corner just outside it. Its top
+    /// trailing corner is near the window's when the surface reaches up beside vertical tabs.
+    static func surfaceShape(nearWindowTop: Bool) -> UnevenRoundedRectangle {
+        UnevenRoundedRectangle(topLeadingRadius: surfaceCornerRadius, bottomLeadingRadius: surfaceBottomCornerRadius,
+                               bottomTrailingRadius: surfaceBottomCornerRadius,
+                               topTrailingRadius: nearWindowTop ? surfaceBottomCornerRadius : surfaceCornerRadius)
+    }
 }
 
 extension View {
     /// Raised off the back panel: rounded, edged and shadowed, and inset from the window's sides and bottom.
-    func surface() -> some View {
-        clipShape(Panel.surfaceShape)
-            .overlay { Panel.surfaceShape.strokeBorder(.separator.opacity(0.6)) }
+    func surface(nearWindowTop: Bool = false) -> some View {
+        let shape = Panel.surfaceShape(nearWindowTop: nearWindowTop)
+        return clipShape(shape)
+            .overlay { shape.strokeBorder(.separator.opacity(0.6)) }
             .shadow(color: .black.opacity(0.08), radius: 3, y: 1)
             .padding([.horizontal, .bottom], Panel.inset)
     }
 }
 
-/// Shows or hides the library, beside the window's own buttons. It's out for good while no model is open.
+/// Shows or hides the library, beside the window's own buttons. While no model is open the library's out for good,
+/// so it isn't there at all, rather than there and doing nothing.
 private struct LibraryButton: View {
     let library: Library
     let size: CGFloat
 
     var body: some View {
-        Button("Library", systemImage: "sidebar.left") {
-            withAnimation(.smooth(duration: 0.25)) { library.showsLibrary.toggle() }
+        if library.open != nil {
+            Button("Library", systemImage: "sidebar.left") {
+                withAnimation(.smooth(duration: 0.25)) { library.showsLibrary.toggle() }
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.borderless)
+            .foregroundStyle(library.showsLibrary ? Color.accentColor : .secondary)
+            .frame(width: size, height: size)
+            .help("Show or hide the library (⌘↑)")
         }
-        .labelStyle(.iconOnly)
-        .buttonStyle(.borderless)
-        .foregroundStyle(library.showsLibrary || library.open == nil ? Color.accentColor : .secondary)
-        .frame(width: size, height: size)
-        .disabled(library.open == nil)
-        .help("Show or hide the library (⌘↑)")
+    }
+}
+
+/// An empty toolbar, so the title bar is as tall as a unified toolbar's, with the window's buttons centered in it:
+/// room for the tabs to sit in it with space above and below. Its items, there are none, would show; the tabs do.
+private struct TallTitleBar: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { View() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class View: NSView {
+        override func viewDidMoveToWindow() {
+            guard let window, window.toolbar == nil else { return }
+            window.toolbar = NSToolbar(identifier: "Joinery")
+            window.toolbarStyle = .unifiedCompact
+        }
     }
 }
 
@@ -186,7 +211,6 @@ private struct TabBar: View {
     /// Clear of the window's close, minimize and zoom buttons.
     static let leading: CGFloat = 78
     static let spacing: CGFloat = 4
-    static let inset = Panel.tabInset
     /// The widest a tab gets; a long name is cut short in the middle.
     static let maxWidth: CGFloat = 200
     /// How long the pointer rests on a tab before they peek.
@@ -194,12 +218,11 @@ private struct TabBar: View {
     /// A peeked-at model's preview: its height, and its gap from the tab's sides and bottom, as the icon's from its
     /// leading end, so the preview's corners are concentric with the tab's.
     static let previewHeight: CGFloat = 96
-    static let previewInset = (24 - ModelIcon.size.height) / 2
+    static let previewInset = (Panel.tabHeight - ModelIcon.size.height) / 2
     /// How much taller the row is while peeking.
     static let peekHeight = previewHeight + previewInset
 
-    /// A tab's height, and the radius of its pill.
-    private var tabHeight: CGFloat { height - 2 * Self.inset }
+    private var tabHeight: CGFloat { Panel.tabHeight }
 
     var body: some View {
         HStack(alignment: .top, spacing: Self.spacing) {
@@ -216,7 +239,7 @@ private struct TabBar: View {
         }
         .padding(.leading, Self.leading)
         .padding(.trailing, Panel.inset)
-        .padding(.vertical, Self.inset)
+        .padding(.vertical, (height - tabHeight) / 2)
         .frame(height: height + (library.isPeeking ? Self.peekHeight : 0), alignment: .top)
         // Tabs opening, closing, moving and coming to the front all move into place.
         .animation(.smooth(duration: 0.25), value: library.tabs.map(\.url))
@@ -259,9 +282,9 @@ private struct VerticalTabBar: View {
             HStack(spacing: TabBar.spacing) {
                 // Clear of the window's buttons.
                 Spacer().frame(width: TabBar.leading - Panel.inset)
-                LibraryButton(library: library, size: titleBarHeight - 2 * TabBar.inset)
+                LibraryButton(library: library, size: Panel.tabHeight)
                 Spacer(minLength: 0)
-                NewTabButton(library: library, size: titleBarHeight - 2 * TabBar.inset)
+                NewTabButton(library: library, size: Panel.tabHeight)
             }
             .frame(height: titleBarHeight)
             ScrollView {
