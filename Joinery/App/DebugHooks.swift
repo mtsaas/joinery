@@ -63,7 +63,10 @@ enum DebugHooks {
             unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0)?.takeRetainedValue()
         }
         var windows = NSApp.windows.filter(\.isVisible).sorted { $0.orderedIndex > $1.orderedIndex }
-        if environment["JOINERY_SETTINGS"] != nil { windows.removeAll { $0.title == "Joinery" } }
+        // Settings rather than the main window, the largest, whatever it's titled.
+        if environment["JOINERY_SETTINGS"] != nil, let main = windows.max(by: { $0.frame.width < $1.frame.width }) {
+            windows.removeAll { $0 === main }
+        }
         guard let main = windows.max(by: { $0.frame.width < $1.frame.width }), let base = image(main) else { return print("snapshot failed") }
         // Wide enough for what hangs over its edges, as a popover by the toolbar can.
         let over = windows.filter { $0 !== main && $0.frame.intersects(main.frame) }
