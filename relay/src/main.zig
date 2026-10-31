@@ -2,7 +2,8 @@
 //! docs/relay.md.
 //!
 //!     joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187]
-//!                   [--threads <half the cores>] [--pin <first CPU>] [--batch-ms 5]
+//!                   [--threads <half the cores>] [--pin <first CPU>] [--udp on] [--udp-port <port>] [--udp-host <name>]
+//!                   [--batch-ms 5]
 //!                   [--max-rooms 256] [--max-connections 768] [--outbox-mib 128]
 //!
 //! Prometheus metrics are at http://<metrics address>:<metrics port>/metrics, on this machine only unless the metrics
@@ -40,6 +41,10 @@ pub fn main(init: std.process.Init) !void {
     var threads: usize = (std.Thread.getCpuCount() catch 2) / 2;
     // Linux: loop i runs only on CPU `pin + i`, so its sockets' data stays in that CPU's caches.
     var pin: ?usize = null;
+    // Presence over UDP too, on the same port, and the port tickets name (when a load balancer's isn't the relay's).
+    var use_udp = false;
+    var udp_port: ?u16 = null;
+    var udp_host: []const u8 = "";
     // How long a connection's queue waits for more before it's sent: 5 ms did the same work with 40% less CPU and
     // took a relay from 750 full rooms to 1,000, for a wait well under a frame (bench/load-results.md).
     var batch_ms: i64 = 5;
@@ -71,6 +76,13 @@ pub fn main(init: std.process.Init) !void {
             max_connections = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else if (std.mem.eql(u8, arg, "--outbox-mib")) {
             outbox_mib = std.fmt.parseInt(usize, value, 10) catch return usage();
+        } else if (std.mem.eql(u8, arg, "--udp")) {
+            use_udp = std.mem.eql(u8, value, "on");
+        } else if (std.mem.eql(u8, arg, "--udp-port")) {
+            udp_port = std.fmt.parseInt(u16, value, 10) catch return usage();
+        } else if (std.mem.eql(u8, arg, "--udp-host")) {
+            if (value.len > 253) return usage();
+            udp_host = value;
         } else if (std.mem.eql(u8, arg, "--pin")) {
             pin = std.fmt.parseInt(usize, value, 10) catch return usage();
         } else return usage();
@@ -100,6 +112,17 @@ pub fn main(init: std.process.Init) !void {
         loop.batch_ms = batch_ms;
         loop.out_budget = (outbox_mib << 20) / threads;
     }
+    if (use_udp) {
+        // On Linux the loops share the port, and the kernel sends each datagram to its connection's loop. Elsewhere none
+        // does that, so each loop has a port of its own, the relay's and those after it, and its tickets name it.
+        for (loops, 0..) |loop, i| {
+            const own: u16 = if (own_listeners) 0 else @intCast(i);
+            var at = address;
+            at.port = port + own;
+            try loop.enableUdp(try socket.bindUdp(at, own_listeners), (udp_port orelse port) + own, udp_host);
+        }
+        if (own_listeners) socket.steerByLoop(loops[0].udp_fd) catch |err| std.log.warn("--udp: {t}", .{err});
+    }
     const cap = Server.limitConnections(threads, max_connections);
     std.log.info("relaying on {f} with {d} loops, up to {d} rooms and {d} connections, metrics at http://{f}/metrics", .{ address, threads, max_rooms, cap, metrics_address });
     for (loops[1..]) |loop| {
@@ -121,6 +144,6 @@ fn runLoop(loop: *Server, pin: ?usize) void {
 }
 
 fn usage() error{Usage} {
-    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--batch-ms n] [--max-rooms n] [--max-connections n] [--outbox-mib n]", .{});
+    std.log.err("usage: joinery-relay [--address 127.0.0.1] [--port 8787] [--metrics-address 127.0.0.1] [--metrics-port 9187] [--threads n] [--pin first-cpu] [--udp on] [--udp-port n] [--udp-host name] [--batch-ms n] [--max-rooms n] [--max-connections n] [--outbox-mib n]", .{});
     return error.Usage;
 }

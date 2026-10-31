@@ -79,7 +79,8 @@ Every message is one binary WebSocket message: browsers speak only WebSocket, so
 ```
 offset size  field
 0      1     version     1
-1      1     kind        hello, ops, reject, change, snapshot, snapshot-request, presence, ping, pong, joined, left, bye
+1      1     kind        hello, ops, reject, change, snapshot, snapshot-request, presence, ping, pong, joined, left, bye,
+                         udp-ticket
 2      2     flags
 4      4     body length bytes after the header, at most the relay's largest frame
 8      8     seq         host frames: this decision's number. ping: the sender's last applied. change: its cseq.
@@ -97,6 +98,80 @@ delay frames, which guests see as a gap or a stale `pong`. A frame that doesn't 
 parse: the host turns the change down, and a guest reconnects. A snapshot that doesn't open means the link's key is
 wrong, so the guest stops and says so. `hello`, `ping`, `pong`, `joined`, `left` and `bye` are plain, because the relay
 reads or writes them.
+
+**Presence carries its own order.** A `presence` frame's `seq` is the sender's count of the presence frames it has sent,
+from 1, which receivers keep per peer, dropping any at or below the newest they've shown. Presence can reach a client by
+two paths (below), so an older update can arrive after a newer one. A `seq` of 0 is always taken, as older clients send.
+
+## Presence over UDP
+
+Presence is nearly all of a session's traffic: in a room of four, each change is 3 frames out, and each second of
+pointers moving is 45. TCP's work on every packet, much of it acknowledgements, is most of what a relay costs, and
+presence doesn't need what TCP gives: a lost pointer update is replaced by the next. So a relay can carry presence as UDP
+datagrams beside each connection's WebSocket. Everything else stays on the WebSocket, which is always there: where UDP
+doesn't get through, as on many company networks, nothing changes.
+
+**The ticket.** A relay started with `--udp on` sends each connection a `udp-ticket` frame after its welcome:
+
+```
+offset size  field
+0      8     id          the connection's ID, which the relay finds it by; its last byte names the relay's loop
+8      16    key         AES-128-GCM key for this connection's datagrams, both ways
+24     16    mask key    AES-128 key that masks each datagram's counter
+40     2     port        the relay's UDP port
+42     …     host        where to send to, UTF-8, to the body's end: empty for the WebSocket's host
+```
+
+A client that doesn't want UDP ignores it, and the relay never sends one a datagram.
+
+**A datagram**, either way, is a frame with its header sealed:
+
+```
+offset size  field
+0      8     id          from the ticket
+8      8     counter     masked
+16     16    tag         AES-128-GCM's
+32     24    header      the frame's header, sealed
+56     …     body        the frame's body as it is (presence is already sealed with the room key)
+```
+
+The header is sealed with the ticket's key (AES-128, as QUIC and TLS use by default: presence is already sealed with the
+room's AES-256 key, and this only keeps the header private and the datagram whole), the body authenticated alongside, with the nonce `direction, 0, 0, 0,
+counter` (`direction` 0 to the relay, 1 to the client, the counter 8 bytes little-endian). Each side counts the datagrams
+it sends from 1. The counter is masked as QUIC masks packet numbers: the first 8 bytes of AES-128 of the sealed header's
+first 16, under the mask key, XORed over it. A receiver drops a datagram that doesn't open, one whose counter it has
+taken, and one more than 64 behind the newest it has taken; only one that opens can move that window. A datagram is at
+most 1,400 bytes.
+
+**What goes over UDP:** `presence` both ways, and `udp-ticket` with an empty body as a probe. The relay answers each
+probe with one of its own, the same size, so a probe proves the way back too and no one can make the relay send more
+than it's sent. Anything else is dropped.
+
+**The relay** sends a connection's datagrams to the address of the newest datagram from it that opened and was new, and
+to none until one has. It never acts on one that doesn't open: a forgery can't move a connection, cost it anything, or
+end it. It sends a connection's presence by WebSocket instead once it hasn't heard from it over UDP for 20 seconds, or
+when the client sends `udp-ticket` with an empty body over its WebSocket, which says "send me nothing more by UDP".
+Datagrams the socket won't take are dropped, as newer presence follows.
+
+**The client**, for each WebSocket connection:
+
+| State | Presence goes by | Leaves when |
+| --- | --- | --- |
+| off: no ticket, or UDP turned off here | WebSocket | a ticket comes: probing |
+| probing | WebSocket | an answer to a probe comes: up. Probes at 0, 0.25, 0.5, 1, 2 and 4 s get none: down |
+| up | UDP | nothing's heard by UDP for 15 s: down, saying so over the WebSocket. Idle 5 s, it probes |
+| down | WebSocket | after 30 s, doubling to 5 minutes: probing again, on the same ticket |
+
+A WebSocket that drops takes its ticket with it: the client closes its UDP socket, and the next connection brings a new
+ticket. A path that changes address mid-session, as a NAT's can, mends itself: the relay follows the newest genuine
+datagram.
+
+**Deploying.** UDP needs to reach the relay itself, not an HTTP ingress: a layer-4 load balancer on the UDP port, which
+can be 443 beside HTTPS's. `--udp-port` is the port to put in tickets when it isn't the port the relay listens on, and
+`--udp-host` the name, when UDP's load balancer isn't at the WebSocket's address. On
+Linux every loop shares the port, and the kernel hands each datagram to its connection's loop by the ID's last byte;
+elsewhere (a relay on a Mac, for development) each loop takes a port of its own, the relay's port and those after it,
+and its tickets name it.
 
 ## The model and its ops
 

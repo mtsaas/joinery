@@ -551,3 +551,221 @@ the realistic and room-size runs read low. 8 loops, `--pin 0`, two load VMs:
 The shortfall in rooms of 4 is the first load VM's, not the relay's: run back to back at 20,000 rooms, batching off
 and on, that VM got 75% and 77% of its updates either way, the other 88–99%, and the relay closed no connections.
 Batching took the relay from 4.4–4.7 cores busy to 1.8 there, with 60% fewer packets in and out.
+
+## Two tests: flat out by machine size, and a 2 GB host
+
+The figures above mixed two questions, measured on a 64 GB machine that used under 2 GB. They're now two tests in
+`bench/azure.sh`, each raising the rooms (doubling, then halving the gap to within 10%) until a run fails. A run counts
+when every load VM gets at least 99% of the changes due and 95% of the pointer updates, p99 is within 50 ms, no room or
+connection failed, and the relay is still running. Two D16ps_v6 load VMs; `--pin 0`; `--max-rooms` and
+`--max-connections` raised so they don't set the limit.
+
+**Throughput** (`azure.sh throughput`, `SIZES` resizes the relay VM in turn): rooms of four, each host sending 1,000
+changes a second, half the cores as loops, 3 s runs.
+
+| Relay VM | Loops | Rooms | Delivered/s | p50 / p99 | Relay cores busy | Memory at peak |
+| --- | --- | --- | --- | --- | --- | --- |
+| D2ps_v6 (2 cores) | 1 | 550 | 1,649,270 | 23 / 42 ms | 0.8 | 300 MB |
+| D4ps_v6 (4) | 2 | 1,000 | 3,000,372 | 19 / 36 ms | 1.5 | 532 MB |
+| D8ps_v6 (8) | 4 | 1,800 | 5,413,467 | 23 / 42–46 ms | 2.7 | 956 MB |
+| D16ps_v6 (16) | 8 | 2,600 | 7,771,135 | 11 / 23 ms | 4.7 | 1,435 MB |
+| D16ps_v6 (16) | 16 | 2,000 | 5,994,958 | 4 / 13 ms | 9.8 | 1,042 MB |
+
+1.8× per doubling to 8 cores, then 1.45×. The next step up failed on latency every time (p99 55 ms to 2 s), and above it
+connections were closed for filling their outboxes. At each size the relay process itself was below its loops' share
+of cores; the rest of the machine went to system calls and interrupts, as in the profiles above. Sixteen loops on 16
+cores held 23% less than eight.
+
+**A 2 GB host** (`azure.sh small`): a D2pls_v6 (2 cores, 4 GB), the relay in a cgroup with `MemoryMax=2G` and no swap,
+which also counts its socket buffers. Rooms of four, a change a second per host, 5 pointer updates a second per guest,
+20 s runs so the rooms' logs fill. Two loops, one a core: **6,000 rooms**. One loop, the default, shown for comparison:
+
+| Loops | Rooms | p50 / p99 | Relay cores busy | Memory at peak, with sockets |
+| --- | --- | --- | --- | --- |
+| 2 | 6,000 | 6 / 18 ms | 1.5 | 699 MB |
+| 2 | 6,500 | p99 240 ms (fails) | 1.5 | 807 MB |
+| 2 | 8,000 | p99 339 ms (fails) | 1.5 | 1,000 MB |
+| 1 (default) | 4,000 | 6 / 10 ms | 0.8 | 470 MB |
+| 1 | 4,250 | 8 / 202 ms (fails) | 0.8 | 523 MB |
+
+CPU decides, not memory: about 120 KB a room with sockets included, so 2 GB would hold about 16,000 rooms if the cores
+could serve them. With one loop the second core sat idle; "half the cores" is right from 8 cores up but wrong on 2.
+
+`plot.py` draws `throughput.png` and `small-host.png` from these tables.
+
+## Interrupts and queues: busy polling, steering, coalescing (none raise capacity)
+
+The profiles put most of the time in interrupt and softirq work, so three ways to cut it were tried on the 16-core
+relay (8 loops, `--pin 0`) and the 2-core host. The card under Azure's accelerated networking here is a Mellanox
+ConnectX function (mlx5) beside `eth0`, set up by hand for these runs (`ethtool -L/-C/-K`, `rps_flow_cnt`, and netlink's
+`napi-set` for IRQ suspension). The flags and scripts were removed afterwards.
+
+- **Coalescing** (`ethtool -C`): the card already adapts it (8 µs, 128 frames). A fixed 64 µs changed nothing.
+- **Steering** (a `--steer` flag, 8 queues, aRFS): as many queues as loops, queue i interrupting CPU i, a BPF program
+  on the reuse-port listeners sending each new connection to the loop on the CPU that took its first packet, and the
+  card's flow steering (aRFS) moving guests handed to another loop onto that loop's queue.
+- **Busy polling** (a `--busy-poll 64` flag): `epoll_wait` polls the queue itself, preferring that to
+  interrupts, with IRQ suspension (defer 100, flush 20 µs, suspend 20 ms).
+
+Fixed loads, rooms of four at 1,000 changes a second, 3 s:
+
+| Variant | 400 rooms p50 / p99, machine cores busy | 1,600 rooms | 2,400 rooms |
+| --- | --- | --- | --- |
+| Baseline | 3.2 / 5.8 ms, 2.5 | 4.9 / 9.7 ms, 5.8 | 8.9 / 18 ms, 5.8 |
+| Coalescing 64 µs | 3.2 / 5.8 ms, 2.4 | 4.9 / 9.7 ms, 6.0 | 8.9 / 19 ms, 5.7 |
+| Steering, 8 queues | 3.2 / 5.8 ms, 1.4 | 5.3 / 11 ms, 5.0 | 14 / 33 ms, 4.6 |
+| Steering + busy polling, no suspension | 3.2 / 6.3 ms, 3.0 | 5.3 / 12 ms, 5.3 | 15 / 36 ms, 4.8 |
+| Busy polling + suspension, 16 queues | 15 / 51 ms, 2.7 | 23 / 131 ms, 4.9 | 51 / 962 ms, 5.3 |
+| Steering + busy polling + suspension | 4.9 / 28 ms, 2.4 | 21 / 340 ms, 3.6 | 39 ms / 1.9 s, 3.8 |
+| Steering, 16 loops on 16 queues | 3.2 / 6.3 ms, 1.7 | 4.1 / 8.2 ms, 6.6 | 85 ms / 1.8 s, 7.7 |
+
+Capacity, by the throughput and small-host searches, back to back on the same VMs:
+
+| Host | Baseline | Steering |
+| --- | --- | --- |
+| 16 cores, 1,000 changes/s a room | 2,400 rooms (7.2M/s) | 2,200 rooms (6.6M/s) |
+| 2 cores, 2 GB, typical rooms | 6,000 rooms | 4,750 rooms |
+
+Busy polling hurts with suspension and only costs without it. An epoll instance polls one queue, the one its last
+reported socket came in on, and a loop's connections come in on many: guests are handed to their room's loop
+wherever they arrived, and aRFS moving them takes time and rules (2,760 added in one 3 s run). With the busy-poll
+preference set, the queues it isn't polling wait for the fallback timer. Steering cuts CPU at part load (44% of the
+machine at 400 rooms, 14% at 1,600) by keeping each connection's packets on its loop's core, but 8 queues put every
+interrupt on 8 cores, which then fill sooner: capacity falls 8% on 16 cores, and 21% on 2, where aRFS moves flows
+between the only two queues all the time. Neither ships on by default; the relay stays on spread interrupts and
+connections spread by the kernel's hash. What would let busy polling work is a room's connections arriving on its
+loop's queue, which would need rooms placed by where their guests come in, not by which loop took the host.
+
+## Cheaper packets: mitigations, firewall, AppArmor, ACKs (no change)
+
+Each on the 16-core relay, 8 loops, `--pin 0`, rooms of four at 1,000 changes a second, 3 s, on the same VMs:
+
+| Setting | 400 rooms: relay / machine cores | 1,600 rooms | 2,400 rooms p99 |
+| --- | --- | --- | --- |
+| Baseline (connection tracking off for the port, as always) | 2.3 / 1.9 | 5.5 / 5.8 | 1.4 s |
+| Firewall flushed (`nft flush ruleset`: no netfilter at all) | 2.1 / 1.7 | 5.4 / 5.9 | 1.4 s |
+| + `mitigations=off` | 2.3 / 2.0 | 5.4 / 6.0 | 1.0 s |
+| + `apparmor=0` | 2.0 / 1.6 | 5.4 / 5.9 | 2.3 s |
+
+Within run-to-run noise throughout (2,400 rooms was past this rig's limit on these VMs in every run). On these Cobalt
+cores the only speculation mitigation with a cost on entering the kernel is branch-history clearing, which they do in
+hardware (Meltdown's page-table isolation isn't needed); the `notrack` rule had already taken the firewall's cost out;
+AppArmor's check on an unconfined process's socket calls is cheap.
+
+**ACKs.** Packets the relay sends that carry no data, counted with `tcpdump` for 2 s mid-run: 45% at 1,600 rooms in
+this test (hosts send 1,000 changes a second and get almost nothing back to carry the ACKs), 20% on the 2-core host
+at 4,000 typical rooms, nearly all from the delayed-ACK timer. Linux has no setting for that timer: BPF's
+`TCP_BPF_DELACK_MAX` raises a ceiling, but the kernel holds the delay to the connection's round trip, at least 40 ms,
+and this rig's round trips are under a millisecond. On the internet, round trips of 20–100 ms let more ACKs wait for
+data going back, so production should see fewer than these.
+
+What's left of the kernel's cost is TCP's own work on each packet, which only fewer packets (section 3 of the plan:
+pointer updates on a tick, the app sending fewer) or moving TCP out of the kernel (QUIC) can cut.
+
+## Presence over UDP, built for real: what each datagram costs (on a Mac)
+
+The relay seals and opens every datagram itself, so its crypto is now in the hot path. Measured with `zig build bench`
+(ReleaseFast, best of five; the shipping ReleaseSafe build in brackets), on an Apple M5 Pro, a pointer update being a
+24-byte header and a 92-byte sealed body:
+
+| Step | First version | Now |
+| --- | --- | --- |
+| Seal one for a client | 99.9 ns | 16.0 ns (20.7) |
+| Open one from a client | 101.2 ns | 19.4 ns (21.1) |
+| Find and open one among 100,000 connections, each cold | 238.8 ns | 103 ns; 56 ns a batch of 32 at a time |
+| One in, three out, among 100,000 connections | 875.3 ns | 369 ns; 183 ns batched as the relay does |
+| Each connection's state | 752 bytes | 512 bytes (576 with its address, a cache line each) |
+
+How, step by step, each measured:
+
+- **Keys expanded once, not per datagram.** std's `Aes256Gcm.encrypt` works out the AES key's schedule and GHASH's key
+  for every message. Caching them saved only 14 ns, which said the cost was somewhere else.
+- **GHASH, 8 blocks to a reduction.** Splitting the seal: the AES counter blocks were 10 ns, the counter's mask 1.6 ns,
+  GHASH 77 of the 100. Fed in pieces (body, padding, header, padding, lengths), std's GHASH did 7 reductions, each
+  waiting on the multiply before it. With H to H⁸ worked out ahead and the input taken 8 blocks at a time, a pointer
+  update's 9 blocks are 2 reductions, their multiplications overlapping: 77 → 36 ns.
+- **Kept in vector registers.** The disassembly of that loop was 208 instructions for 10 `pmull`s: 31 moves between
+  general and vector registers (Zig keeps a `u128` in a pair of general registers, and the multiply wants vector ones),
+  24 byte loads reading blocks big-endian, and the reduction's shifts done in general registers. Rewritten on
+  `@Vector(2, u64)` throughout, blocks loaded whole and byte-reversed with one shuffle, the middle products as `pmull`
+  and `pmull2` on a lane-swapped operand, the reduction's 64-bit shifts as lane moves: 36 → 5.6 ns for 9 blocks, and the
+  seal 56 → 21 ns.
+- **AES-128 for the datagram layer.** Presence is already sealed with the room's AES-256 key; this layer only keeps the
+  header private and the datagram whole, as QUIC's and TLS's default AES-128-GCM does. Four fewer rounds a block and 64
+  fewer bytes a connection: 21 → 16 ns.
+- **No calls into libc.** Laying GHASH's input out in one buffer meant a `memcpy` and a `memset` of runtime lengths,
+  each a call. The body's whole blocks are now read where they are, and only the last part-block, the header and the
+  lengths (at most 4 blocks) are put together. (The open benchmark had the same trap: copying each datagram back in with
+  a runtime-length `memcpy`, then reading it straight back, stalled store forwarding and read 37 ns for what's 19.)
+- **Safety checks where they're needed.** ReleaseSafe added 7 ns to a seal, mostly per-block and per-byte checks in
+  GHASH's loops, on lengths checked once on the way in. Those loops now turn checks off after asserting their inputs:
+  22.6 → 20.7 ns. The rest stay.
+- **Cache lines.** A connection's session is 512 bytes, all read for every datagram (Zig lays the fields out by
+  alignment: mask key, GCM key, GHASH's powers, then the ID and counters); its path, the session with the connection, its
+  address and when it was last heard, is 576, aligned to a line so none shares one. A cold one costs about 85 ns more
+  than a warm one (103 ns against 19 to open). So the relay asks for all of a batch's before using any: each `recvmmsg` batch of 32 finds its paths and
+  prefetches them, then opens them; datagrams going out are queued as plain frames and sealed in place when the batch
+  goes, every recipient's session asked for first. That halved the cold costs above.
+
+**Where the time goes now.** `sample`, on this Mac, of a relay with one loop carrying 2,000 rooms of four over UDP
+(88,000 datagrams a second, every pointer update delivered): of the samples not waiting in `kevent`, 84% were in
+`sendto`, 8% in `recvfrom`, and the relay's own code, crypto included, 6%. macOS has no `sendmmsg`, so it pays a system
+call a datagram; on Linux each batch is one. What's left to win is in the kernel.
+
+Every path is checked against std's AES-GCM, byte for byte, across body lengths either side of each 8-block run: the
+vector one natively, the x86 one (`pclmulqdq`) under Rosetta, and std's own GHASH, which a CPU without carry-less
+multiplication gets. The client checks one datagram against the relay's (`udp.zig`'s `vector`, JoineryTests'
+`aDatagramMatchesTheRelays`): CryptoKit and this agree.
+
+**The container.** The Dockerfile built for a generic CPU, which gets Zig's software AES and GHASH. It now builds
+`generic+aes` on Arm and `x86_64_v3+aes+pclmul` on x86, which every server Arm core and every x86 since 2013 have.
+
+## Both tests on the finished build
+
+Presence over UDP as shipped (AES-128-GCM, batches prefetched), both binaries built for `generic+aes`, two D16ps_v6
+load VMs, `--pin 0`. Three rig fixes came first, each found by a run that couldn't be right:
+
+- **One start for both generators.** Each counted from a second after its own rooms opened, so whichever finished
+  first counted through the other's opening (thousands of handshakes, hellos and catch-ups at once), and its p99 took
+  the hit: the tail that came and went between load VMs, from run to run, since the first Azure runs. Now `azure.sh`
+  gives both a start time, far enough ahead to open their rooms (8 s and 7 ms a room each), and a generator whose rooms
+  aren't open by then says so; the run then fails, as only an overloaded relay is that slow to let rooms in.
+- **Clients that stay alive while opening.** A generator opened its rooms one by one, blocking, doing nothing else, so
+  rooms opened first went 30 s silent when 10,000 took longer than that, and the relay rightly let them go. Opening now
+  stops every 5 s to read and ping what's open.
+- **Probes from every connection.** The generator's hosts send no presence, so after their first probe the relay heard
+  nothing from them by UDP, and after 20 s sent their presence by WebSocket (22% of it, at 10,000 rooms). They probe
+  every 5 s of quiet now, as the app does: 350 of 33.9 million went by WebSocket at 13,000 rooms.
+
+Runs also last longer than before (the lead time), so at 1,000 changes a second rooms' logs fill toward their 2 MiB and
+the relay asks for snapshots: test 1 now measures that steady state, with more memory and CPU than the short runs saw
+(1,600 rooms on 8 cores: 1.9 GB, not 821 MB).
+
+**Test 2, a 2 GB host** (`azure.sh small`; with UDP, `RELAY_FLAGS="--udp on" LOAD_FLAGS="--udp 1"`):
+
+| Rooms | By WebSocket: p99 changes, presence; cores; memory | With UDP: the same |
+| --- | --- | --- |
+| 4,000 | 6.9 ms, 6.9 ms; 1.1; 498 MB | 5.8 ms, 0.6 ms; 0.7; 445 MB |
+| 5,500 | 11 ms, 12 ms; 1.5; 685 MB (the most) | |
+| 6,000 | 240 ms (fails) | |
+| 8,000 | 340 ms, 66% of presence (fails) | 5.8 ms, 1.1 ms; 1.1; 916 MB |
+| 12,000 | | 16 ms, 2.2 ms; 1.5; 1.38 GB |
+| 13,000 | | 16 ms, 1.7 ms; 1.5; 1.50 GB (the most) |
+| 14,000 | | 1.0 s (fails) |
+
+UDP holds 2.4 times the rooms on the same 2 cores and 2 GB: 13,000 rooms, 52,000 people. At 4,000 rooms the relay
+uses 36% less CPU for the same sessions. Nothing was dropped or rejected in any UDP run, and both generators got every
+update. Past 13,000 the cores are full again; memory, at 115 KB a room, would hold about 17,000.
+
+**Test 1, flat out by size** (`azure.sh throughput`, change traffic only, so UDP doesn't enter into it):
+
+| Cores | Rooms | Delivered/s | vs. 2 cores | p99 | Relay cores busy | Memory |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2 | 500 | 1.50M | 1.0× | 39 ms | 0.9 | 492 MB |
+| 4 | 850 | 2.54M | 1.7× | 39 ms | 1.8 | 902 MB |
+| 8 | 1,600 | 4.80M | 3.2× | 36 ms | 3.4 | 1.9 GB |
+| 16 | 1,800 | 5.40M | 3.6× | 13 ms | 7.0 | 3.3 GB |
+
+With full logs, 8 to 16 cores gives only 1.1×: the 8 loops are each about full (7.0 cores busy) while 7.8 of the
+machine's 16 idle, and each delivery reads a log grown to megabytes. The generators were never the limit (their
+busiest loop: at most 31%).

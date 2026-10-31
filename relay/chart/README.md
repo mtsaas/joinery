@@ -16,6 +16,11 @@ and arm64.
 chart's ingress, or a load balancer. Then enter its address, such as `wss://relay.example.com`, in Joinery ▸ Settings ▸
 Sharing. Links name their relay, so people joining don't set anything.
 
+**Presence over UDP** (`udp.enabled`) costs the relay about a third less CPU for the same sessions, as pointer updates,
+nearly all the traffic, go as datagrams instead of over TCP. No HTTP ingress carries UDP, so the chart makes a
+`LoadBalancer` Service for it; set `udp.host` to its DNS name (or leave it empty if UDP reaches the WebSocket's address
+too) and `udp.port` to its port. Clients that can't reach it, as on many company networks, carry on by WebSocket.
+
 ```yaml
 ingress:
   enabled: true
@@ -46,16 +51,11 @@ its host chose.
 ## Sizing
 
 The relay counts the cores it can see, not its CPU limit, so set `threads` to about half the CPUs you give it: the
-kernel's network work needs the rest, and more loops deliver less. Measured on 16 Arm cores and 64 GB, with 8 loops
-(`relay/README.md` has more):
-
-| Load | Relay used |
-| --- | --- |
-| 20,000 rooms of 4 (80,000 people), a change a second per host and 5 pointer updates per guest | under 2 cores, 1.4 GB |
-| 1,000 full rooms of 32 (32,000 people), same rates | 4 cores, 0.55 GB |
-
-Memory grows with connections, not traffic. The default `resources` (half a core and 256 MiB requested, a 2 GiB memory
-limit) suit a few thousand people.
+kernel's network work needs the rest, and more loops deliver less. The exception is 2 CPUs: there, set `threads: 2`.
+On 2 Arm cores with a 2 GiB memory limit and `threads: 2`, at a change a second per host and 5 pointer updates a
+second per guest, it holds 13,000 rooms of four (52,000 people) with `udp.enabled`, using 1.5 GB, or 5,500 rooms by
+WebSocket alone (`relay/README.md` has more). CPU runs out before memory. The default `resources` (half a core and 256 MiB requested, a 2 GiB memory limit) suit a
+few thousand people. To hold more, raise `maxRooms` and `maxConnections` along with the CPU.
 
 ## Values
 
@@ -70,6 +70,11 @@ limit) suit a few thousand people.
 | `maxConnections` | `768` | Connections held at once; past it, new ones are closed. At worst each holds about 1 MiB of input |
 | `outboxMib` | `128` | What connections that are behind hold between them; past it, the one behind longest is closed |
 | `extraArgs` | `[]` | More `joinery-relay` flags |
+| `udp.enabled` | `false` | Presence over UDP, and a `LoadBalancer` Service for it |
+| `udp.host` | empty | Where clients send datagrams: the UDP load balancer's DNS name; empty for the WebSocket's host |
+| `udp.port` | `443` | The UDP load balancer's port, which tickets name |
+| `udp.service.type` | `LoadBalancer` | |
+| `udp.service.annotations` | `{}` | |
 | `service.type` | `ClusterIP` | |
 | `service.port` | `8787` | WebSockets |
 | `service.annotations` | `{}` | |

@@ -26,6 +26,18 @@ service:
   port: 8787
   annotations: {}
 
+# Presence over UDP beside each WebSocket (docs/relay.md, "Presence over UDP"): clients that can reach it send pointer
+# updates as datagrams, which costs the relay a third less CPU; the rest carry on by WebSocket. An HTTP ingress can't
+# carry UDP, so this makes a LoadBalancer Service for it, and tickets tell clients where it is: `host` (empty: the
+# WebSocket's host, if UDP reaches that address too) and `port`.
+udp:
+  enabled: false
+  host: ""
+  port: 443
+  service:
+    type: LoadBalancer
+    annotations: {}
+
 metrics:
   port: 9187
   # Prometheus scrape annotations on the pod.
