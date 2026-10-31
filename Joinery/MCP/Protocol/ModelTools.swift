@@ -63,7 +63,7 @@ enum ModelTools {
         ],
         [
             "name": "alter_table",
-            "description": "Changes a table: renames it, recolors it, adds, drops or changes columns, and adds or drops indexes on two or more columns (a compound unique constraint, or a plain index). A changed column's references can be set to a table or column, or to an empty string to drop its foreign key. A single column's uniqueness is its own unique flag; a compound primary key is every column marked primary_key.",
+            "description": "Changes a table: renames it, recolors it, adds, drops or changes columns, and adds or drops indexes on one or more columns (unique, as a compound unique constraint, or plain). A changed column's references can be set to a table or column, or to an empty string to drop its foreign key. A compound primary key is every column marked primary_key.",
             "inputSchema": [
                 "type": "object",
                 "properties": [
@@ -96,7 +96,7 @@ enum ModelTools {
                         "items": [
                             "type": "object",
                             "properties": [
-                                "columns": ["type": "array", "items": ["type": "string"], "description": "Two or more of its columns, in order."],
+                                "columns": ["type": "array", "items": ["type": "string"], "description": "One or more of its columns, in order."],
                                 "unique": ["type": "boolean", "description": "Defaults to true: no two rows with the same values in all of them."],
                                 "name": ["type": "string", "description": "Its name in SQL; left out, one made from the table's and columns' names."],
                             ],
@@ -449,7 +449,7 @@ enum ModelTools {
         for spec in arguments["add_indexes"] as? [[String: Any]] ?? [] {
             let names = spec["columns"] as? [String] ?? []
             let columns = try names.map { try column(named: $0, in: model.tables[index]).id }
-            guard Set(columns).count >= 2 else { throw Failure("An index needs two or more different columns; a single column has its own unique flag.") }
+            guard !columns.isEmpty, Set(columns).count == columns.count else { throw Failure("An index needs one or more columns, each once.") }
             let name = (spec["name"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             let id = model.tables[index].addIndex(on: columns, isUnique: spec["unique"] as? Bool ?? true, name: name)
             let table = model.tables[index]

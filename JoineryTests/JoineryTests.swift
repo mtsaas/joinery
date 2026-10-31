@@ -1716,10 +1716,12 @@ extension JoineryTests {
         #expect(model.tables[1].name(of: model.tables[1].indexes[0]) == "orders_user_id_placed_at_key")
         #expect(model.tables[1].name(of: model.tables[1].indexes[1]) == "orders_user_id_status_placed_at_idx")
 
-        // Dropping placed_at leaves the pair with one column, so it goes; the triple keeps its other two.
+        // Dropping placed_at leaves the pair on user_id alone, and the triple with its other two; dropping user_id
+        // leaves the pair with none, so it goes.
         model.removeColumn(columns[4])
-        #expect(model.tables[1].indexes.map(\.id) == [triple])
-        #expect(model.tables[1].indexes[0].columns == [columns[1], columns[2]])
+        #expect(model.tables[1].indexes.map(\.columns) == [[columns[1]], [columns[1], columns[2]]])
+        model.removeColumn(columns[1])
+        #expect(model.tables[1].indexes.map(\.id) == [triple] && model.tables[1].indexes[0].columns == [columns[2]])
 
         // A file from before indexes reads as having none; one with them reads them back.
         let older = try JSONDecoder().decode(Table.self, from: Data(#"{"id": "6A2D0F0E-3B8B-4C47-9E5A-1F2E3D4C5B6A", "name": "t", "position": [0, 0], "color": "blue"}"#.utf8))
@@ -1757,7 +1759,14 @@ extension JoineryTests {
         ]], on: &model)
         #expect(model.tables[1].indexes.count == 2)
         #expect(throws: ModelTools.Failure.self) {
-            try ModelTools.call("alter_table", ["table": "orders", "add_indexes": [["columns": ["status"]]]], on: &model)
+            try ModelTools.call("alter_table", ["table": "orders", "add_indexes": [["columns": ["status", "status"]]]], on: &model)
+        }
+        // On one column, too.
+        _ = try ModelTools.call("alter_table", ["table": "orders", "add_indexes": [["columns": ["placed_at"], "unique": false]]], on: &model)
+        #expect(model.markdown(of: [model.tables[1].id], title: "Shop").contains("CREATE INDEX orders_placed_at_idx ON orders (placed_at);"))
+        _ = try ModelTools.call("alter_table", ["table": "orders", "drop_indexes": ["orders_placed_at_idx"]], on: &model)
+        #expect(throws: ModelTools.Failure.self) {
+            try ModelTools.call("alter_table", ["table": "orders", "add_indexes": [["columns": []]]], on: &model)
         }
         let described = try ModelTools.describe(model)
         #expect(described.contains("orders_user_id_placed_at_key") && described.contains("orders_by_status"))
