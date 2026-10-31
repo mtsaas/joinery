@@ -1296,7 +1296,7 @@ struct CanvasView: View {
         if let id = canvas.renamingGroup, let (group, frame) = frames.first(where: { $0.0.id == id }) {
             let zoom = canvas.zoom
             let origin = GroupLayer.labelOrigin(of: frame) * zoom + canvas.offset
-            let width = max(160, (frame.width - Metrics.groupPadding * 2) * zoom)
+            let width = max(160, (frame.width - Metrics.groupPadding * 2 - GroupLayer.nameOffset) * zoom)
             RenameField(name: group.name) { name in
                 canvas.renamingGroup = nil
                 let name = name?.trimmingCharacters(in: .whitespaces) ?? ""
