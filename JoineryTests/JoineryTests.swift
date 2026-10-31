@@ -1730,6 +1730,18 @@ extension JoineryTests {
         #expect(again.indexes == model.tables[1].indexes)
     }
 
+    @Test func aColumnComesOutOfOneIndexAndAnIndexLeftWithNoneGoes() {
+        var table = indexedOrders().tables[1]
+        let columns = table.columns.map(\.id)  // id, user_id, status, total, placed_at
+        let pair = table.addIndex(on: [columns[1], columns[2]]), other = table.addIndex(on: [columns[1]])
+        // Out of the pair only: the other index on user_id keeps it.
+        table.remove(columns[1], fromIndex: pair)
+        #expect(table.indexes.map(\.columns) == [[columns[2]], [columns[1]]])
+        // Its last column out, the pair goes; the other stays.
+        table.remove(columns[2], fromIndex: pair)
+        #expect(table.indexes.map(\.id) == [other])
+    }
+
     @Test func indexCablesNestShortestNearestAndFanOutAtSharedSockets() {
         let a = UUID(), b = UUID(), c = UUID(), d = UUID()
         let y: [Column.ID: CGFloat] = [a: 0, b: 30, c: 60, d: 90]
