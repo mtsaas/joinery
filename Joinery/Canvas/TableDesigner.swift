@@ -24,6 +24,8 @@ struct TableDesigner: View {
     var maxWidth: CGFloat = .infinity
     let close: () -> Void
     @FocusState private var focus: DesignerField?
+    /// The index just made from the new-index row, whose row takes the focus to carry on.
+    @State private var newIndex: TableIndex.ID?
     /// As wide as it was last left, dragged by its left edge.
     @AppStorage("tableDesignerWidth") private var width: Double = 680
     /// Its width when a drag on its edge began.
@@ -317,31 +319,24 @@ struct TableDesigner: View {
     private func indexes(_ table: Table) -> some View {
         card {
             VStack(spacing: 0) {
-                let indexes = table.liveIndexes
-                if indexes.isEmpty {
-                    Text("Drag from one column's socket to another's to make a compound unique index, or right-click a socket for an index on that column alone.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 0) {
-                        GridRow {
-                            Color.clear.frame(width: 16, height: 1)
-                            Text("Columns")
-                            Text("Unique").gridColumnAlignment(.center)
-                            Color.clear.frame(width: 1, height: 1)
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 6)
-                        ForEach(indexes) { index in
-                            Divider().gridCellUnsizedAxes(.horizontal)
-                            indexRow(index, in: table)
-                        }
+                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 0) {
+                    GridRow {
+                        Color.clear.frame(width: 16, height: 1)
+                        Text("Columns")
+                        Text("Unique").gridColumnAlignment(.center)
+                        Color.clear.frame(width: 1, height: 1)
                     }
-                    .padding(.horizontal, 6)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+                    ForEach(table.liveIndexes) { index in
+                        Divider().gridCellUnsizedAxes(.horizontal)
+                        indexRow(index, in: table)
+                    }
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    newIndexRow(table)
                 }
+                .padding(.horizontal, 6)
             }
         }
     }
@@ -364,7 +359,7 @@ struct TableDesigner: View {
             .fixedSize()
             .help("Color")
             IndexColumnsField(columns: table.columns(of: index), others: table.columns.filter { !index.columns.contains($0.id) },
-                              color: index.color.color,
+                              color: index.color.color, startsFocused: index.id == newIndex,
                               add: { column in change { $0.add(column, toIndex: index.id) } },
                               remove: { column in change { $0.remove(column, fromIndex: index.id) } })
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -377,6 +372,24 @@ struct TableDesigner: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("Delete index")
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// Always last: typing a column here starts an index on it, and the typing carries on in that index's row.
+    private func newIndexRow(_ table: Table) -> some View {
+        GridRow {
+            Circle().strokeBorder(.tertiary, style: StrokeStyle(lineWidth: 1, dash: [2, 2])).frame(width: 12, height: 12)
+            IndexColumnsField(columns: [], others: table.columns, color: .secondary, prompt: "Add index…", keepsFocus: false,
+                              add: { column in
+                                  let id = TableIndex.ID()
+                                  change { $0.addIndex(on: [column], id: id) }
+                                  newIndex = id
+                              },
+                              remove: { _ in })
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Color.clear.frame(width: 1, height: 1)
+            Color.clear.frame(width: 1, height: 1)
         }
         .padding(.vertical, 4)
     }
@@ -619,6 +632,12 @@ private struct IndexColumnsField: View {
     /// The table's columns not in the index.
     let others: [Column]
     let color: Color
+    var prompt = "Add…"
+    /// Typing on after adding one, as in an index's own row; not in the new-index row, whose typing goes on in the
+    /// index it made.
+    var keepsFocus = true
+    /// Focused as soon as it's shown: the row of an index just made.
+    var startsFocused = false
     let add: (Column.ID) -> Void
     let remove: (Column.ID) -> Void
     @State private var draft = ""
@@ -638,7 +657,7 @@ private struct IndexColumnsField: View {
     var body: some View {
         FlowLayout(spacing: 4) {
             ForEach(columns) { column in pill(column) }
-            TextField(columns.isEmpty ? "Add a column" : "Add…", text: $draft)
+            TextField(prompt, text: $draft)
                 .textFieldStyle(.plain)
                 .font(.system(.callout, design: .monospaced))
                 .frame(minWidth: 80)
@@ -650,6 +669,7 @@ private struct IndexColumnsField: View {
         }
         .padding(.vertical, 2)
         .onChange(of: columns.map(\.id), initial: true) { shown = $1 }
+        .onAppear { if startsFocused { DispatchQueue.main.async { isFocused = true } } }
         // Delete in the empty field, seen before the field's editor takes it, which `onKeyPress` isn't.
         .onChange(of: isFocused) { _, isFocused in
             if isFocused {
@@ -697,7 +717,7 @@ private struct IndexColumnsField: View {
         else { return }
         add(column.id)
         draft = ""
-        DispatchQueue.main.async { isFocused = true }
+        if keepsFocus { DispatchQueue.main.async { isFocused = true } }
     }
 }
 
