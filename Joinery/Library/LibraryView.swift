@@ -193,7 +193,7 @@ private struct TabBar: View {
     var body: some View {
         HStack(alignment: .top, spacing: Self.spacing) {
             // Home, the library, left of all the tabs: a circle, as wide as it's tall.
-            Tab(isFront: library.open == nil, cornerRadius: tabHeight / 2, select: { choose(nil) }, peek: {}) {
+            Tab(isFront: library.open == nil, cornerRadius: tabHeight / 2, select: { _ in choose(nil) }, peek: {}) {
                 Image(systemName: "house")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -288,12 +288,25 @@ private struct ModelTab: View {
     @State private var preview: ModelPreviews.Preview?
     @State private var layouts = TextLayouts()
     @State private var isHovered = false
+    @State private var isOverClose = false
+    @State private var width: CGFloat = 0
 
     /// The icon as far in from the pill's leading end as from its top and bottom, so it's concentric with the pill.
     private var iconInset: CGFloat { (height - ModelIcon.size.height) / 2 }
 
+    private var showsClose: Bool { isFront || isHovered }
+
+    /// Where the × is, in the tab's own space, a little generous.
+    private var closeFrame: CGRect {
+        let size = ModelIcon.size.height
+        return CGRect(x: width - iconInset - size, y: iconInset, width: size, height: size).insetBy(dx: -2, dy: -2)
+    }
+
     var body: some View {
-        Tab(isFront: isFront, cornerRadius: height / 2, select: select, peek: peek, isGrouped: true) {
+        // A click on the × closes it, worked out here from where it was: while peeking, the tab's own click wins
+        // over the ×'s button.
+        Tab(isFront: isFront, cornerRadius: height / 2, select: { showsClose && closeFrame.contains($0) ? close() : select() },
+            peek: peek, isGrouped: true) {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 6) {
                     ModelIcon(model: tab.model)
@@ -304,7 +317,7 @@ private struct ModelTab: View {
                     // As far in from the pill's trailing end as the icon is from its leading end: a circle the
                     // icon's height, concentric with the pill's end.
                     // On the tab in front, or while the pointer is on one; its space kept, so the name does not shift.
-                    CloseButton(size: ModelIcon.size.height, isShown: isFront || isHovered, action: close)
+                    CloseButton(size: ModelIcon.size.height, isShown: showsClose, isHovered: isOverClose, action: close)
                 }
                 .padding(.horizontal, iconInset)
                 .frame(height: height)
@@ -321,8 +334,19 @@ private struct ModelTab: View {
                 }
             }
         }
-        .onHover { isHovered = $0 }
+        // Hovered by where the pointer is, the × too, as the ×'s own hover isn't heard while peeking either.
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            if case .active(let point) = phase {
+                isHovered = true
+                isOverClose = closeFrame.contains(point)
+            } else {
+                isHovered = false
+                isOverClose = false
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .animation(.smooth(duration: 0.15), value: isHovered)
+        .animation(.smooth(duration: 0.15), value: isOverClose)
         // Laid out and routed once each time they peek, not every frame of the row growing.
         .onChange(of: isPeeking, initial: true) { if isPeeking { preview = ModelPreviews.make(tab.model) } }
     }
@@ -332,8 +356,8 @@ private struct ModelTab: View {
 private struct CloseButton: View {
     let size: CGFloat
     let isShown: Bool
+    let isHovered: Bool
     let action: () -> Void
-    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
@@ -345,52 +369,10 @@ private struct CloseButton: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        // Hovered and clicked through AppKit: SwiftUI stops hearing either while the tabs are peeking. The button
-        // stays, for accessibility.
-        .overlay(PointerTarget(isEnabled: isShown, hovered: { isHovered = $0 }, clicked: action))
         .opacity(isShown ? 1 : 0)
         .allowsHitTesting(isShown)
-        .animation(.smooth(duration: 0.15), value: isHovered)
         .help("Close tab (⌘W)")
         .accessibilityLabel("Close Tab")
-    }
-}
-
-/// Tells when the pointer enters and leaves its frame, and when it's clicked, through AppKit; while disabled, clicks
-/// pass through it.
-private struct PointerTarget: NSViewRepresentable {
-    let isEnabled: Bool
-    let hovered: (Bool) -> Void
-    let clicked: () -> Void
-
-    func makeNSView(context: Context) -> TargetView { TargetView() }
-    func updateNSView(_ view: TargetView, context: Context) {
-        view.isEnabled = isEnabled
-        view.hovered = hovered
-        view.clicked = clicked
-    }
-
-    final class TargetView: NSView {
-        var isEnabled = true
-        var hovered: (Bool) -> Void = { _ in }
-        var clicked: () -> Void = {}
-
-        override func updateTrackingAreas() {
-            super.updateTrackingAreas()
-            trackingAreas.forEach(removeTrackingArea)
-            addTrackingArea(NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                                           owner: self))
-        }
-
-        override func mouseEntered(with event: NSEvent) { hovered(true) }
-        override func mouseExited(with event: NSEvent) { hovered(false) }
-        override func hitTest(_ point: NSPoint) -> NSView? { isEnabled ? super.hitTest(point) : nil }
-        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
-        override func mouseDown(with event: NSEvent) {}
-        // Let go on it, as a button is.
-        override func mouseUp(with event: NSEvent) {
-            if bounds.contains(convert(event.locationInWindow, from: nil)) { clicked() }
-        }
     }
 }
 
@@ -400,7 +382,8 @@ private struct PointerTarget: NSViewRepresentable {
 private struct Tab<Content: View>: View {
     let isFront: Bool
     let cornerRadius: CGFloat
-    let select: () -> Void
+    /// Called with where it was clicked, in its own space.
+    let select: (CGPoint) -> Void
     let peek: () -> Void
     /// In the tab group, which is glass already: none of its own.
     var isGrouped = false
@@ -426,7 +409,7 @@ private struct Tab<Content: View>: View {
             }
             .animation(.smooth(duration: 0.15), value: hovering)
             .contentShape(.rect(cornerRadius: cornerRadius))
-            .onTapGesture(perform: select)
+            .onTapGesture(coordinateSpace: .local, perform: select)
             .onHover { isHovering in
                 hovering = isHovering
                 resting?.cancel()

@@ -252,6 +252,18 @@ enum DebugHooks {
                 Library.shared.selection = nil
             case "next-tab":
                 Library.shared.showTab(offset: 1)
+            case "window-click" where numbers.count == 2:
+                // A click at a window point (top-left origin), through AppKit's own routing, title bar and all.
+                guard let window = NSApp.windows.first(where: { $0.title != "" && $0.isVisible }),
+                      let height = window.contentView?.bounds.height else { break }
+                for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                    if let event = NSEvent.mouseEvent(with: type, location: NSPoint(x: numbers[0], y: height - numbers[1]), modifierFlags: [],
+                                                      timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: window.windowNumber,
+                                                      context: nil, eventNumber: 0, clickCount: 1, pressure: 1) {
+                        window.sendEvent(event)
+                    }
+                    try? await Task.sleep(for: .milliseconds(60))
+                }
             case "tabs":
                 let library = Library.shared
                 print("tabs:", library.tabs.map { $0 === library.open ? "[\($0.name)]" : $0.name }.joined(separator: " "),
