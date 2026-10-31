@@ -20,6 +20,13 @@ pub const Counts = struct {
     pointers_replaced: u64 = 0,
     /// Connections closed as soon as they were accepted, as the relay had all it takes.
     refused: u64 = 0,
+    /// Presence over UDP: datagrams sent, those the socket wouldn't take (dropped), presence sent by WebSocket to a
+    /// connection with a ticket as UDP wasn't up for it, datagrams taken, and those that didn't open or weren't new.
+    udp_sent: u64 = 0,
+    udp_dropped: u64 = 0,
+    udp_by_websocket: u64 = 0,
+    udp_received: u64 = 0,
+    udp_rejected: u64 = 0,
 };
 
 /// A loop's metrics, as it last published them.
@@ -55,6 +62,11 @@ pub fn write(w: *Io.Writer, total: Published, loops: usize, started: i64) Io.Wri
         .{ .name = "refused_total", .kind = "counter", .help = "Connections closed as soon as they were accepted, as the relay had all it takes.", .value = counts.refused },
         .{ .name = "lagging_total", .kind = "counter", .help = "Connections closed for falling too far behind.", .value = counts.lagging },
         .{ .name = "pointers_replaced_total", .kind = "counter", .help = "Pointer updates replaced by newer ones before a connection that was behind was sent them.", .value = counts.pointers_replaced },
+        .{ .name = "udp_sent_total", .kind = "counter", .help = "Datagrams sent.", .value = counts.udp_sent },
+        .{ .name = "udp_dropped_total", .kind = "counter", .help = "Datagrams the UDP socket wouldn't take.", .value = counts.udp_dropped },
+        .{ .name = "udp_by_websocket_total", .kind = "counter", .help = "Presence sent by WebSocket to a connection with a ticket, as UDP wasn't up for it.", .value = counts.udp_by_websocket },
+        .{ .name = "udp_received_total", .kind = "counter", .help = "Datagrams taken.", .value = counts.udp_received },
+        .{ .name = "udp_rejected_total", .kind = "counter", .help = "Datagrams that didn't open, weren't new, or were for no connection.", .value = counts.udp_rejected },
         .{ .name = "frames_received_total", .kind = "counter", .help = "Frames received.", .value = counts.frames_in },
         .{ .name = "bytes_received_total", .kind = "counter", .help = "Bytes of frames received.", .value = counts.bytes_in },
         .{ .name = "frames_sent_total", .kind = "counter", .help = "Frames sent.", .value = counts.frames_out },

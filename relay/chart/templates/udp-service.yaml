@@ -1,0 +1,22 @@
+{{- if .Values.udp.enabled }}
+# Presence over UDP: a layer-4 load balancer to the relay's UDP port, as no HTTP ingress carries UDP.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "relay.fullname" . }}-udp
+  labels:
+    {{- include "relay.labels" . | nindent 4 }}
+  {{- with .Values.udp.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.udp.service.type }}
+  selector:
+    {{- include "relay.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: presence
+      port: {{ .Values.udp.port }}
+      targetPort: presence
+      protocol: UDP
+{{- end }}

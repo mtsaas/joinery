@@ -9,6 +9,9 @@ enum Wire {
 
     enum Kind: UInt8, CaseIterable {
         case hello = 1, ops, reject, change, snapshot, snapshotRequest, presence, ping, pong, joined, left, bye
+        /// Presence over UDP (`Datagram`): a connection's ticket from the relay; over UDP, a probe; to the relay over the
+        /// WebSocket, empty, "send me nothing more by UDP".
+        case udpTicket
     }
 
     struct Header: Equatable {

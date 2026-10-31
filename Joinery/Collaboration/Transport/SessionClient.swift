@@ -1,7 +1,7 @@
 import Foundation
 
 /// A session joined from a share link, through its relay. Connects `RelayGuestCore`, which keeps the protocol, to a
-/// `RelaySocket`: reconnecting when it drops, with what's shown here caught up on reconnecting and nothing made here
+/// `RelayConnection`: reconnecting when it drops, with what's shown here caught up on reconnecting and nothing made here
 /// lost or made twice.
 ///
 /// Like remote access: the model is open here only while the session is, and nothing's kept after.
@@ -15,9 +15,11 @@ final class SessionClient: Session {
     var me: Peer? { core.you.map { Relay.peer($0, name: Array(core.name.utf8)) } }
     /// Whether this link lets this person edit, or only watch.
     var canEdit: Bool { core.canEdit }
+    /// Whether presence is going by UDP now, beside the WebSocket.
+    var presenceOverUDP: Bool { socket.presenceOverUDP }
 
     @ObservationIgnored private let core: RelayGuestCore
-    @ObservationIgnored private let socket: RelaySocket
+    @ObservationIgnored private let socket: RelayConnection
     @ObservationIgnored private weak var model: OpenModel?
     @ObservationIgnored private var ticker: Task<Void, Never>?
     @ObservationIgnored private var reconnecting: Task<Void, Never>?
@@ -34,7 +36,7 @@ final class SessionClient: Session {
     init?(link text: String, welcomed: @escaping (String, Replica) -> Void) {
         guard let link = Relay.Link(text) else { return nil }
         core = RelayGuestCore(room: link.room, secret: link.secret, key: link.key, name: Self.ownName, canEdit: link.canEdit)
-        socket = RelaySocket(link.socket)
+        socket = RelayConnection(link.socket)
         onWelcome = welcomed
         socket.onMessage = { [weak self] bytes in
             guard let self else { return }

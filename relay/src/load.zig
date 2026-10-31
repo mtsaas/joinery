@@ -16,6 +16,7 @@ const c = std.c;
 const wire = @import("relay/wire.zig");
 const poller = @import("server/poller.zig");
 const socket = @import("server/socket.zig");
+const udp = @import("server/udp.zig");
 
 /// Where the relay is.
 var relay_address: [4]u8 = .{ 127, 0, 0, 1 };
@@ -37,6 +38,11 @@ const Config = struct {
     seconds: u64 = 10,
     /// Event loops: one a core if 0.
     threads: usize = 0,
+    /// When to start counting, in ms since 1970: the same for every generator, so none counts while another is still
+    /// opening its rooms. 0 starts a second after this one's are open.
+    start: u64 = 0,
+    /// 1 to send and take presence over UDP, with the ticket the relay sends (`--udp on`).
+    udp: u64 = 0,
 };
 
 /// Loops that have opened their rooms, and when they all start counting, once they have.
@@ -121,6 +127,7 @@ pub fn main(init: std.process.Init) !void {
         const rooms = config.rooms / config.threads + @intFromBool(i < config.rooms % config.threads);
         loop.* = .{
             .io = io,
+            .gpa = init.gpa,
             .config = config,
             .rooms = try init.gpa.alloc(Room, rooms),
             .conns = try init.gpa.alloc(Conn, rooms * (1 + config.guests)),
@@ -130,17 +137,30 @@ pub fn main(init: std.process.Init) !void {
         thread.* = try std.Thread.spawn(.{}, Loop.run, .{loop});
     }
     while (opened.load(.acquire) < loops.len) try io.sleep(.fromMilliseconds(1), .awake);
-    start_ns.store(nowNs(io) + std.time.ns_per_s, .release);
+    var start = nowNs(io) + std.time.ns_per_s;
+    if (config.start != 0) {
+        // The agreed time, on this machine's awake clock.
+        const agreed = start - std.time.ns_per_s + (@as(i64, @intCast(config.start)) * std.time.ns_per_ms - @as(i64, @intCast(Io.Clock.real.now(io).nanoseconds)));
+        if (agreed < start - std.time.ns_per_s) std.debug.print("warning: rooms opened {d} ms after the agreed start; counting from now\n", .{@divFloor(start - std.time.ns_per_s - agreed, std.time.ns_per_ms)});
+        start = @max(agreed, start - std.time.ns_per_s);
+    }
+    start_ns.store(start, .release);
     for (threads) |thread| thread.join();
 
     var stats: Stats = .{};
     var slow: Stats = .{};
+    var pointer_latency: Stats = .{};
+    var udp_received: u64 = 0;
+    var most_waited: i64 = std.math.maxInt(i64);
     var sent: u64 = 0;
     var unopened: u64 = 0;
     var lost: u64 = 0;
     for (loops) |*loop| {
         stats.add(loop.stats);
         slow.add(loop.slow);
+        pointer_latency.add(loop.pointer_latency);
+        udp_received += loop.udp_received;
+        most_waited = @min(most_waited, loop.waited_ns);
         sent += loop.published;
         unopened += loop.unopened;
         lost += loop.lost;
@@ -169,6 +189,11 @@ pub fn main(init: std.process.Init) !void {
         @as(f64, @floatFromInt(slow.delivered)) / seconds, slow.percentile(0.5),
         slow.percentile(0.99),                             @as(f64, @floatFromInt(slow.presence)) / seconds,
     });
+    if (pointer_latency.delivered > 0) std.debug.print("pointer latency, send to receive: p50 {d:.0} µs, p99 {d:.0} µs, p99.9 {d:.0} µs\n", .{
+        pointer_latency.percentile(0.5), pointer_latency.percentile(0.99), pointer_latency.percentile(0.999),
+    });
+    std.debug.print("busiest loop {d:.0}% busy\n", .{100 * (1 - @as(f64, @floatFromInt(most_waited)) / (seconds * std.time.ns_per_s))});
+    if (config.udp != 0) std.debug.print("over UDP: {d:.0} datagrams/s taken\n", .{@as(f64, @floatFromInt(udp_received)) / seconds});
     if (unopened + lost > 0) std.debug.print("failed: {d} rooms didn't open, {d} connections closed\n", .{ unopened, lost });
 }
 
@@ -178,6 +203,7 @@ const Room = struct { next_ns: i64 = 0, seq: u64 = 0 };
 /// An event loop and its share of the rooms: each room's host, then its guests, in `conns`.
 const Loop = struct {
     io: Io,
+    gpa: std.mem.Allocator,
     config: Config,
     rooms: []Room,
     conns: []Conn,
@@ -189,25 +215,50 @@ const Loop = struct {
     prng: std.Random.DefaultPrng,
     stats: Stats = .{},
     slow: Stats = .{},
+    /// Datagrams taken over UDP.
+    udp_received: u64 = 0,
+    /// This loop's UDP sockets to the relay, its guests spread across them as many clients' would be
+    /// across the relay's network queues, and whose datagrams are whose, by connection ID.
+    udp_fds: [udp_sockets]c.fd_t = @splat(-1),
+    udp_conns: std.AutoHashMapUnmanaged(u64, *Conn) = .empty,
+    /// Time spent waiting for something to do, while counting: what's left is how busy the loop was, so a run can
+    /// tell when the generator, not the relay, is the limit.
+    waited_ns: i64 = 0,
+    /// Pointer updates' time from send to receive (its `delivered` doubles as their count).
+    pointer_latency: Stats = .{},
     published: u64 = 0,
     unopened: u64 = 0,
     lost: u64 = 0,
 
     fn run(loop: *Loop) void {
+        var kept = nowNs(loop.io);
         for (loop.rooms, 0..) |*room, r| {
             room.* = .{};
             loop.open(r) catch {
                 loop.unopened += 1;
                 for (loop.roomConns(r)) |*conn| conn.close();
             };
+            // Opening many rooms takes longer than the relay waits on a silent connection: those open already read
+            // what's come and ping now and then, as clients do, or the relay would let them go.
+            const now = nowNs(loop.io);
+            if (now - kept > 5 * std.time.ns_per_s) {
+                kept = now;
+                loop.keepAlive(r + 1);
+            }
         }
         _ = opened.fetchAdd(1, .release);
         var events: [256]poller.Event = undefined;
         var end: i64 = std.math.maxInt(i64);
         var last_tick: i64 = 0;
         while (true) {
-            for (loop.poller.wait(&events, 1) catch return) |event| loop.receive(@ptrFromInt(event.tag));
+            const before = nowNs(loop.io);
+            const ready = loop.poller.wait(&events, 1) catch return;
             const now = nowNs(loop.io);
+            if (loop.counting) loop.waited_ns += now - before;
+            for (ready) |event| {
+                // A UDP socket's tag is its index, shifted, with the low bit set; a connection's is its address.
+                if (event.tag & 1 != 0) loop.receiveUdp(event.tag >> 1) else loop.receive(@ptrFromInt(event.tag));
+            }
             if (now >= end) return;
             const start = start_ns.load(.acquire);
             if (start != 0) {
@@ -219,6 +270,18 @@ const Loop = struct {
             if (now - last_tick < std.time.ns_per_ms) continue;
             last_tick = now;
             loop.tick(now);
+        }
+    }
+
+    /// The first `rooms` rooms' connections read what's come in and ping.
+    fn keepAlive(loop: *Loop, rooms: usize) void {
+        for (loop.conns[0 .. rooms * (1 + loop.config.guests)]) |*conn| {
+            if (conn.fd < 0) continue;
+            loop.receive(conn);
+            var ping: [wire.header_size]u8 = undefined;
+            var w: wire.FrameWriter = .{ .buffer = &ping };
+            _ = conn.queue(w.finish(.ping, conn.seq, 0));
+            conn.flush() catch loop.lose(conn);
         }
     }
 
@@ -283,12 +346,18 @@ const Loop = struct {
     fn handle(loop: *Loop, conn: *Conn, frame: []const u8) void {
         if (frame.len < wire.header_size) return;
         const kind = frame[1];
+        if (kind == @backingInt(wire.Kind.udp_ticket) and loop.config.udp != 0) return loop.attachUdp(conn, frame);
         if (conn.role == .host) {
             if (kind == @backingInt(wire.Kind.snapshot_request)) _ = conn.queueSnapshot(loop.rooms[conn.room].seq);
             return;
         }
         const stats = if (conn.role == .slow) &loop.slow else &loop.stats;
-        if (kind == @backingInt(wire.Kind.presence) and loop.counting) stats.presence += 1;
+        if (kind == @backingInt(wire.Kind.presence) and loop.counting) {
+            stats.presence += 1;
+            if (conn.role == .guest and frame.len >= wire.header_size + 8) {
+                loop.pointer_latency.record(nowNs(loop.io) - std.mem.readInt(i64, frame[wire.header_size..][0..8], .little));
+            }
+        }
         if (kind != @backingInt(wire.Kind.ops) or frame.len < wire.header_size + 8) return;
         conn.seq = wire.seqOf(frame);
         const sent = std.mem.readInt(i64, frame[wire.header_size..][0..8], .little);
@@ -329,8 +398,15 @@ const Loop = struct {
                 if (loop.config.presence > 0 and now >= guest.pointer_ns) {
                     // A pointer moving across the canvas, each update about the size of a sealed one.
                     var buffer: [wire.header_size + 64]u8 = @splat(0);
+                    std.mem.writeInt(i64, buffer[wire.header_size..][0..8], now, .little);
                     var w: wire.FrameWriter = .{ .buffer = &buffer, .len = buffer.len };
-                    if (guest.queue(w.finish(.presence, 0, 0)) and loop.counting) {
+                    const frame = w.finish(.presence, 0, 0);
+                    const went = if (guest.session) |*session| sent: {
+                        var out: [udp.max_datagram]u8 = undefined;
+                        const datagram = session.seal(.to_relay, frame, &out);
+                        break :sent loop.sendUdp(guest, datagram);
+                    } else guest.queue(frame);
+                    if (went and loop.counting) {
                         (if (guest.role == .slow) &loop.slow else &loop.stats).presence_sent += 1;
                     }
                     guest.pointer_ns = @max(guest.pointer_ns + pointer_ns, now - pointer_ns);
@@ -348,6 +424,93 @@ const Loop = struct {
         }
         for (loop.conns) |*conn| {
             if (conn.fd >= 0 and conn.out_len > 0) conn.flush() catch loop.lose(conn);
+            // As the app does: a probe after 5 s with nothing sent by UDP, so the relay keeps sending its way.
+            if (conn.session != null and now - conn.udp_sent_ns >= 5 * std.time.ns_per_s) {
+                var probe: [wire.header_size]u8 = undefined;
+                var w: wire.FrameWriter = .{ .buffer = &probe };
+                var out: [udp.max_datagram]u8 = undefined;
+                _ = loop.sendUdp(conn, conn.session.?.seal(.to_relay, w.finish(.udp_ticket, 0, 0), &out));
+            }
+        }
+    }
+
+    /// Its ticket: pointer updates over one of the loop's UDP sockets from here on, said hello to the relay with.
+    fn attachUdp(loop: *Loop, conn: *Conn, frame: []const u8) void {
+        if (conn.session != null or frame.len < wire.header_size + udp.ticket_size) return;
+        const ticket = udp.Ticket.read(frame[wire.header_size..][0..udp.ticket_size]);
+        const k: u8 = @intCast(@intFromPtr(conn) / @sizeOf(Conn) % udp_sockets);
+        _ = loop.udpSocket(k) catch return;
+        loop.udp_conns.put(loop.gpa, ticket.id, conn) catch return;
+        conn.session = .init(ticket);
+        conn.udp_socket = k;
+        conn.udp_port = ticket.port;
+        // Its echo, so the relay knows where it is.
+        var hello: [wire.header_size]u8 = undefined;
+        var w: wire.FrameWriter = .{ .buffer = &hello };
+        var out: [udp.max_datagram]u8 = undefined;
+        _ = loop.sendUdp(conn, conn.session.?.seal(.to_relay, w.finish(.udp_ticket, 0, 0), &out));
+    }
+
+    /// Sends a datagram to the relay's port for `conn`: on a relay that isn't on Linux, each loop has its own.
+    fn sendUdp(loop: *Loop, conn: *Conn, datagram: []const u8) bool {
+        conn.udp_sent_ns = nowNs(loop.io);
+        const address: c.sockaddr.in = .{ .port = std.mem.nativeToBig(u16, conn.udp_port), .addr = @bitCast(relay_address) };
+        return c.sendto(loop.udp_fds[conn.udp_socket], datagram.ptr, datagram.len, 0, @ptrCast(&address), @sizeOf(c.sockaddr.in)) == @as(isize, @intCast(datagram.len));
+    }
+
+    /// The loop's `k`th UDP socket to the relay, made the first time it's wanted.
+    fn udpSocket(loop: *Loop, k: u8) !c.fd_t {
+        if (loop.udp_fds[k] >= 0) return loop.udp_fds[k];
+        const fd = c.socket(c.AF.INET, c.SOCK.DGRAM, 0);
+        if (fd < 0) return error.SystemResources;
+        errdefer _ = c.close(fd);
+        const buffer: c_int = 4 << 20;
+        _ = c.setsockopt(fd, c.SOL.SOCKET, c.SO.RCVBUF, &buffer, @sizeOf(c_int));
+        if (source_count > 0) {
+            const source: c.sockaddr.in = .{ .port = 0, .addr = @bitCast(sources[next_source.fetchAdd(1, .monotonic) % source_count]) };
+            _ = c.bind(fd, @ptrCast(&source), @sizeOf(c.sockaddr.in));
+        }
+        try socket.setNonblocking(fd);
+        try loop.poller.add(fd, @as(usize, k) << 1 | 1);
+        loop.udp_fds[k] = fd;
+        return fd;
+    }
+
+    /// Every datagram waiting on the loop's `k`th socket, a batch at a time, each to its guest.
+    fn receiveUdp(loop: *Loop, k: usize) void {
+        const batch = 64;
+        var buffers: [batch][udp.max_datagram]u8 = undefined;
+        var lens: [batch]usize = undefined;
+        while (true) {
+            var n: usize = 0;
+            if (builtin.os.tag == .linux) {
+                const linux = std.os.linux;
+                var iovs: [batch]std.posix.iovec = undefined;
+                var msgs: [batch]linux.mmsghdr = undefined;
+                for (0..batch) |i| {
+                    iovs[i] = .{ .base = &buffers[i], .len = udp.max_datagram };
+                    msgs[i] = .{ .hdr = .{ .name = null, .namelen = 0, .iov = @ptrCast(&iovs[i]), .iovlen = 1, .control = null, .controllen = 0, .flags = 0 }, .len = 0 };
+                }
+                const rc = linux.recvmmsg(loop.udp_fds[k], &msgs, batch, linux.MSG.DONTWAIT, null);
+                if (linux.errno(rc) != .SUCCESS) return;
+                n = rc;
+                for (msgs[0..n], 0..) |msg, i| lens[i] = msg.len;
+            } else {
+                while (n < batch) : (n += 1) {
+                    const got = c.recv(loop.udp_fds[k], &buffers[n], udp.max_datagram, 0);
+                    if (got <= 0) break;
+                    lens[n] = @intCast(got);
+                }
+            }
+            for (buffers[0..n], lens[0..n]) |*buffer, len| {
+                const datagram = buffer[0..len];
+                const conn = loop.udp_conns.get(udp.idOf(datagram) orelse continue) orelse continue;
+                if (conn.fd < 0) continue;
+                const frame = conn.session.?.open(.to_client, datagram) orelse continue;
+                if (loop.counting) loop.udp_received += 1;
+                loop.handle(conn, frame);
+            }
+            if (n < batch) return;
         }
     }
 
@@ -357,6 +520,9 @@ const Loop = struct {
         loop.lost += 1;
     }
 };
+
+/// UDP sockets a loop spreads its guests across.
+const udp_sockets = 8;
 
 /// The network holds little for a slow guest, so what it's behind on waits at the relay, as it would.
 const slow_window = 4096;
@@ -372,6 +538,12 @@ const Conn = struct {
     /// When a guest's next pointer update is due, and a slow guest's next read.
     pointer_ns: i64 = 0,
     read_ns: i64 = 0,
+    /// Its UDP session once it has a ticket, and which of its loop's UDP sockets it uses.
+    session: ?udp.Session = null,
+    udp_socket: u8 = 0,
+    udp_port: u16 = 0,
+    /// When it last sent a datagram.
+    udp_sent_ns: i64 = 0,
     in_start: usize = 0,
     in_len: usize = 0,
     out_len: usize = 0,

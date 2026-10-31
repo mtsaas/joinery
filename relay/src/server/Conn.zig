@@ -26,6 +26,8 @@ since: i64,
 /// The newest pointer update from each person, waiting for the queue to go: made on the first one, as some
 /// connections never get any.
 pointers: ?*Pointers = null,
+/// Its place in its loop's table of UDP paths, once it's been sent a ticket (`--udp on`).
+udp_slot: ?u32 = null,
 node: std.DoublyLinkedList.Node = .{},
 
 const Conn = @This();
