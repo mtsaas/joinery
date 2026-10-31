@@ -218,7 +218,8 @@ private struct TabBar: View {
                 .coordinateSpace(.named(Self.groupSpace))
                 .padding(Self.groupInset)
                 // A subtle well behind all the tabs; the glass is the tab in front's alone.
-                .background(RoundedRectangle(cornerRadius: groupRadius).fill(Self.groupShade))
+                // On the back panel's color, so peeking over the canvas, it doesn't show through.
+                .background(RoundedRectangle(cornerRadius: groupRadius).fill(Self.groupShade).background(Panel.color, in: .rect(cornerRadius: groupRadius)))
                 .overlay(RoundedRectangle(cornerRadius: groupRadius).strokeBorder(Self.groupEdge, lineWidth: 0.5))
             }
             Spacer(minLength: 0)
@@ -302,10 +303,8 @@ private struct ModelTab: View {
                     Spacer(minLength: 0)
                     // As far in from the pill's trailing end as the icon is from its leading end: a circle the
                     // icon's height, concentric with the pill's end.
-                    CloseButton(size: ModelIcon.size.height, action: close)
-                        // On the tab in front, or while the pointer is on one; its space kept, so the name does not shift.
-                        .opacity(isFront || isHovered ? 1 : 0)
-                        .allowsHitTesting(isFront || isHovered)
+                    // On the tab in front, or while the pointer is on one; its space kept, so the name does not shift.
+                    CloseButton(size: ModelIcon.size.height, isShown: isFront || isHovered, action: close)
                 }
                 .padding(.horizontal, iconInset)
                 .frame(height: height)
@@ -332,6 +331,7 @@ private struct ModelTab: View {
 /// A tab's ×, on the tab in front or a hovered one, a circle behind it when the × itself is hovered.
 private struct CloseButton: View {
     let size: CGFloat
+    let isShown: Bool
     let action: () -> Void
     @State private var isHovered = false
 
@@ -345,23 +345,35 @@ private struct CloseButton: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(.secondary)
-        // AppKit's tracking, not `onHover`, which stops hearing it while the tabs are peeking.
-        .background(HoverTracker { isHovered = $0 })
+        // Hovered and clicked through AppKit: SwiftUI stops hearing either while the tabs are peeking. The button
+        // stays, for accessibility.
+        .overlay(PointerTarget(isEnabled: isShown, hovered: { isHovered = $0 }, clicked: action))
+        .opacity(isShown ? 1 : 0)
+        .allowsHitTesting(isShown)
         .animation(.smooth(duration: 0.15), value: isHovered)
         .help("Close tab (⌘W)")
         .accessibilityLabel("Close Tab")
     }
 }
 
-/// Tells when the pointer enters and leaves its frame, by an AppKit tracking area; never in the way of clicks.
-private struct HoverTracker: NSViewRepresentable {
-    let changed: (Bool) -> Void
+/// Tells when the pointer enters and leaves its frame, and when it's clicked, through AppKit; while disabled, clicks
+/// pass through it.
+private struct PointerTarget: NSViewRepresentable {
+    let isEnabled: Bool
+    let hovered: (Bool) -> Void
+    let clicked: () -> Void
 
-    func makeNSView(context: Context) -> TrackingView { TrackingView() }
-    func updateNSView(_ view: TrackingView, context: Context) { view.changed = changed }
+    func makeNSView(context: Context) -> TargetView { TargetView() }
+    func updateNSView(_ view: TargetView, context: Context) {
+        view.isEnabled = isEnabled
+        view.hovered = hovered
+        view.clicked = clicked
+    }
 
-    final class TrackingView: NSView {
-        var changed: (Bool) -> Void = { _ in }
+    final class TargetView: NSView {
+        var isEnabled = true
+        var hovered: (Bool) -> Void = { _ in }
+        var clicked: () -> Void = {}
 
         override func updateTrackingAreas() {
             super.updateTrackingAreas()
@@ -370,9 +382,15 @@ private struct HoverTracker: NSViewRepresentable {
                                            owner: self))
         }
 
-        override func mouseEntered(with event: NSEvent) { changed(true) }
-        override func mouseExited(with event: NSEvent) { changed(false) }
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func mouseEntered(with event: NSEvent) { hovered(true) }
+        override func mouseExited(with event: NSEvent) { hovered(false) }
+        override func hitTest(_ point: NSPoint) -> NSView? { isEnabled ? super.hitTest(point) : nil }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+        override func mouseDown(with event: NSEvent) {}
+        // Let go on it, as a button is.
+        override func mouseUp(with event: NSEvent) {
+            if bounds.contains(convert(event.locationInWindow, from: nil)) { clicked() }
+        }
     }
 }
 
