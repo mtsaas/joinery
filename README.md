@@ -1,6 +1,6 @@
 # Joinery
 
-<img width="1603" height="938" alt="image" src="https://github.com/user-attachments/assets/66cbbdad-5f8a-49a1-8baf-eb1e5aaf6c73" />
+<img width="1000" height="587" alt="Joinery showing the Stack Overflow data model in dark mode: glass tables joined by colored foreign-key wires" src="docs/hero.webp" />
 
 Joinery is a macOS app for sketching SQL data models on an infinite canvas. Tables sit on the canvas, foreign keys are
 drawn as wires between column sockets, and wires can be zip-tied into bundles. Models live in a Freeform-style library
