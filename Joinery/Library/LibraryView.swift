@@ -8,8 +8,7 @@ struct LibraryView: View {
     @State private var titleBarHeight: CGFloat = 32
 
     var body: some View {
-        VStack(spacing: 0) {
-            TabBar(library: library, height: titleBarHeight)
+        ZStack(alignment: .top) {
             Group {
                 if let open = library.open {
                     ModelEditor(open: open)
@@ -18,8 +17,11 @@ struct LibraryView: View {
                     LibraryBrowser(library: library)
                 }
             }
-            // As far below the tabs as the surface is in from the window's sides.
-            .padding(.top, Panel.inset - Panel.tabInset)
+            // Under the tabs, as far below them as the surface is in from the window's sides. While they're peeked
+            // at, it slides further down, off the window's bottom, rather than shrinking.
+            .padding(.top, titleBarHeight + Panel.inset - Panel.tabInset)
+            .offset(y: library.isPeeking ? TabBar.peekHeight : 0)
+            TabBar(library: library, height: titleBarHeight)
         }
         .background(Panel.color)
         .ignoresSafeArea(edges: .top)
@@ -66,9 +68,12 @@ extension View {
     }
 }
 
-/// The library, then the open models, one pill-shaped tab each, from the leading edge: an icon of the model and its
-/// name, the one in front filled. Each closes with the × that takes its icon's place on hover, or ⌘W. Drag one to put
-/// it elsewhere.
+/// The library, then the open models, one tab each, from the leading edge: glass pills with an icon of the model and
+/// its name, the one in front clearest. Each closes with the × that takes its icon's place on hover, or ⌘W. Drag one
+/// to put it elsewhere.
+///
+/// Rest on a tab a moment and they peek: the row grows down, each model's tab showing the model as it is now, and the
+/// surface slides down out of the way until the pointer leaves.
 private struct TabBar: View {
     let library: Library
     let height: CGFloat
@@ -79,18 +84,31 @@ private struct TabBar: View {
     static let inset = Panel.tabInset
     /// The widest a tab gets; a long name is cut short in the middle.
     static let maxWidth: CGFloat = 200
+    /// How long the pointer rests on a tab before they peek.
+    static let peekDelay = Duration.milliseconds(600)
+    /// A peeked-at model's preview: its height, and its gap from the tab's sides and bottom, as the icon's from its
+    /// leading end, so the preview's corners are concentric with the tab's.
+    static let previewHeight: CGFloat = 96
+    static let previewInset = TabIcon.inset
+    /// How much taller the row is while peeking.
+    static let peekHeight = previewHeight + previewInset
+
+    /// A tab's height, and the radius of its pill.
+    private var tabHeight: CGFloat { height - 2 * Self.inset }
+    private var cornerRadius: CGFloat { tabHeight / 2 }
 
     var body: some View {
-        HStack(spacing: Self.spacing) {
-            Tab(isFront: library.open == nil, select: { library.selection = nil }) {
+        HStack(alignment: .top, spacing: Self.spacing) {
+            Tab(isFront: library.open == nil, cornerRadius: cornerRadius, select: { choose(nil) }, peek: peek) {
                 Image(systemName: "square.grid.2x2")
-                    .frame(maxWidth: .infinity)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             // A circle: as wide as it's tall.
-            .frame(width: height - 2 * Self.inset)
+            .frame(width: tabHeight, height: tabHeight)
             .help("All data models (⌘↑)")
             ForEach(library.tabs, id: \.url) { tab in
-                ModelTab(tab: tab, isFront: tab === library.open, select: { library.selection = tab.url }, close: { library.close(tab) })
+                ModelTab(tab: tab, isFront: tab === library.open, isPeeking: library.isPeeking, height: tabHeight,
+                         select: { choose(tab.url) }, close: { library.close(tab) }, peek: peek)
                     .frame(maxWidth: Self.maxWidth)
                     .help(tab.name)
                     .draggable(tab.url)
@@ -103,74 +121,127 @@ private struct TabBar: View {
             Button("New Data Model", systemImage: "plus") { library.newModel(in: library.selection.flatMap(library.collection(of:))) }
                 .labelStyle(.iconOnly)
                 .buttonStyle(.borderless)
-                .frame(width: height - 2 * Self.inset)
+                .frame(width: tabHeight, height: tabHeight)
                 .help("New data model, in a tab (⌘N)")
         }
         .padding(.leading, Self.leading)
         .padding(.trailing, Panel.inset)
         .padding(.vertical, Self.inset)
-        .frame(height: height)
+        .frame(height: height + (library.isPeeking ? Self.peekHeight : 0), alignment: .top)
+        // Tabs opening, closing, moving and coming to the front all move into place.
+        .animation(.smooth(duration: 0.25), value: library.tabs.map(\.url))
+        .animation(.smooth(duration: 0.25), value: library.open.map(ObjectIdentifier.init))
+        // Anywhere in the row, grown or not, keeps them peeking; leaving it stops.
+        .contentShape(.rect)
+        .onHover { if !$0 { setPeeking(false) } }
     }
 
-    /// A model's tab: its icon, or the × on hover, then its name.
+    private func peek() {
+        if !library.tabs.isEmpty { setPeeking(true) }
+    }
+
+    private func setPeeking(_ isPeeking: Bool) {
+        guard library.isPeeking != isPeeking else { return }
+        withAnimation(.smooth(duration: 0.3)) { library.isPeeking = isPeeking }
+    }
+
+    private func choose(_ url: URL?) {
+        setPeeking(false)
+        library.selection = url
+    }
+
+    /// A model's tab: its icon, or the × on hover, then its name; peeking, the model as it is now under them.
     private struct ModelTab: View {
         let tab: OpenModel
         let isFront: Bool
+        let isPeeking: Bool
+        let height: CGFloat
         let select: () -> Void
         let close: () -> Void
+        let peek: () -> Void
         @State private var isHovered = false
+        @State private var preview: ModelPreviews.Preview?
+        @State private var layouts = TextLayouts()
 
         var body: some View {
-            Tab(isFront: isFront, select: select, isHovered: $isHovered) {
-                HStack(spacing: 6) {
-                    ZStack {
-                        TabIcon(model: tab.model).opacity(isHovered ? 0 : 1)
-                        if isHovered {
-                            Button("Close Tab", systemImage: "xmark", action: close)
-                                .labelStyle(.iconOnly)
-                                .buttonStyle(.borderless)
-                                .font(.caption2.weight(.bold))
-                                .help("Close tab (⌘W)")
+            Tab(isFront: isFront, cornerRadius: height / 2, select: select, peek: peek, isHovered: $isHovered) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 6) {
+                        ZStack {
+                            TabIcon(model: tab.model).opacity(isHovered ? 0 : 1)
+                            if isHovered {
+                                Button("Close Tab", systemImage: "xmark", action: close)
+                                    .labelStyle(.iconOnly)
+                                    .buttonStyle(.borderless)
+                                    .font(.caption2.weight(.bold))
+                                    .help("Close tab (⌘W)")
+                            }
                         }
+                        Text(tab.name)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
-                    Text(tab.name)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    // The icon as far in from the pill's leading end as from its top and bottom.
+                    .padding(.leading, TabIcon.inset)
+                    .padding(.trailing, 12)
+                    .frame(height: height)
+                    .animation(.smooth(duration: 0.15), value: isHovered)
+                    if isPeeking {
+                        // What the tab shows now, where it's scrolled and zoomed to.
+                        ModelThumbnail(preview: preview, layouts: layouts,
+                                       view: (tab.canvas.zoom, tab.canvas.offset, tab.canvas.viewSize))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: TabBar.previewHeight)
+                            .background(Theme.canvas)
+                            .clipShape(.rect(cornerRadius: height / 2 - TabBar.previewInset))
+                            .padding([.horizontal, .bottom], TabBar.previewInset)
+                            .transition(.opacity)
+                    }
                 }
-                // The icon as far in from the pill's leading end as from its top and bottom.
-                .padding(.leading, TabIcon.inset)
-                .padding(.trailing, 12)
             }
+            // Laid out and routed once each time they peek, not every frame of the row growing.
+            .onChange(of: isPeeking, initial: true) { if isPeeking { preview = ModelPreviews.make(tab.model) } }
         }
     }
 
-    /// A pill, filled in front, faintly on hover.
+    /// A glass pill, clearest in front and on hover. Resting on it a moment calls `peek`.
     private struct Tab<Content: View>: View {
         let isFront: Bool
+        let cornerRadius: CGFloat
         let select: () -> Void
+        let peek: () -> Void
         var isHovered: Binding<Bool>? = nil
         @ViewBuilder let content: Content
         @State private var hovering = false
+        @State private var resting: Task<Void, Never>?
+
+        static var frontFill: Color { Color(light: NSColor(white: 1, alpha: 0.85), dark: NSColor(white: 1, alpha: 0.1)) }
 
         var body: some View {
             content
                 .font(.callout.weight(isFront ? .medium : .regular))
                 .foregroundStyle(isFront ? .primary : .secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                // A pill while it's as tall as its corners are round, and a card of the same corners when it grows.
+                .glassEffect(isFront || hovering ? .regular : .clear, in: .rect(cornerRadius: cornerRadius))
+                // Behind the glass in front, which shows it through, so that tab stands out on the plain back panel.
                 .background {
-                    Capsule()
-                        .fill(isFront ? Self.frontFill : hovering ? Self.hoverFill : Self.fill)
-                        .shadow(color: .black.opacity(isFront ? 0.1 : 0), radius: 1, y: 0.5)
+                    if isFront { RoundedRectangle(cornerRadius: cornerRadius).fill(Self.frontFill) }
                 }
-                .contentShape(.capsule)
+                .animation(.smooth(duration: 0.15), value: hovering)
+                .contentShape(.rect(cornerRadius: cornerRadius))
                 .onTapGesture(perform: select)
-                .onHover { hovering = $0; isHovered?.wrappedValue = $0 }
+                .onHover { isHovering in
+                    hovering = isHovering
+                    isHovered?.wrappedValue = isHovering
+                    resting?.cancel()
+                    guard isHovering else { return }
+                    resting = Task {
+                        try? await Task.sleep(for: TabBar.peekDelay)
+                        if !Task.isCancelled { peek() }
+                    }
+                }
         }
-
-        /// Every tab is a pill: faint behind, a little stronger on hover, filled in front.
-        static var fill: Color { Color(light: NSColor(white: 0, alpha: 0.05), dark: NSColor(white: 1, alpha: 0.06)) }
-        static var hoverFill: Color { Color(light: NSColor(white: 0, alpha: 0.09), dark: NSColor(white: 1, alpha: 0.1)) }
-        static var frontFill: Color { Color(light: .white, dark: NSColor(white: 1, alpha: 0.16)) }
     }
 }
 

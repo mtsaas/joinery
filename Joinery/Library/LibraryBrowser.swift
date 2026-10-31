@@ -447,17 +447,17 @@ private struct ModelCard: View {
     }
 }
 
-/// A model in miniature: its tables and wires, fitted to the space, drawn as on the canvas.
-private struct ModelThumbnail: View {
+/// A model in miniature: its tables and wires, drawn as on the canvas, fitted to the space, or as a canvas `view` shows
+/// them, scaled down.
+struct ModelThumbnail: View {
     let preview: ModelPreviews.Preview?
     let layouts: TextLayouts
+    /// A canvas's zoom, scroll and size, to show what it does; the whole model, fitted, without.
+    var view: (zoom: CGFloat, offset: CGPoint, size: CGSize)? = nil
 
     var body: some View {
         GeometryReader { geometry in
-            if let preview, let bounds = preview.bounds {
-                let inset: CGFloat = 14
-                let zoom = min((geometry.size.width - inset * 2) / bounds.width, (geometry.size.height - inset * 2) / bounds.height, 0.6)
-                let offset = CGPoint(x: geometry.size.width / 2 - bounds.midX * zoom, y: geometry.size.height / 2 - bounds.midY * zoom)
+            if let preview, let (zoom, offset) = placement(of: preview, in: geometry.size) {
                 ZStack {
                     GroupLayer(groups: preview.model.groups.compactMap { group in preview.model.frame(of: group.id).map { (group, $0) } },
                                zoom: zoom, viewOffset: offset, selected: [])
@@ -477,6 +477,19 @@ private struct ModelThumbnail: View {
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
+
+    private func placement(of preview: ModelPreviews.Preview, in size: CGSize) -> (zoom: CGFloat, offset: CGPoint)? {
+        if let view, view.size.width > 0, view.size.height > 0 {
+            // Filling the space, centered, cutting off what's over at the sides or top and bottom.
+            let scale = max(size.width / view.size.width, size.height / view.size.height)
+            return (view.zoom * scale, CGPoint(x: view.offset.x * scale + (size.width - view.size.width * scale) / 2,
+                                               y: view.offset.y * scale + (size.height - view.size.height * scale) / 2))
+        }
+        guard let bounds = preview.bounds else { return nil }
+        let inset: CGFloat = 14
+        let zoom = min((size.width - inset * 2) / bounds.width, (size.height - inset * 2) / bounds.height, 0.6)
+        return (zoom, CGPoint(x: size.width / 2 - bounds.midX * zoom, y: size.height / 2 - bounds.midY * zoom))
+    }
 }
 
 /// Each model read and routed once for its preview, again only when its file changes.
@@ -493,21 +506,24 @@ final class ModelPreviews {
 
     func preview(of url: URL, modified: Date) -> Preview? {
         if let cached = previews[url], cached.modified == modified { return cached.preview }
-        let preview = (try? DataModel(contentsOf: url)).map { model in
-            let routing = Routing(model: model)
-            let locations = model.columnLocations
-            let colors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
-                                    uniquingKeysWith: { first, _ in first })
-            return Preview(
-                model: model,
-                wires: model.relationships.compactMap { r in
-                    routing.routes[r.id].map { (Path(smoothing: $0.points), colors[r.id] ?? .gray) }
-                },
-                foreignKeys: Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
-                                        uniquingKeysWith: { first, _ in first }),
-                bounds: model.bounds)
-        }
+        let preview = (try? DataModel(contentsOf: url)).map(Self.make)
         previews[url] = (modified, preview)
         return preview
+    }
+
+    /// A model's preview, routed afresh.
+    static func make(_ model: DataModel) -> Preview {
+        let routing = Routing(model: model)
+        let locations = model.columnLocations
+        let colors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
+                                uniquingKeysWith: { first, _ in first })
+        return Preview(
+            model: model,
+            wires: model.relationships.compactMap { r in
+                routing.routes[r.id].map { (Path(smoothing: $0.points), colors[r.id] ?? .gray) }
+            },
+            foreignKeys: Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
+                                    uniquingKeysWith: { first, _ in first }),
+            bounds: model.bounds)
     }
 }

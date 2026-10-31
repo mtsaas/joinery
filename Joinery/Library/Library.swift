@@ -30,6 +30,8 @@ final class Library {
     private(set) var collections: [Collection] = []
     /// Models open in tabs, in the tab bar's order.
     private(set) var tabs: [OpenModel] = []
+    /// Whether the tabs are grown to show each model as it is now, the pointer having rested on one.
+    var isPeeking = false
     /// The tab in front, or nil with the library browser shown.
     private(set) var open: OpenModel?
     /// The model in front: setting it brings its tab forward, opening one if need be; nil shows the browser, leaving
