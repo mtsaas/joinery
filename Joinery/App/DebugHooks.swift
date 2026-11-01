@@ -192,6 +192,30 @@ enum DebugHooks {
                 print("shake:", FrameMeter.shared.report(over: numbers[0]),
                       String(format: "| update %.1f ms median, %.1f ms worst", layouts[layouts.count / 2], layouts.last ?? 0),
                       String(format: "| display %.1f ms median", displays.sorted()[displays.count / 2]))
+            case "pan" where numbers.count == 1:
+                // Pans the canvas about as a trackpad would, every display frame, and times each whole frame: the view
+                // update and the display flush.
+                _ = FrameMeter.shared.report(over: 1)
+                let start = ProcessInfo.processInfo.systemUptime
+                var frames: [Double] = []
+                let window = NSApp.windows.first(where: \.isVisible)
+                var last = CGPoint.zero
+                while ProcessInfo.processInfo.systemUptime - start < numbers[0] {
+                    let t = ProcessInfo.processInfo.systemUptime - start
+                    let next = CGPoint(x: 300 * sin(t * 3), y: 200 * sin(t * 2))
+                    let (_, frame) = FrameMeter.time {
+                        canvas.pan(by: next - last)
+                        window?.contentView?.layoutSubtreeIfNeeded()
+                        window?.displayIfNeeded()
+                        CATransaction.flush()
+                    }
+                    last = next
+                    frames.append(frame)
+                    try? await Task.sleep(for: .seconds(1.0 / 240))
+                }
+                frames.sort()
+                print("pan:", FrameMeter.shared.report(over: numbers[0]),
+                      String(format: "| frame %.1f ms median, %.1f ms worst", frames[frames.count / 2], frames.last ?? 0))
             case "select-ties":
                 canvas.selection = Set(document.wrappedValue.zipTies.map { .zipTie($0.id) })
             case "ties":
