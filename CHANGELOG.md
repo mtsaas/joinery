@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/mtsaas/joinery/compare/joinery-v0.3.0...joinery-v0.3.1) (2026-11-01)
+
+
+### Performance Improvements
+
+* solid tables again, so big models pan fast ([#26](https://github.com/mtsaas/joinery/issues/26)) ([8ee8371](https://github.com/mtsaas/joinery/commit/8ee8371dfa9aa12054e8f2f4f7412c70be7a287d))
+
 ## [0.3.0](https://github.com/mtsaas/joinery/compare/joinery-v0.2.0...joinery-v0.3.0) (2026-11-01)
 
 
