@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/mtsaas/joinery/compare/relay-v0.2.1...relay-v0.3.0) (2026-10-31)
+
+
+### Features
+
+* presence over UDP beside each WebSocket, and the relay's two benchmarks ([#22](https://github.com/mtsaas/joinery/issues/22)) ([658b768](https://github.com/mtsaas/joinery/commit/658b768f2a9e9536bd8835bab2b53c1d39351e9b))
+
 ## [0.2.1](https://github.com/mtsaas/joinery/compare/relay-v0.2.0...relay-v0.2.1) (2026-10-30)
 
 
