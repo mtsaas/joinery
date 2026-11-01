@@ -69,6 +69,7 @@ and write snapshots, and never touches the real library.
 
 - **Frame rate:** Debug builds show frames per second while anything moves, and what the last frame cost.
   `JOINERY_SCRIPT="shake <table> <seconds>"` drags a table about and prints frame stats.
+  `JOINERY_SCRIPT="generate 400 600;wait 2;pan 4;quit"` pans a big model zoomed to fit and prints frame stats.
 - **Scale test:** `scripts/scale-test.sh` drags a table about in made-up models of 10 to 200 tables, zoomed to fit and
   at 50%, with wires under tables and avoiding them. At 200 tables and 300 keys, avoiding tables, a drag holds 120 fps.
 - **Routing alone:** `scripts/routing-bench.sh [-Onone] [model.joinery …]`. The Debug configuration is optimized (`-O`),
