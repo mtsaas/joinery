@@ -666,6 +666,13 @@ private struct IndexColumnsField: View {
                     ForEach(matches) { column in Text(column.name).textInputCompletion(column.name) }
                 }
                 .onSubmit(commit)
+                // Picking a suggestion fills the text in one go and takes the Return with it, so onSubmit never
+                // sees it: a jump to a column's whole name is a pick. Typing it out comes a letter at a time.
+                .onChange(of: draft) { old, new in
+                    if new.count - old.count > 1, others.contains(where: { $0.name == new }) {
+                        DispatchQueue.main.async(execute: commit)  // after the suggestions menu is done with the pick
+                    }
+                }
         }
         .padding(.vertical, 2)
         .onChange(of: columns.map(\.id), initial: true) { shown = $1 }
