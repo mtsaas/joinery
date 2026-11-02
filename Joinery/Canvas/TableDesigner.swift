@@ -24,6 +24,8 @@ struct TableDesigner: View {
     var maxWidth: CGFloat = .infinity
     let close: () -> Void
     @FocusState private var focus: DesignerField?
+    /// The index just made from the new-index row, whose row takes the focus to carry on.
+    @State private var newIndex: TableIndex.ID?
     /// As wide as it was last left, dragged by its left edge.
     @AppStorage("tableDesignerWidth") private var width: Double = 680
     /// Its width when a drag on its edge began.
@@ -313,35 +315,28 @@ struct TableDesigner: View {
         }
     }
 
-    /// Each compound index: its color, name, columns and whether it's unique.
+    /// Each compound index: its color, columns and whether it's unique.
     private func indexes(_ table: Table) -> some View {
         card {
             VStack(spacing: 0) {
-                let indexes = table.liveIndexes
-                if indexes.isEmpty {
-                    Text("Drag from one column's socket to another's to make a compound unique index, or right-click a socket for an index on that column alone.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .padding(10)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 0) {
-                        GridRow {
-                            Color.clear.frame(width: 16, height: 1)
-                            Text("Name"); Text("Columns")
-                            Text("Unique").gridColumnAlignment(.center)
-                            Color.clear.frame(width: 1, height: 1)
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.vertical, 6)
-                        ForEach(indexes) { index in
-                            Divider().gridCellUnsizedAxes(.horizontal)
-                            indexRow(index, in: table)
-                        }
+                Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 0) {
+                    GridRow {
+                        Color.clear.frame(width: 16, height: 1)
+                        Text("Columns")
+                        Text("Unique").gridColumnAlignment(.center)
+                        Color.clear.frame(width: 1, height: 1)
                     }
-                    .padding(.horizontal, 6)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+                    ForEach(table.liveIndexes) { index in
+                        Divider().gridCellUnsizedAxes(.horizontal)
+                        indexRow(index, in: table)
+                    }
+                    Divider().gridCellUnsizedAxes(.horizontal)
+                    newIndexRow(table)
                 }
+                .padding(.horizontal, 6)
             }
         }
     }
@@ -363,19 +358,10 @@ struct TableDesigner: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("Color")
-            CommitField(text: index.name ?? "", prompt: table.name(of: index), field: .indexName(index.id), focus: $focus) { name in
-                let name = name.trimmingCharacters(in: .whitespaces)
-                changeIndex(index.id) { $0.name = name.isEmpty ? nil : name }
-            } onReturn: {
-                focus = nil
-            }
-            .font(.system(.body, design: .monospaced))
-            .modifier(Cell(isFocused: focus == .indexName(index.id)))
-            .frame(minWidth: 160, maxWidth: 260)
-            Text(table.columns(of: index).map(\.name).joined(separator: ", "))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
+            IndexColumnsField(columns: table.columns(of: index), others: table.columns.filter { !index.columns.contains($0.id) },
+                              color: index.color.color, startsFocused: index.id == newIndex,
+                              add: { column in change { $0.add(column, toIndex: index.id) } },
+                              remove: { column in change { $0.remove(column, fromIndex: index.id) } })
                 .frame(maxWidth: .infinity, alignment: .leading)
             Toggle("Unique", isOn: Binding { index.isUnique } set: { isOn in changeIndex(index.id) { $0.isUnique = isOn } })
                 .labelsHidden()
@@ -386,6 +372,24 @@ struct TableDesigner: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(.secondary)
                 .help("Delete index")
+        }
+        .padding(.vertical, 4)
+    }
+
+    /// Always last: typing a column here starts an index on it, and the typing carries on in that index's row.
+    private func newIndexRow(_ table: Table) -> some View {
+        GridRow {
+            Circle().strokeBorder(.tertiary, style: StrokeStyle(lineWidth: 1, dash: [2, 2])).frame(width: 12, height: 12)
+            IndexColumnsField(columns: [], others: table.columns, color: .secondary, prompt: "Add index…", keepsFocus: false,
+                              add: { column in
+                                  let id = TableIndex.ID()
+                                  change { $0.addIndex(on: [column], id: id) }
+                                  newIndex = id
+                              },
+                              remove: { _ in })
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Color.clear.frame(width: 1, height: 1)
+            Color.clear.frame(width: 1, height: 1)
         }
         .padding(.vertical, 4)
     }
@@ -621,10 +625,148 @@ private struct Cell: ViewModifier {
     }
 }
 
+/// An index's columns as pills in its color, each with a × to take it out, and a field after them to add another, its
+/// name completed from the table's other columns. Return adds what's typed; Delete in the empty field takes out the last.
+private struct IndexColumnsField: View {
+    let columns: [Column]
+    /// The table's columns not in the index.
+    let others: [Column]
+    let color: Color
+    var prompt = "Add…"
+    /// Typing on after adding one, as in an index's own row; not in the new-index row, whose typing goes on in the
+    /// index it made.
+    var keepsFocus = true
+    /// Focused as soon as it's shown: the row of an index just made.
+    var startsFocused = false
+    let add: (Column.ID) -> Void
+    let remove: (Column.ID) -> Void
+    @State private var draft = ""
+    @FocusState private var isFocused: Bool
+    /// The columns as last shown, for the Delete monitor, which outlives the view it was made in.
+    @State private var shown: [Column.ID] = []
+    @State private var deleteMonitor: Any?
+
+    /// The other columns matching what's typed: those starting with it first, then those containing it.
+    private var matches: [Column] {
+        let text = draft.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !text.isEmpty else { return others }
+        let starting = others.filter { $0.name.lowercased().hasPrefix(text) }
+        return starting + others.filter { !$0.name.lowercased().hasPrefix(text) && $0.name.lowercased().contains(text) }
+    }
+
+    var body: some View {
+        FlowLayout(spacing: 4) {
+            ForEach(columns) { column in pill(column) }
+            TextField(prompt, text: $draft)
+                .textFieldStyle(.plain)
+                .font(.callout)
+                .frame(minWidth: 80)
+                .focused($isFocused)
+                .textInputSuggestions {
+                    ForEach(matches) { column in Text(column.name).textInputCompletion(column.name) }
+                }
+                .onSubmit(commit)
+                // Picking a suggestion fills the text in one go and takes the Return with it, so onSubmit never
+                // sees it: a jump to a column's whole name is a pick. Typing it out comes a letter at a time.
+                .onChange(of: draft) { old, new in
+                    if new.count - old.count > 1, others.contains(where: { $0.name == new }) {
+                        DispatchQueue.main.async(execute: commit)  // after the suggestions menu is done with the pick
+                    }
+                }
+        }
+        .padding(.vertical, 2)
+        .onChange(of: columns.map(\.id), initial: true) { shown = $1 }
+        .onAppear { if startsFocused { DispatchQueue.main.async { isFocused = true } } }
+        // Delete in the empty field, seen before the field's editor takes it, which `onKeyPress` isn't.
+        .onChange(of: isFocused) { _, isFocused in
+            if isFocused {
+                deleteMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                    guard event.keyCode == 51, event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+                          draft.isEmpty, let last = shown.last else { return event }
+                    remove(last)
+                    return nil
+                }
+            } else {
+                stopMonitoring()
+            }
+        }
+        .onDisappear(perform: stopMonitoring)
+    }
+
+    private func stopMonitoring() {
+        if let deleteMonitor { NSEvent.removeMonitor(deleteMonitor) }
+        deleteMonitor = nil
+    }
+
+    private func pill(_ column: Column) -> some View {
+        HStack(spacing: 3) {
+            Text(column.name)
+                .font(.callout)
+                .lineLimit(1)
+            Button("Remove \(column.name)", systemImage: "xmark") { remove(column.id) }
+                .labelStyle(.iconOnly)
+                .font(.system(size: 8, weight: .bold))
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Take \(column.name) out of the index")
+        }
+        .padding(.leading, 7)
+        .padding(.trailing, 5)
+        .padding(.vertical, 2)
+        .background(color.opacity(0.18), in: .capsule)
+        .overlay(Capsule().strokeBorder(color.opacity(0.35), lineWidth: 0.5))
+    }
+
+    /// Adds the column named, or failing that the best match, and keeps the field for another.
+    private func commit() {
+        let text = draft.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty, let column = matches.first(where: { $0.name.caseInsensitiveCompare(text) == .orderedSame }) ?? matches.first
+        else { return }
+        add(column.id)
+        draft = ""
+        if keepsFocus { DispatchQueue.main.async { isFocused = true } }
+    }
+}
+
+/// Lays out its views in rows, left to right, wrapping when a row is full.
+private struct FlowLayout: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = rows(of: subviews, width: proposal.width ?? .infinity)
+        return CGSize(width: rows.map(\.width).max() ?? 0, height: rows.map(\.height).reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0)))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in rows(of: subviews, width: bounds.width) {
+            var x = bounds.minX
+            for index in row.indices {
+                let size = subviews[index].sizeThatFits(.unspecified)
+                subviews[index].place(at: CGPoint(x: x, y: y + (row.height - size.height) / 2), proposal: .unspecified)
+                x += size.width + spacing
+            }
+            y += row.height + spacing
+        }
+    }
+
+    private func rows(of subviews: Subviews, width: CGFloat) -> [(indices: [Int], width: CGFloat, height: CGFloat)] {
+        var rows: [(indices: [Int], width: CGFloat, height: CGFloat)] = []
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            if let last = rows.last, last.width + spacing + size.width <= width {
+                rows[rows.count - 1] = (last.indices + [index], last.width + spacing + size.width, max(last.height, size.height))
+            } else {
+                rows.append(([index], size.width, size.height))
+            }
+        }
+        return rows
+    }
+}
+
 /// Each field in the table designer, to move between them from the keyboard.
 enum DesignerField: Hashable {
     case tableName
-    case indexName(TableIndex.ID)
     case name(Column.ID)
     case type(Column.ID)
     case sample(Int, Column.ID)
