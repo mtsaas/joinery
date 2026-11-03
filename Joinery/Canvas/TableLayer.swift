@@ -11,7 +11,7 @@ import SwiftUI
 ///
 /// Each table is a grid like a small spreadsheet: a name header, then a row per column with its key, name and type.
 /// The cell being edited gets a `CellEditor` laid over it in the same place and type.
-struct TableLayer: View {
+struct TableLayer: View, Equatable {
     let tables: [Table]
     /// Where tables being dragged have got to, not yet saved.
     let offsets: [Table.ID: CGPoint]
@@ -37,6 +37,16 @@ struct TableLayer: View {
 
     /// How faint what's out of focus is.
     static let fadedOpacity = 0.22
+
+    /// With `.equatable()`, a layer given the same again isn't drawn again: the canvas draws its tables in tiles, and
+    /// redraws only those whose tables changed.
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.zoom == rhs.zoom && lhs.viewOffset == rhs.viewOffset && lhs.viewSize == rhs.viewSize && lhs.layouts === rhs.layouts
+            && lhs.tables == rhs.tables && lhs.offsets == rhs.offsets && lhs.selected == rhs.selected && lhs.cursor == rhs.cursor
+            && lhs.targetColumn == rhs.targetColumn && lhs.hoveredSocket == rhs.hoveredSocket && lhs.focused == rhs.focused
+            && lhs.renaming == rhs.renaming && lhs.diff == rhs.diff && lhs.foreignKeys == rhs.foreignKeys
+            && lhs.socketColors == rhs.socketColors
+    }
 
     @Environment(\.displayScale) private var displayScale
 
@@ -102,6 +112,7 @@ struct TableLayer: View {
     }
 
     private func draw(_ visible: [(table: Table, frame: CGRect)], in context: inout GraphicsContext) {
+        var resolve = ResolvedColors(context.environment)
         let radius = Metrics.cornerRadius
         let cards = visible.map { Path(roundedRect: $0.frame, cornerRadius: radius, style: .circular) }
 
@@ -113,7 +124,7 @@ struct TableLayer: View {
             layer.scaleBy(x: zoom, y: zoom)
             var all = Path()
             for card in cards { all.addPath(card) }
-            layer.fill(all, with: .color(Theme.card))
+            layer.fill(all, with: .color(resolve(Theme.card)))
         }
 
         context.translateBy(x: viewOffset.x, y: viewOffset.y)
@@ -174,23 +185,23 @@ struct TableLayer: View {
             }
         }
 
-        for (color, path) in headers { context.fill(path, with: .color(color.headerFill)) }
+        for (color, path) in headers { context.fill(path, with: .color(resolve(color.headerFill))) }
         for (change, path) in tints { context.fill(path, with: .color(change.color.opacity(0.16))) }
         context.fill(highlights, with: .color(Color.accentColor.opacity(0.14)))
-        context.fill(lines, with: .color(Theme.cardBorder))
-        context.stroke(borders, with: .color(Theme.cardBorder), lineWidth: hairline)
-        for (color, path) in edges { context.stroke(path, with: .color(color.headerBorder), lineWidth: edgeWidth) }
-        if zoom >= Self.textZoom { drawText(visible, in: &context) }
+        context.fill(lines, with: .color(resolve(Theme.cardBorder)))
+        context.stroke(borders, with: .color(resolve(Theme.cardBorder)), lineWidth: hairline)
+        for (color, path) in edges { context.stroke(path, with: .color(resolve(color.headerBorder)), lineWidth: edgeWidth) }
+        if zoom >= Self.textZoom { drawText(visible, in: &context, resolve: &resolve) }
         context.stroke(cursors, with: .color(.accentColor), lineWidth: max(2, 1.5 / zoom))
         for (change, path) in changeRings {
             context.stroke(path, with: .color(change.color), style: StrokeStyle(lineWidth: Metrics.selectionWidth, dash: change == .removed ? [6, 4] : []))
         }
         context.stroke(rings, with: .color(.accentColor), lineWidth: Metrics.selectionWidth)
-        drawSockets(visible, in: &context)
+        drawSockets(visible, in: &context, resolve: &resolve)
     }
 
     /// Every cell's text, and the badges and key labels, drawn with Core Text from laid-out lines.
-    private func drawText(_ visible: [(table: Table, frame: CGRect)], in context: inout GraphicsContext) {
+    private func drawText(_ visible: [(table: Table, frame: CGRect)], in context: inout GraphicsContext, resolve: inout ResolvedColors) {
         // Resolved as SwiftUI would, for this light or dark appearance.
         let environment = context.environment
         let primary = Color.primary.resolve(in: environment).cgColor
@@ -240,7 +251,7 @@ struct TableLayer: View {
                     if column.isPrimaryKey {
                         text("PK", .key, width: key.width, in: key, alignment: .center, color: secondary)
                     } else if let color = foreignKeys[column.id] {
-                        text("FK", .key, width: key.width, in: key, alignment: .center, color: color.resolve(in: environment).cgColor)
+                        text("FK", .key, width: key.width, in: key, alignment: .center, color: resolve(color).resolve(in: environment).cgColor)
                     } else {
                         text("·", .key, width: key.width, in: key, alignment: .center, color: quaternary)
                     }
@@ -280,7 +291,7 @@ struct TableLayer: View {
 
     /// Every socket, both sides of every row: an empty ring until a wire plugs in, then filled with its color. The one
     /// under the pointer is drawn larger, to show it can be grabbed.
-    private func drawSockets(_ visible: [(table: Table, frame: CGRect)], in context: inout GraphicsContext) {
+    private func drawSockets(_ visible: [(table: Table, frame: CGRect)], in context: inout GraphicsContext, resolve: inout ResolvedColors) {
         let line: CGFloat = 1.5
         var empty = Path(), rings = Path(), colored: [Color: Path] = [:]
         var hovered: (center: CGPoint, color: Color?)?
@@ -303,9 +314,9 @@ struct TableLayer: View {
                 }
             }
         }
-        context.fill(empty, with: .color(Theme.card))
-        context.stroke(rings, with: .color(Theme.socket), lineWidth: line)
-        for (color, path) in colored { context.fill(path, with: .color(color)) }
+        context.fill(empty, with: .color(resolve(Theme.card)))
+        context.stroke(rings, with: .color(resolve(Theme.socket)), lineWidth: line)
+        for (color, path) in colored { context.fill(path, with: .color(resolve(color))) }
         if let hovered {
             let diameter = Metrics.socketDiameter * 1.45
             context.fill(Self.circle(at: hovered.center, diameter: diameter), with: .color(hovered.color ?? Theme.card))

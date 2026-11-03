@@ -1,3 +1,4 @@
+import Synchronization
 import SwiftUI
 
 /// The infinite canvas: tables, the springy wires between their columns, and the zip ties that bundle them.
@@ -48,9 +49,10 @@ struct CanvasView: View {
         let routing = routingCache.routing(for: routed, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
                                            avoidingTables: wiresAvoidTables)
         let colors = routingCache.wireColors(for: routed)
-        let foreignKeys = Dictionary(routed.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
-                                     uniquingKeysWith: { first, _ in first })
-        let socketColors = socketColors(routing, colors: colors)
+        let (foreignKeys, socketColors) = routingCache.colorTables {
+            (Dictionary(routed.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } }, uniquingKeysWith: { first, _ in first }),
+             socketColors(routing, colors: colors))
+        }
         // While tables are dragged, groups as dropping them there would leave them: one they'd join reaches round them.
         let grouping = canvas.dragOffset.map { offset in
             var dropped = model
@@ -62,27 +64,43 @@ struct CanvasView: View {
         let groupFrames = grouping.groups.compactMap { group in
             grouping.frame(of: group.id, offsets: canvas.dragOffset == nil ? canvas.tableOffsets : [:]).map { (group, $0) }
         }
+        // The groups, wires and tables are drawn for the window round the view, not the view itself, and only moved as it
+        // pans: nothing here reads the pan offset, so a pan doesn't redraw them until it reaches the window's edge.
+        // What does read it is built inside `Panning`, and redone, cheaply, each step of a pan.
+        let zoom = canvas.zoom, window = canvas.window
+        // Every layer is placed on whole points within the window: one that starts or ends between them is drawn again
+        // whenever a pan moves it, as its edges round to different pixels.
+        let windowOrigin = Self.onPoints(window, zoom: zoom).origin
+        let layerOffset = CGPoint(x: -windowOrigin.x, y: -windowOrigin.y)
         ZStack(alignment: .topLeading) {
-            GridLayer(zoom: canvas.zoom, offset: canvas.offset)
-            GroupLayer(groups: groupFrames, zoom: canvas.zoom, viewOffset: canvas.offset, selected: canvas.selectedGroups, joining: joining,
-                       renaming: canvas.renamingGroup, focused: focusedTables.map { focused in
-                           Set(model.tables.filter { focused.contains($0.id) }.compactMap(\.group))
-                       })
-            wireLayer(routing, colors: colors)
-            tableLayer(socketColors: socketColors, foreignKeys: foreignKeys)
-            copyMoreAnchor
-            ForEach(model.zipTies) { tie in
-                // One being combined into another isn't routed, but is still being dragged: its handle stays.
-                let merging = canvas.tieMerge?.tie == tie.id
-                    ? Routing.Tie(center: tie.position + (canvas.dragOffset ?? .zero), direction: tie.direction, relationships: tie.relationships)
-                    : nil
-                if let frame = routing.ties[tie.id] ?? merging { tieHandle(tie, frame) }
+            Panning { GridLayer(zoom: canvas.zoom, offset: canvas.offset) }
+            Color.clear.overlay(alignment: .topLeading) {
+                Panned(canvas: canvas, origin: windowOrigin) {
+                    ZStack(alignment: .topLeading) {
+                        groupLayers(groupFrames, joining: joining, window: window)
+                        wireLayer(routing, colors: colors, offset: layerOffset)
+                        tableTiles(socketColors: socketColors, foreignKeys: foreignKeys, window: window)
+                    }
+                    .frame(width: Self.onPoints(window, zoom: zoom).width, height: Self.onPoints(window, zoom: zoom).height, alignment: .topLeading)
+                }
             }
-            cellEditor
-            groupNameEditor(groupFrames)
-            gestureOverlay(routing)
+            .allowsHitTesting(false)
+            tableSurface
+            Panning { copyMoreAnchor }
+            Panning {
+                ForEach(model.zipTies) { tie in
+                    // One being combined into another isn't routed, but is still being dragged: its handle stays.
+                    let merging = canvas.tieMerge?.tie == tie.id
+                        ? Routing.Tie(center: tie.position + (canvas.dragOffset ?? .zero), direction: tie.direction, relationships: tie.relationships)
+                        : nil
+                    if let frame = routing.ties[tie.id] ?? merging { tieHandle(tie, frame) }
+                }
+            }
+            Panning { cellEditor }
+            Panning { groupNameEditor(groupFrames) }
+            Panning { gestureOverlay(routing) }
             #if DEBUG
-            if let edit = canvas.feedback { feedbackHandles(edit) }
+            if let edit = canvas.feedback { Panning { feedbackHandles(edit) } }
             #endif
             if canvas.isSpaceHeld { panSurface }
         }
@@ -103,11 +121,12 @@ struct CanvasView: View {
         }
         .overlay(alignment: .bottomTrailing) {
             if showsMinimap, !model.tables.isEmpty, canvas.viewSize.width > 0 {
-                let zoom = canvas.zoom
-                Minimap(tables: model.tables,
-                        groups: model.groups.compactMap { group in model.frame(of: group.id).map { (group, $0) } },
-                        visible: CGRect(origin: CGPoint(x: -canvas.offset.x / zoom, y: -canvas.offset.y / zoom), size: canvas.viewSize * (1 / zoom))) {
-                    canvas.center(on: CGRect(origin: $0, size: .zero))
+                let groups = model.groups.compactMap { group in model.frame(of: group.id).map { (group, $0) } }
+                Panning {
+                    Minimap(tables: model.tables, groups: groups,
+                            visible: CGRect(origin: canvas.canvasPoint(.zero), size: canvas.viewSize * (1 / canvas.zoom))) {
+                        canvas.center(on: CGRect(origin: $0, size: .zero))
+                    }
                 }
                 .padding(16)
             }
@@ -657,9 +676,10 @@ struct CanvasView: View {
 
     // MARK: Wires
 
-    private func wireLayer(_ routing: Routing, colors: [Relationship.ID: Color]) -> some View {
+    /// The wires, drawn with the canvas origin at `offset` in the layer.
+    private func wireLayer(_ routing: Routing, colors: [Relationship.ID: Color], offset: CGPoint) -> some View {
         // Read here, not in the renderer, so changes redraw the canvas.
-        let zoom = canvas.zoom, offset = canvas.offset, highlighted = highlightedRelationships
+        let zoom = canvas.zoom, highlighted = highlightedRelationships
         // In focus mode, ties none of whose wires are in focus fade with them.
         let isFocused = focusedTables != nil
         let tieCrossings = canvas.stroke.map { Set(simulation.crossings(from: $0.start, to: $0.end).map(\.relationship)) } ?? []
@@ -683,6 +703,8 @@ struct CanvasView: View {
 
                 context.translateBy(x: offset.x, y: offset.y)
                 context.scaleBy(x: zoom, y: zoom)
+                var resolve = ResolvedColors(context.environment)
+                let canvasColor = resolve(Theme.canvas)
                 // Highlighted wires last, so they're on top; otherwise always in the model's order, so wires that overlap
                 // never swap which is on top from one frame to the next.
                 let ordered = highlighted.map { highlighted in
@@ -693,8 +715,8 @@ struct CanvasView: View {
                     let path = wirePaths.path(for: relationship.id, through: wire.points)
                     let isDimmed = highlighted.map { !$0.contains(relationship.id) } ?? false
                     let change = changes[relationship.id]
-                    let color = tieCrossings.contains(relationship.id) ? Color.primary : change?.color ?? colors[relationship.id] ?? .gray
-                    context.stroke(path, with: .color(Theme.canvas), style: StrokeStyle(lineWidth: Metrics.tieSpacing, lineCap: .round))
+                    let color = resolve(tieCrossings.contains(relationship.id) ? Color.primary : change?.color ?? colors[relationship.id] ?? .gray)
+                    context.stroke(path, with: .color(canvasColor), style: StrokeStyle(lineWidth: Metrics.tieSpacing, lineCap: .round))
                     if selectedWires.contains(relationship.id) {
                         context.stroke(path, with: .color(color.mix(with: .black, by: Theme.selectedWireDarkening)),
                                        style: StrokeStyle(lineWidth: Metrics.selectedWireWidth, lineCap: .round))
@@ -705,11 +727,11 @@ struct CanvasView: View {
                 // Each port's bus, then the port over where its wires meet it.
                 // In a fixed order, as dictionaries' can change from one routing to the next.
                 for (id, port) in routing.ports.sorted(by: { $0.key.uuidString < $1.key.uuidString }) {
-                    let color = colors[id] ?? Theme.socket
+                    let color = resolve(colors[id] ?? Theme.socket)
                     let isDimmed = highlighted.map { highlighted in !highlighted.contains(id) && !port.wires.contains(where: highlighted.contains) } ?? false
                     if let bus = simulation.wires[id] {
                         let path = wirePaths.path(for: id, through: bus.points)
-                        context.stroke(path, with: .color(Theme.canvas),
+                        context.stroke(path, with: .color(canvasColor),
                                        style: StrokeStyle(lineWidth: Metrics.busWidth + Metrics.tieSpacing, lineCap: .round))
                         if selectedWires.contains(id) {
                             context.stroke(path, with: .color(color.mix(with: .black, by: Theme.selectedWireDarkening)),
@@ -881,15 +903,75 @@ struct CanvasView: View {
         return model.neighborhood(of: focus)
     }
 
-    /// Every table, and the presses on them and on the empty canvas around them.
-    private func tableLayer(socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color]) -> some View {
+    /// The tables near the view, in tiles a quarter of the view across, each drawn on its own and placed in the window:
+    /// a table belongs to the tile its middle is in, and a tile is redrawn only when what it's given changes. So a pan
+    /// that moves the window draws only tiles coming into it, and a change to one table, such as dragging it, redraws
+    /// only its tile, not every table. Each tile is given only what concerns its own tables, so it compares equal
+    /// when nothing about them changed.
+    private func tableTiles(socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color], window: CGRect) -> some View {
+        let zoom = canvas.zoom, offsets = canvas.tableOffsets, windowOrigin = Self.onPoints(window, zoom: zoom).origin
         var selected = canvas.selectedTables
         if case .table(let id)? = canvas.connection?.target { selected.insert(id) }
-        return TableLayer(tables: routedModel.tables, offsets: canvas.tableOffsets, zoom: canvas.zoom, viewOffset: canvas.offset,
-                          viewSize: canvas.viewSize, selected: selected, cursor: canvas.cell, targetColumn: targetColumn,
-                          foreignKeys: foreignKeys, socketColors: socketColors, hoveredSocket: hoveredSocket, layouts: textLayouts,
-                          focused: focusedTables,
-                          renaming: canvas.isEditingCell && canvas.cell?.row == .header ? canvas.cell?.table : nil, diff: diff)
+        let cursor = canvas.cell, target = targetColumn, hovered = hoveredSocket, focused = focusedTables
+        let renaming = canvas.isEditingCell && canvas.cell?.row == .header ? canvas.cell?.table : nil
+        let step = max(canvas.viewSize.width, canvas.viewSize.height) / 4 / zoom
+        var tiles: [TileKey: (tables: [Table], area: CGRect)] = [:]
+        // Until the view has a size, there's nothing to tile.
+        for table in step > 0 ? routedModel.tables : [] {
+            let offset = offsets[table.id] ?? .zero
+            let frame = Metrics.frame(of: table).offsetBy(dx: offset.x, dy: offset.y)
+            let key = TileKey(x: Int((frame.midX / step).rounded(.down)), y: Int((frame.midY / step).rounded(.down)))
+            tiles[key, default: ([], .null)].tables.append(table)
+            tiles[key]!.area = tiles[key]!.area.union(frame)
+        }
+        // Whole tiles, all their tables, so a tile at the window's edge doesn't change as its tables pass the edge.
+        let near = tiles.filter { $0.value.area.intersects(window) }
+        return ForEach(near.keys.sorted(), id: \.self) { key in
+            let tile = near[key]!
+            let ids = Set(tile.tables.map(\.id))
+            let hasColumn = { (id: Column.ID?) in id.map { id in tile.tables.contains { $0.columns.contains { $0.id == id } } } ?? false }
+            // Room for the cards' shadows, sockets and selection rings round them.
+            let area = Self.onPoints(tile.area.insetBy(dx: -48, dy: -48), zoom: zoom)
+            TableLayer(tables: tile.tables, offsets: offsets.filter { ids.contains($0.key) }, zoom: zoom,
+                       viewOffset: CGPoint(x: -area.minX, y: -area.minY), viewSize: area.size,
+                       selected: selected.intersection(ids), cursor: cursor.flatMap { ids.contains($0.table) ? $0 : nil },
+                       targetColumn: hasColumn(target) ? target : nil, foreignKeys: foreignKeys, socketColors: socketColors,
+                       hoveredSocket: hasColumn(hovered?.column) ? hovered : nil, layouts: textLayouts,
+                       focused: focused?.intersection(ids), renaming: renaming.flatMap { ids.contains($0) ? $0 : nil }, diff: diff)
+                .equatable()
+                .frame(width: area.width, height: area.height)
+                .offset(x: area.minX - windowOrigin.x, y: area.minY - windowOrigin.y)
+        }
+    }
+
+    /// `rect`, in canvas points, as it appears in view points at `zoom` with the canvas origin at the view's, widened to
+    /// whole points.
+    static func onPoints(_ rect: CGRect, zoom: CGFloat) -> CGRect {
+        let minX = (rect.minX * zoom).rounded(.down), minY = (rect.minY * zoom).rounded(.down)
+        return CGRect(x: minX, y: minY, width: (rect.maxX * zoom).rounded(.up) - minX, height: (rect.maxY * zoom).rounded(.up) - minY)
+    }
+
+    /// Each group near the view drawn on its own and placed in the window, so a pan draws none of them again.
+    private func groupLayers(_ frames: [(TableGroup, CGRect)], joining: Set<TableGroup.ID>, window: CGRect) -> some View {
+        let zoom = canvas.zoom, selected = canvas.selectedGroups, renaming = canvas.renamingGroup
+        let focused = focusedTables.map { focused in Set(model.tables.filter { focused.contains($0.id) }.compactMap(\.group)) }
+        // Room for its ring.
+        let near = frames.filter { $0.1.intersects(window) }.map { ($0.0, $0.1, Self.onPoints($0.1.insetBy(dx: -4, dy: -4), zoom: zoom)) }
+        let windowOrigin = Self.onPoints(window, zoom: zoom).origin
+        return ForEach(near, id: \.0.id) { group, frame, area in
+            let id: Set<TableGroup.ID> = [group.id]
+            GroupLayer(groups: [(group, frame)], zoom: zoom, viewOffset: CGPoint(x: -area.minX, y: -area.minY),
+                       selected: selected.intersection(id), joining: joining.intersection(id),
+                       renaming: renaming == group.id ? renaming : nil, focused: focused?.intersection(id))
+                .equatable()
+                .frame(width: area.width, height: area.height)
+                .offset(x: area.minX - windowOrigin.x, y: area.minY - windowOrigin.y)
+        }
+    }
+
+    /// The presses on the tables and on the empty canvas around them, over the whole view: the tables' layer moves as it pans.
+    private var tableSurface: some View {
+        Color.clear
             .contentShape(.rect)
             .gesture(surfaceGesture)
             .onContinuousHover { phase in
@@ -2166,6 +2248,18 @@ private final class RoutingCache {
     var current: Routing? { routing }
 
     private var colors: (model: DataModel, light: Palette, dark: Palette, colors: [Relationship.ID: Color])?
+    /// Counts the times the routing or the colors were worked out again.
+    private var generation = 0
+    private var colorTables: (generation: Int, foreignKeys: [Column.ID: Color], sockets: [Routing.Socket: Color])?
+
+    /// Each foreign key's column's color and each plugged-in socket's, from `make`, kept while the routing and colors
+    /// last asked for are: the same ones each time, so the table tiles given them can tell nothing changed at once.
+    func colorTables(_ make: () -> ([Column.ID: Color], [Routing.Socket: Color])) -> ([Column.ID: Color], [Routing.Socket: Color]) {
+        if let colorTables, colorTables.generation == generation { return (colorTables.foreignKeys, colorTables.sockets) }
+        let (foreignKeys, sockets) = make()
+        colorTables = (generation, foreignKeys, sockets)
+        return (foreignKeys, sockets)
+    }
 
     /// Each wire's color, the color of the table it references, and each port's bus's, worked out again only when the
     /// model or the theme changes.
@@ -2178,6 +2272,7 @@ private final class RoutingCache {
         // A port's bus, by its ID, is its column's table's color, as the wires to that column are.
         for port in model.groups.flatMap(\.ports) { wireColors[port.id] = port.column.flatMap { locations[$0]?.table.color.color } }
         colors = (model, light, dark, wireColors)
+        generation += 1
         return wireColors
     }
 
@@ -2200,6 +2295,7 @@ private final class RoutingCache {
         #endif
         inputs = (model, tableOffsets, tieOffsets, avoidingTables)
         self.routing = routing
+        generation += 1
         return routing
     }
 }
@@ -2216,6 +2312,39 @@ private final class WirePaths {
         paths[wire] = (points, path)
         return path
     }
+}
+
+/// Which of the canvas's tiles, a quarter of the view across, a table's drawn in.
+private struct TileKey: Hashable, Comparable {
+    let x: Int, y: Int
+    static func < (lhs: Self, rhs: Self) -> Bool { (lhs.y, lhs.x) < (rhs.y, rhs.x) }
+}
+
+/// Content made by the view above, moved by the pan offset: reading the offset here, not there, leaves the content
+/// as it was, so a pan moves what it drew rather than drawing it again. `origin` is where it goes with no offset.
+private struct Panned<Content: View>: View {
+    let canvas: CanvasController
+    let origin: CGPoint
+    let content: Content
+
+    init(canvas: CanvasController, origin: CGPoint, @ViewBuilder content: () -> Content) {
+        self.canvas = canvas
+        self.origin = origin
+        self.content = content()
+    }
+
+    var body: some View {
+        #if DEBUG
+        let _ = FrameMeter.shared.showed()
+        #endif
+        content.offset(x: origin.x + canvas.offset.x, y: origin.y + canvas.offset.y)
+    }
+}
+
+/// Content made here rather than in the view above, so what it reads that a pan changes, the offset, redoes only this.
+private struct Panning<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    var body: some View { content() }
 }
 
 /// Dots every 24 points, thinned out as you zoom out so they never crowd.
@@ -2243,8 +2372,20 @@ private struct GridLayer: View {
         .allowsHitTesting(false)
     }
 
-    /// A square of `pixels` with a dot of `dot` pixels across in the middle.
+    /// A square of `pixels` with a dot of `dot` pixels across in the middle. The last one is kept, since a pan draws
+    /// the grid every frame and the tile is the same each time.
     private static func tile(pixels: Int, dot: CGFloat, color: CGColor) -> CGImage? {
+        lastTile.withLock { last in
+            if let last, last.pixels == pixels, last.dot == dot, last.color == color { return last.image }
+            let image = makeTile(pixels: pixels, dot: dot, color: color)
+            last = image.map { (pixels, dot, color, $0) }
+            return image
+        }
+    }
+
+    private static let lastTile = Mutex<(pixels: Int, dot: CGFloat, color: CGColor, image: CGImage)?>(nil)
+
+    private static func makeTile(pixels: Int, dot: CGFloat, color: CGColor) -> CGImage? {
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(data: nil, width: pixels, height: pixels, bitsPerComponent: 8, bytesPerRow: 0, space: space,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
@@ -2267,3 +2408,4 @@ extension Path {
         addLine(to: last)
     }
 }
+

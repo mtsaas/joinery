@@ -1,3 +1,4 @@
+import Synchronization
 import SwiftUI
 
 /// The canvas's colors, from the palettes chosen in Settings ▸ Themes (see `Themes`).
@@ -37,8 +38,33 @@ extension TableColor {
 }
 
 extension Color {
+    /// The same color for the same pair each time, so `ResolvedColors` can tell it's one it has already resolved.
     init(light: NSColor, dark: NSColor) {
-        self.init(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light })
+        // ponytail: never emptied; it holds a palette's worth of colors, more only as palettes are edited.
+        self = Self.pairs.withLock { pairs in
+            if let color = pairs[[light, dark]] { return color }
+            let color = Color(nsColor: NSColor(name: nil) { $0.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light })
+            pairs[[light, dark]] = color
+            return color
+        }
+    }
+
+    private static let pairs = Mutex<[[NSColor]: Color]>([:])
+}
+
+/// Colors resolved for one drawing, each once. A theme or system color is otherwise resolved through AppKit's
+/// appearances for every shape drawn with it, allocating a dozen objects each time, and a pan draws hundreds a frame.
+struct ResolvedColors {
+    private let environment: EnvironmentValues
+    private var colors: [Color: Color] = [:]
+
+    init(_ environment: EnvironmentValues) { self.environment = environment }
+
+    mutating func callAsFunction(_ color: Color) -> Color {
+        if let resolved = colors[color] { return resolved }
+        let resolved = Color(color.resolve(in: environment))
+        colors[color] = resolved
+        return resolved
     }
 }
 

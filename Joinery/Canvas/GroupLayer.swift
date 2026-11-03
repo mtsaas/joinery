@@ -3,7 +3,7 @@ import SwiftUI
 /// Every group's boundary, behind the wires and tables: a tinted, rounded area around its tables with its name at the
 /// top left, ringed when selected, or when tables dragged over it would join it. A group moves by the grip left of its
 /// name or by its border, so a selection rectangle can start anywhere inside it.
-struct GroupLayer: View {
+struct GroupLayer: View, Equatable {
     let groups: [(group: TableGroup, frame: CGRect)]
     let zoom: CGFloat
     let viewOffset: CGPoint
@@ -15,14 +15,23 @@ struct GroupLayer: View {
     /// In focus mode, the groups with a table in focus; the rest fade.
     var focused: Set<TableGroup.ID>?
 
+    /// With `.equatable()`, a layer given the same again isn't drawn again: the canvas draws each group on its own, so a
+    /// pan, or a change to one, redraws none of the others.
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.zoom == rhs.zoom && lhs.viewOffset == rhs.viewOffset && lhs.selected == rhs.selected && lhs.joining == rhs.joining
+            && lhs.renaming == rhs.renaming && lhs.focused == rhs.focused
+            && lhs.groups.elementsEqual(rhs.groups) { $0.group == $1.group && $0.frame == $1.frame }
+    }
+
     var body: some View {
         Canvas { context, _ in
+            var resolve = ResolvedColors(context.environment)
             for (group, frame) in groups {
                 var context = context
                 if let focused, !focused.contains(group.id) { context.opacity = TableLayer.fadedOpacity }
                 let rect = CGRect(origin: frame.origin * zoom + viewOffset, size: frame.size * zoom)
                 let shape = Path(roundedRect: rect, cornerRadius: Metrics.groupCornerRadius * zoom, style: .continuous)
-                let color = group.color.color
+                let color = resolve(group.color.color)
                 let isJoining = joining.contains(group.id)
                 context.fill(shape, with: .color(color.opacity(isJoining ? 0.16 : 0.07)))
                 let isSelected = selected.contains(group.id)

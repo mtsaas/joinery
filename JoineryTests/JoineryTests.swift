@@ -453,6 +453,23 @@ struct JoineryTests {
         #expect(TableLayer.layered(tables).map { $0.map(\.frame) } == [[frames[0], frames[1]], [frames[2]], [frames[3]]])
     }
 
+    @Test func theDrawnWindowCoversTheViewAndHoldsStillThroughSmallPans() {
+        let canvas = CanvasController()
+        canvas.resize(to: CGSize(width: 1600, height: 900), fitting: nil)
+        canvas.zoom(by: 1.3)
+        let first = canvas.window
+        var redraws = 0, last = first
+        for step in 0..<200 {
+            canvas.pan(by: CGPoint(x: 7, y: step.isMultiple(of: 2) ? 5 : -3))
+            let view = CGRect(origin: canvas.canvasPoint(.zero), size: CGSize(width: 1600 / canvas.zoom, height: 900 / canvas.zoom))
+            #expect(canvas.window.contains(view), "pan \(step)")
+            #expect(canvas.window.size == first.size, "the same size, so what's drawn offscreen is reused")
+            if canvas.window != last { redraws += 1; last = canvas.window }
+        }
+        // 1400 points across, in steps of 400 / 1.3 canvas points: a handful of redraws, not one a pan.
+        #expect((1...6).contains(redraws))
+    }
+
     @Test func shiftHoldsAMoveToOneAxis() {
         #expect(CanvasController.moveOffset(CGPoint(x: 40, y: -12), isAxisLocked: true) == CGPoint(x: 40, y: 0))
         #expect(CanvasController.moveOffset(CGPoint(x: -5, y: 30), isAxisLocked: true) == CGPoint(x: 0, y: 30))

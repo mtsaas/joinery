@@ -206,15 +206,30 @@ final class CanvasController {
 
     static let zoomRange: ClosedRange<CGFloat> = 0.1...4
 
-    var zoom: CGFloat = 1
+    var zoom: CGFloat = 1 { didSet { updateWindow() } }
     /// Where the canvas origin appears in the view.
-    var offset = CGPoint.zero
+    var offset = CGPoint.zero { didSet { updateWindow() } }
+    /// The part of the canvas the layers draw, in canvas points: the view and some way past it, snapped to steps a
+    /// quarter of the view across. A pan inside a step only moves what's already drawn; crossing one redraws.
+    private(set) var window = CGRect.zero
     /// Until the person pans or zooms, the view keeps the whole model fitted as the window resizes.
     private(set) var isFitted = true
 
     /// The person is arranging things, so the view stays put rather than fitting what they move.
     func stopFitting() { isFitted = false }
-    private(set) var viewSize = CGSize.zero
+    private(set) var viewSize = CGSize.zero { didSet { updateWindow() } }
+
+    private func updateWindow() {
+        guard viewSize.width > 0, viewSize.height > 0 else { return }
+        let step = max(viewSize.width, viewSize.height) / 4 / zoom
+        let view = CGRect(origin: canvasPoint(.zero), size: viewSize * (1 / zoom))
+        // Always the same size, a step more than the view, wherever it starts: what's drawn offscreen for it, such as
+        // the cards' shadows, is then reused from one redraw to the next rather than made again.
+        let window = CGRect(x: floor(view.minX / step) * step, y: floor(view.minY / step) * step,
+                            width: (ceil(view.width / step) + 1) * step, height: (ceil(view.height / step) + 1) * step)
+        // Only when it changes: setting it at all would redraw everything that reads it.
+        if window != self.window { self.window = window }
+    }
     var selection: Set<Item> = []
     /// Showing something only its layout can change in, such as versions compared: tables move and wires are tied, but
     /// no cell is edited, the designer only shows tables, and the palette and wheel leave out what would change the

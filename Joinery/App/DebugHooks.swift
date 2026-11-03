@@ -214,8 +214,9 @@ enum DebugHooks {
                     try? await Task.sleep(for: .seconds(1.0 / 240))
                 }
                 frames.sort()
-                print("pan:", FrameMeter.shared.report(over: numbers[0]),
-                      String(format: "| frame %.1f ms median, %.1f ms worst", frames[frames.count / 2], frames.last ?? 0))
+                print("pan: readout \(FrameMeter.shared.fps) fps |", FrameMeter.shared.report(over: numbers[0]),
+                      String(format: "| %d frames, %.1f ms median, %.1f ms worst, %d over 8.3 ms", frames.count, frames[frames.count / 2],
+                                     frames.last ?? 0, frames.filter { $0 > 8.3 }.count))
             case "select-ties":
                 canvas.selection = Set(document.wrappedValue.zipTies.map { .zipTie($0.id) })
             case "ties":
