@@ -51,7 +51,7 @@ struct CanvasView: View {
         let colors = routingCache.wireColors(for: routed)
         let (foreignKeys, socketColors) = routingCache.colorTables {
             (Dictionary(routed.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } }, uniquingKeysWith: { first, _ in first }),
-             socketColors(routing, colors: colors))
+             self.socketColors(routing, colors: colors))
         }
         // While tables are dragged, groups as dropping them there would leave them: one they'd join reaches round them.
         let grouping = canvas.dragOffset.map { offset in
