@@ -1,7 +1,7 @@
 #if DEBUG
 import SwiftUI
 
-/// Counts the wire layer's frames and times the work behind them, for the readout in the canvas's corner.
+/// Counts the canvas's frames and times the work behind them, for the readout in the canvas's corner.
 @MainActor @Observable
 final class FrameMeter {
     static let shared = FrameMeter()
@@ -10,7 +10,7 @@ final class FrameMeter {
     /// on a timer: each refresh lays the window out again, which while idle would be all the app was doing.
     private(set) var summary = "idle"
 
-    /// When each frame in the last second was drawn.
+    /// When each frame in the last second was shown.
     @ObservationIgnored private var frames: [TimeInterval] = []
     /// Milliseconds the routing for the frame being drawn took, and the last routing and wire drawing.
     @ObservationIgnored private var routing = 0.0
@@ -30,13 +30,22 @@ final class FrameMeter {
         lastRouting = milliseconds
     }
 
+    /// The wires drawn again, in `milliseconds`: a frame, and its cost.
     func drew(in milliseconds: Double) {
-        let now = ProcessInfo.processInfo.systemUptime
-        frames.removeAll { now - $0 > 1 }
-        frames.append(now)
         drawing = milliseconds
         totals.append(routing + drawing)
         routing = 0
+        showed()
+    }
+
+    /// A frame shown: the wires drawn, or a pan's step, which moves what's drawn without drawing it again. Both in one
+    /// frame count once.
+    func showed() {
+        let now = ProcessInfo.processInfo.systemUptime
+        // Closer together than any display shows frames.
+        if let last = frames.last, now - last < 0.004 { return }
+        frames.removeAll { now - $0 > 1 }
+        frames.append(now)
         refreshSoon()
     }
 

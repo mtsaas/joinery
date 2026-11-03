@@ -28,11 +28,12 @@ struct Minimap: View {
         let point = { (canvas: CGPoint) in CGPoint(x: (canvas.x - world.minX) * scale + Self.inset, y: (canvas.y - world.minY) * scale + Self.inset) }
         let rect = { (canvas: CGRect) in CGRect(origin: point(canvas.origin), size: canvas.size * scale) }
         Canvas { context, _ in
+            var resolve = ResolvedColors(context.environment)
             for (group, frame) in groups {
-                context.fill(Path(roundedRect: rect(frame), cornerRadius: 4), with: .color(group.color.color.opacity(0.18)))
+                context.fill(Path(roundedRect: rect(frame), cornerRadius: 4), with: .color(resolve(group.color.color).opacity(0.18)))
             }
             for table in tables {
-                context.fill(Path(roundedRect: rect(Metrics.frame(of: table)), cornerRadius: 1.5), with: .color(table.color.color.opacity(0.5)))
+                context.fill(Path(roundedRect: rect(Metrics.frame(of: table)), cornerRadius: 1.5), with: .color(resolve(table.color.color).opacity(0.5)))
             }
             let view = Path(roundedRect: rect(visible), cornerRadius: 3)
             context.fill(view, with: .color(Color.primary.opacity(0.08)))
