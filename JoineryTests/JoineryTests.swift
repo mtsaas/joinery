@@ -207,7 +207,9 @@ struct JoineryTests {
 
     @Test(arguments: [("int", DataType.integer, false), ("text?", .text, true), ("ts", .timestamp, false),
                       ("TIMESTAMPTZ", .timestamp, false), ("bool?", .boolean, true), ("var", .varchar, false),
-                      ("jsonb", .json, false), ("u", .uuid, false)])
+                      ("jsonb", .json, false), ("u", .uuid, false), ("smallint[]", DataType(rawValue: "smallint[]"), false),
+                      ("BIT(1440)", DataType(rawValue: "bit(1440)"), false), ("decimal(10, 2)?", DataType(rawValue: "numeric(10,2)"), true),
+                      ("sm [] [3]", DataType(rawValue: "smallint[][]"), false), ("timestamp with time zone", .timestamp, false)])
     func typingATypeReadsIt(input: String, type: DataType, isNullable: Bool) throws {
         let parsed = try #require(DataType.parse(input))
         #expect(parsed.type == type)
@@ -382,7 +384,7 @@ struct JoineryTests {
         ]], on: &model)
         #expect(result == "Created users, posts with 1 foreign key.")
         let posts = try #require(model.tables.first { $0.name == "posts" })
-        #expect(posts.columns.map(\.type) == [.bigint, .uuid, .numeric, .text])
+        #expect(posts.columns.map(\.type) == [.bigint, .uuid, DataType(rawValue: "numeric(10,2)"), .text], "sizes are kept")
         #expect(posts.columns[3].isNullable)
         #expect(model.qualifiedName(of: model.relationships[0].to) == "users.id", "a bare table name means its primary key")
         #expect(!Metrics.frame(of: model.tables[0]).intersects(Metrics.frame(of: posts)), "placed clear of each other")

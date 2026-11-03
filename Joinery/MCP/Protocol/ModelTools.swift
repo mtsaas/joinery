@@ -16,7 +16,7 @@ enum ModelTools {
         "type": "object",
         "properties": [
             "name": ["type": "string"],
-            "type": ["type": "string", "description": "uuid, integer, bigint, numeric, text, varchar, boolean, date, timestamp, json or bytea; SQL spellings and aliases such as int, serial, decimal(10,2), varchar(255), jsonb also work. Defaults to text."],
+            "type": ["type": "string", "description": "uuid, integer, smallint, bigint, numeric, text, varchar, boolean, date, timestamp, json, bytea or bit, with an optional size and [] for arrays; SQL spellings and aliases such as int, serial, decimal(10,2), varchar(255), bit(1440), smallint[], jsonb also work. Defaults to text."],
             "primary_key": ["type": "boolean"],
             "nullable": ["type": "boolean", "description": "Columns are required (NOT NULL) unless nullable. A type ending in ? is nullable too."],
             "required": ["type": "boolean", "description": "The opposite of nullable."],
@@ -533,14 +533,12 @@ enum ModelTools {
         spec["nullable"] as? Bool ?? (spec["required"] as? Bool).map { !$0 }
     }
 
-    /// A type as SQL might spell it: "VARCHAR(255)", "decimal(10, 2)", "timestamp with time zone", "int?".
+    /// A type as SQL might spell it: "VARCHAR(255)", "decimal(10, 2)", "smallint[]", "timestamp with time zone", "int?".
     static func dataType(_ text: String) throws -> (type: DataType, isNullable: Bool) {
-        let isNullable = text.hasSuffix("?")
-        let word = text.split(whereSeparator: { "( ?".contains($0) }).first.map(String.init) ?? ""
-        guard let parsed = DataType.parse(word) else {
+        guard let parsed = DataType.parse(text) else {
             throw Failure("Unknown type “\(text)”. Use one of: \(DataType.allCases.map(\.rawValue).joined(separator: ", ")).")
         }
-        return (parsed.type, isNullable)
+        return parsed
     }
 
     private static func tableColor(_ name: String) throws -> TableColor {

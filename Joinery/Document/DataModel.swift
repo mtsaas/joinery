@@ -202,14 +202,29 @@ extension Column {
     }
 }
 
-enum DataType: String, Codable, CaseIterable, Identifiable {
-    case uuid, integer, bigint, numeric, text, varchar, boolean, date, timestamp, json, bytea
+/// A column's type as SQL spells it: one of `allCases`, with an optional size and array brackets, like `varchar(255)`,
+/// `bit(1440)` or `smallint[]`. Saved as that text.
+struct DataType: RawRepresentable, Codable, Hashable, Identifiable {
+    var rawValue: String
+    init(rawValue: String) { self.rawValue = rawValue }
+    var id: String { rawValue }
 
-    var id: Self { self }
+    static let uuid = Self(rawValue: "uuid"), integer = Self(rawValue: "integer"), smallint = Self(rawValue: "smallint")
+    static let bigint = Self(rawValue: "bigint"), numeric = Self(rawValue: "numeric"), text = Self(rawValue: "text")
+    static let varchar = Self(rawValue: "varchar"), boolean = Self(rawValue: "boolean"), date = Self(rawValue: "date")
+    static let timestamp = Self(rawValue: "timestamp"), json = Self(rawValue: "json"), bytea = Self(rawValue: "bytea")
+    static let bit = Self(rawValue: "bit")
+
+    /// The base types, in the order typing the start of a name picks them: "b" is bigint.
+    static let allCases: [Self] = [.uuid, .integer, .smallint, .bigint, .numeric, .text, .varchar, .boolean, .date,
+                                   .timestamp, .json, .bytea, .bit]
+
+    /// The type without its size or brackets: "varchar" for `varchar(255)[]`.
+    var base: Self { Self(rawValue: String(rawValue.prefix { $0.isLetter || $0.isNumber || $0 == "_" })) }
 
     /// Other names people type for each type.
     private static let aliases: [String: DataType] = [
-        "int": .integer, "int4": .integer, "smallint": .integer, "serial": .integer,
+        "int": .integer, "int4": .integer, "serial": .integer, "int2": .smallint, "smallserial": .smallint,
         "int8": .bigint, "long": .bigint, "bigserial": .bigint,
         "decimal": .numeric, "float": .numeric, "double": .numeric, "real": .numeric, "money": .numeric,
         "string": .text, "str": .text, "char": .varchar,
@@ -217,17 +232,22 @@ enum DataType: String, Codable, CaseIterable, Identifiable {
         "jsonb": .json, "blob": .bytea, "bytes": .bytea, "binary": .bytea, "guid": .uuid,
     ]
 
-    /// Reads what someone typed in a type cell: a type's name, an alias, or the start of either, with a trailing `?`
-    /// for nullable. "int?" is a nullable integer, "ts" a timestamp. Nil if it matches nothing.
+    /// Reads what someone typed in a type cell: a type's name, an alias, or the start of either, then an optional size
+    /// and `[]`s, with a trailing `?` for nullable. "int?" is a nullable integer, "ts" a timestamp, "sm[]" a smallint
+    /// array. Words after that, as in "timestamp with time zone", are ignored. Nil if it matches nothing.
     static func parse(_ input: String) -> (type: DataType, isNullable: Bool)? {
-        var word = input.trimmingCharacters(in: .whitespaces).lowercased()
-        let isNullable = word.hasSuffix("?")
-        if isNullable { word.removeLast() }
-        guard !word.isEmpty else { return nil }
-        let type = DataType(rawValue: word) ?? aliases[word]
+        var text = input.trimmingCharacters(in: .whitespaces).lowercased()
+        let isNullable = text.hasSuffix("?")
+        if isNullable { text.removeLast() }
+        guard let match = text.prefixMatch(of: #/([a-z_][a-z0-9_]*)\s*(\([0-9,\s]*\))?((?:\s*\[\d*\])*)/#) else { return nil }
+        let word = String(match.1)
+        let found = allCases.first { $0.rawValue == word } ?? aliases[word]
             ?? allCases.first { $0.rawValue.hasPrefix(word) }
             ?? aliases.sorted { $0.key < $1.key }.first { $0.key.hasPrefix(word) }?.value
-        return type.map { ($0, isNullable) }
+        guard let base = found else { return nil }
+        let size = match.2.map { $0.filter { !$0.isWhitespace } } ?? ""
+        let dimensions = String(repeating: "[]", count: match.3.filter { $0 == "[" }.count)
+        return (DataType(rawValue: base.rawValue + size + dimensions), isNullable)
     }
 }
 
