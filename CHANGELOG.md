@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/mtsaas/joinery/compare/joinery-v0.3.1...joinery-v0.3.2) (2026-11-03)
+
+
+### Performance Improvements
+
+* pan by moving what's drawn, not drawing it again ([#28](https://github.com/mtsaas/joinery/issues/28)) ([b92494c](https://github.com/mtsaas/joinery/commit/b92494cfe8383f0c0f95c2d32be70c102181debe))
+
 ## [0.3.1](https://github.com/mtsaas/joinery/compare/joinery-v0.3.0...joinery-v0.3.1) (2026-11-01)
 
 
