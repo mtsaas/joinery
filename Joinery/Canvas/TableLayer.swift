@@ -24,6 +24,8 @@ struct TableLayer: View, Equatable {
     let targetColumn: Column.ID?
     /// Foreign key columns, in the color of the table each references.
     let foreignKeys: [Column.ID: Color]
+    /// Rows of each table holding all of one compound foreign key, next to each other, whose FK marks merge into one.
+    var foreignKeyRuns: [Table.ID: [ClosedRange<Int>]] = [:]
     /// Sockets with wires plugged in, in their wires' colors.
     let socketColors: [Routing.Socket: Color]
     let hoveredSocket: Routing.Socket?
@@ -45,13 +47,18 @@ struct TableLayer: View, Equatable {
             && lhs.tables == rhs.tables && lhs.offsets == rhs.offsets && lhs.selected == rhs.selected && lhs.cursor == rhs.cursor
             && lhs.targetColumn == rhs.targetColumn && lhs.hoveredSocket == rhs.hoveredSocket && lhs.focused == rhs.focused
             && lhs.renaming == rhs.renaming && lhs.diff == rhs.diff && lhs.foreignKeys == rhs.foreignKeys
-            && lhs.socketColors == rhs.socketColors
+            && lhs.socketColors == rhs.socketColors && lhs.foreignKeyRuns == rhs.foreignKeyRuns
     }
 
     @Environment(\.displayScale) private var displayScale
 
     /// Below this zoom, text would be under about three points tall, and isn't drawn.
     private static let textZoom: CGFloat = 0.27
+
+    /// Compound foreign keys' runs of rows shown as one FK; a primary key column shows PK instead, so not runs with one.
+    private func foreignKeyMarks(_ table: Table) -> [ClosedRange<Int>] {
+        (foreignKeyRuns[table.id] ?? []).filter { run in run.allSatisfy { !table.columns[$0].isPrimaryKey } }
+    }
 
     var body: some View {
         let visible = visibleTables
@@ -143,7 +150,7 @@ struct TableLayer: View, Equatable {
             borders.addPath(Path(roundedRect: frame.insetBy(dx: hairline / 2, dy: hairline / 2),
                                  cornerRadius: radius - hairline / 2, style: .circular))
 
-            let runs = table.compoundPrimaryKeyRuns
+            let runs = table.compoundPrimaryKeyRuns + foreignKeyMarks(table)
             let rows = frame.minY + Metrics.headerHeight
             // The key and type columns' edges, down through the rows.
             for x in [Metrics.keyColumnWidth, frame.width - Metrics.typeColumnWidth - hairline] {
@@ -245,9 +252,16 @@ struct TableLayer: View, Equatable {
                 let merged = CGRect(x: top.minX, y: top.minY, width: top.width, height: CGFloat(run.count) * Metrics.rowHeight)
                 text("PK", .key, width: merged.width, in: merged, alignment: .center, color: secondary)
             }
+            let runsOfForeignKeys = foreignKeyMarks(table)
+            for run in runsOfForeignKeys {
+                guard let color = foreignKeys[table.columns[run.lowerBound].id] else { continue }
+                let top = Metrics.cell(row: run.lowerBound, part: .key, in: frame)
+                let merged = CGRect(x: top.minX, y: top.minY, width: top.width, height: CGFloat(run.count) * Metrics.rowHeight)
+                text("FK", .key, width: merged.width, in: merged, alignment: .center, color: resolve(color).resolve(in: environment).cgColor)
+            }
             for (row, column) in table.columns.enumerated() {
                 let key = Metrics.cell(row: row, part: .key, in: frame)
-                if !runsOfKeys.contains(where: { $0.contains(row) }) {
+                if !(runsOfKeys + runsOfForeignKeys).contains(where: { $0.contains(row) }) {
                     if column.isPrimaryKey {
                         text("PK", .key, width: key.width, in: key, alignment: .center, color: secondary)
                     } else if let color = foreignKeys[column.id] {

@@ -33,6 +33,48 @@ extension DataModel {
         return locations
     }
 
+    /// Foreign keys to another table's compound key (its primary key, or a unique index on several columns), by the
+    /// table they're from: wires from one table that together reach every column of that key, in the key's order.
+    /// ponytail: worked out from the wires, not stored; two such keys from one table to the same one pair up in the order drawn.
+    var compoundForeignKeys: [Table.ID: [[Relationship]]] {
+        let owner = columnLocations
+        var wires: [Table.ID: [Table.ID: [Relationship]]] = [:], targets: [Table.ID: Table] = [:]
+        for wire in relationships {
+            guard let from = owner[wire.from]?.table.id, let target = owner[wire.to]?.table else { continue }
+            wires[from, default: [:]][target.id, default: []].append(wire)
+            targets[target.id] = target
+        }
+        var found: [Table.ID: [[Relationship]]] = [:]
+        for (from, byTarget) in wires {
+            for (id, var unused) in byTarget {
+                let target = targets[id]!
+                let keys = [target.columns.filter(\.isPrimaryKey)] + target.liveIndexes.filter(\.isUnique).map(target.columns(of:))
+                for key in keys where key.count > 1 {
+                    while true {
+                        let keyWires = key.compactMap { column in unused.first { $0.to == column.id } }
+                        guard keyWires.count == key.count else { break }
+                        unused.removeAll { wire in keyWires.contains { $0.id == wire.id } }
+                        found[from, default: []].append(keyWires)
+                    }
+                }
+            }
+        }
+        return found
+    }
+
+    /// Rows holding all of one compound foreign key next to each other, by table: shown as one, as a compound primary
+    /// key is.
+    var compoundForeignKeyRuns: [Table.ID: [ClosedRange<Int>]] {
+        let owner = columnLocations
+        return compoundForeignKeys.mapValues { keys in
+            keys.compactMap { wires in
+                let rows = Set(wires.compactMap { owner[$0.from]?.row })
+                guard rows.count == wires.count, let first = rows.min(), let last = rows.max(), last - first == rows.count - 1 else { return nil }
+                return first...last
+            }
+        }
+    }
+
     /// "orders.user_id", or nil for a column that isn't in the model.
     func qualifiedName(of column: Column.ID) -> String? {
         columnLocations[column].map { "\($0.table.name).\($0.table.columns[$0.row].name)" }

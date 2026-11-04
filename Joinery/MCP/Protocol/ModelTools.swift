@@ -176,7 +176,7 @@ enum ModelTools {
         ],
         [
             "name": "add_foreign_key",
-            "description": "Makes a column a foreign key to another: from \"orders.user_id\" to \"users.id\", or to \"users\" for its primary key.",
+            "description": "Makes a column a foreign key to another: from \"orders.user_id\" to \"users.id\", or to \"users\" for its primary key. For a compound key, list the columns, which pair up in order: from \"order_items.order_id, line\" to \"orders.id, line\", or to \"orders\" for its compound primary key.",
             "inputSchema": [
                 "type": "object",
                 "properties": ["from": ["type": "string"], "to": ["type": "string"]],
@@ -228,10 +228,14 @@ enum ModelTools {
             draft.ungroup(try group(named: name, in: draft).id)
             result = "Dropped the schema \(name); its tables stay."
         case "add_foreign_key":
-            let from = try column(named: string("from", in: arguments), in: draft)
-            let to = try column(named: string("to", in: arguments), in: draft)
-            guard draft.connect(from, to: to) != nil else { throw Failure("That foreign key already exists.") }
-            result = "Added \(draft.qualifiedName(of: from)!) → \(draft.qualifiedName(of: to)!)."
+            let from = try columns(named: string("from", in: arguments), in: draft)
+            let to = try columns(named: string("to", in: arguments), in: draft)
+            guard from.count == to.count else {
+                throw Failure("from names \(from.count) column\(from.count == 1 ? "" : "s") and to \(to.count); they pair up in order.")
+            }
+            let pairs = zip(from, to).filter { draft.connect($0, to: $1) != nil }
+            guard !pairs.isEmpty else { throw Failure("That foreign key already exists.") }
+            result = "Added " + pairs.map { "\(draft.qualifiedName(of: $0)!) → \(draft.qualifiedName(of: $1)!)" }.joined(separator: ", ") + "."
         case "remove_foreign_key":
             let from = try column(named: string("from", in: arguments), in: draft)
             let to = try (arguments["to"] as? String).map { try column(named: $0, in: draft) }
@@ -572,6 +576,21 @@ enum ModelTools {
             throw Failure("\(table.name) has \(keys.isEmpty ? "no" : "a compound") primary key; name the column: \(table.name).<column>.")
         }
         return keys[0].id
+    }
+
+    /// "table.a, b" (later columns can drop the table), or "table" for its whole primary key, in order.
+    private static func columns(named reference: String, in model: DataModel) throws -> [Column.ID] {
+        let parts = reference.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+        guard let name = parts.first?.split(separator: ".").first else { throw Failure("Name a column: table.column.") }
+        let first = try table(named: String(name), in: model)
+        if parts.count == 1, !parts[0].contains(".") {
+            let keys = first.columns.filter(\.isPrimaryKey)
+            guard !keys.isEmpty else { throw Failure("\(first.name) has no primary key; name the column: \(first.name).<column>.") }
+            return keys.map(\.id)
+        }
+        return try parts.map { part in
+            part.contains(".") ? try column(named: part, in: model) : try column(named: part, in: first).id
+        }
     }
 
     private static func requireUniqueColumns(_ table: Table) throws {

@@ -49,9 +49,9 @@ struct CanvasView: View {
         let routing = routingCache.routing(for: routed, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
                                            avoidingTables: wiresAvoidTables)
         let colors = routingCache.wireColors(for: routed)
-        let (foreignKeys, socketColors) = routingCache.colorTables {
+        let (foreignKeys, socketColors, foreignKeyRuns) = routingCache.colorTables {
             (Dictionary(routed.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } }, uniquingKeysWith: { first, _ in first }),
-             self.socketColors(routing, colors: colors))
+             self.socketColors(routing, colors: colors), routed.compoundForeignKeyRuns)
         }
         // While tables are dragged, groups as dropping them there would leave them: one they'd join reaches round them.
         let grouping = canvas.dragOffset.map { offset in
@@ -79,7 +79,7 @@ struct CanvasView: View {
                     ZStack(alignment: .topLeading) {
                         groupLayers(groupFrames, joining: joining, window: window)
                         wireLayer(routing, colors: colors, offset: layerOffset)
-                        tableTiles(socketColors: socketColors, foreignKeys: foreignKeys, window: window)
+                        tableTiles(socketColors: socketColors, foreignKeys: foreignKeys, foreignKeyRuns: foreignKeyRuns, window: window)
                     }
                     .frame(width: Self.onPoints(window, zoom: zoom).width, height: Self.onPoints(window, zoom: zoom).height, alignment: .topLeading)
                 }
@@ -908,7 +908,8 @@ struct CanvasView: View {
     /// that moves the window draws only tiles coming into it, and a change to one table, such as dragging it, redraws
     /// only its tile, not every table. Each tile is given only what concerns its own tables, so it compares equal
     /// when nothing about them changed.
-    private func tableTiles(socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color], window: CGRect) -> some View {
+    private func tableTiles(socketColors: [Routing.Socket: Color], foreignKeys: [Column.ID: Color],
+                            foreignKeyRuns: [Table.ID: [ClosedRange<Int>]], window: CGRect) -> some View {
         let zoom = canvas.zoom, offsets = canvas.tableOffsets, windowOrigin = Self.onPoints(window, zoom: zoom).origin
         var selected = canvas.selectedTables
         if case .table(let id)? = canvas.connection?.target { selected.insert(id) }
@@ -935,7 +936,7 @@ struct CanvasView: View {
             TableLayer(tables: tile.tables, offsets: offsets.filter { ids.contains($0.key) }, zoom: zoom,
                        viewOffset: CGPoint(x: -area.minX, y: -area.minY), viewSize: area.size,
                        selected: selected.intersection(ids), cursor: cursor.flatMap { ids.contains($0.table) ? $0 : nil },
-                       targetColumn: hasColumn(target) ? target : nil, foreignKeys: foreignKeys, socketColors: socketColors,
+                       targetColumn: hasColumn(target) ? target : nil, foreignKeys: foreignKeys, foreignKeyRuns: foreignKeyRuns.filter { ids.contains($0.key) }, socketColors: socketColors,
                        hoveredSocket: hasColumn(hovered?.column) ? hovered : nil, layouts: textLayouts,
                        focused: focused?.intersection(ids), renaming: renaming.flatMap { ids.contains($0) ? $0 : nil }, diff: diff)
                 .equatable()
@@ -2250,15 +2251,17 @@ private final class RoutingCache {
     private var colors: (model: DataModel, light: Palette, dark: Palette, colors: [Relationship.ID: Color])?
     /// Counts the times the routing or the colors were worked out again.
     private var generation = 0
-    private var colorTables: (generation: Int, foreignKeys: [Column.ID: Color], sockets: [Routing.Socket: Color])?
+    typealias ColorTables = (foreignKeys: [Column.ID: Color], sockets: [Routing.Socket: Color], foreignKeyRuns: [Table.ID: [ClosedRange<Int>]])
+    private var colorTables: (generation: Int, tables: ColorTables)?
 
-    /// Each foreign key's column's color and each plugged-in socket's, from `make`, kept while the routing and colors
-    /// last asked for are: the same ones each time, so the table tiles given them can tell nothing changed at once.
-    func colorTables(_ make: () -> ([Column.ID: Color], [Routing.Socket: Color])) -> ([Column.ID: Color], [Routing.Socket: Color]) {
-        if let colorTables, colorTables.generation == generation { return (colorTables.foreignKeys, colorTables.sockets) }
-        let (foreignKeys, sockets) = make()
-        colorTables = (generation, foreignKeys, sockets)
-        return (foreignKeys, sockets)
+    /// Each foreign key's column's color, each plugged-in socket's and the rows of compound foreign keys shown as one,
+    /// from `make`, kept while the routing and colors last asked for are: the same ones each time, so the table tiles
+    /// given them can tell nothing changed at once.
+    func colorTables(_ make: () -> ColorTables) -> ColorTables {
+        if let colorTables, colorTables.generation == generation { return colorTables.tables }
+        let tables = make()
+        colorTables = (generation, tables)
+        return tables
     }
 
     /// Each wire's color, the color of the table it references, and each port's bus's, worked out again only when the
