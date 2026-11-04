@@ -4,7 +4,8 @@ import SwiftUI
 /// the model in front, its canvas and controls, or with none, home: the library's sidebar and its data models.
 struct LibraryView: View {
     @Bindable var library: Library
-    /// The title bar's height, which the tab row matches so the window's buttons sit centered in it.
+    /// The tab row's height: the title bar's, plus `Panel.tabRowExtra`. The window's buttons are moved down to sit
+    /// centered in it (see `TallTitleBar`).
     @State private var titleBarHeight: CGFloat = 32
 
     var body: some View {
@@ -25,11 +26,11 @@ struct LibraryView: View {
         .background(Panel.color)
         .ignoresSafeArea(edges: .top)
         // Light catching the window's top edge, as it catches glass.
-        .overlay { RoundedRectangle(cornerRadius: Panel.windowCornerRadius).sheen().ignoresSafeArea() }
+        .overlay { RoundedRectangle(cornerRadius: Panel.windowCornerRadius, style: .circular).sheen().ignoresSafeArea() }
         .background(TallTitleBar())
         .background {
             Color.clear.ignoresSafeArea()
-                .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { if $0 > 0 { titleBarHeight = $0 } }
+                .onGeometryChange(for: CGFloat.self) { $0.safeAreaInsets.top } action: { if $0 > 0 { titleBarHeight = $0 + Panel.tabRowExtra } }
         }
         // For the Window menu and Mission Control. The window's title bar is hidden (see `JoineryApp`): the tabs are
         // in its place, and what each shows has its own controls, on its surface.
@@ -49,6 +50,8 @@ enum Panel {
     /// A tab's height. The title bar is made taller than this (see `TallTitleBar`), and the tabs sit centered in it,
     /// as the window's buttons do, the space above them the same as the space below them to the surface.
     static let tabHeight: CGFloat = 28
+    /// How much taller the tab row is than the compact title bar: half above the tabs, half below.
+    static let tabRowExtra: CGFloat = 8
     /// The theme's canvas, darkened, so the surfaces on it stand off it and it takes on the theme's tint.
     static var color: Color {
         Color(light: Themes.shared.light.canvas.blended(withFraction: 0.09, of: .black) ?? .gray,
@@ -60,6 +63,7 @@ enum Panel {
               dark: Themes.shared.dark.canvas.blended(withFraction: 0.02, of: .white) ?? .black)
     }
     /// The window's own corners: measured from a snapshot, on macOS 26 with the title bar hidden.
+    /// The window's own: circular, not continuous, or the sheen along its edge strays from it at the corners.
     static let windowCornerRadius: CGFloat = 16
     /// The height of the capsules of controls floating along a surface's top.
     static let controlHeight: CGFloat = 36
@@ -92,13 +96,15 @@ extension View {
 
 extension InsettableShape {
     /// A glassy sheen, as light from above catches it: a bright edge along its top that fades out down its sides, and
-    /// the faintest glow inside its top, gone a little way down. Subtle, and only to look at.
+    /// the faintest glow inside its top, gone 20 pt down. Subtle, and only to look at.
     /// `strength` scales it, 1 being the window's.
     func sheen(_ strength: Double = 1) -> some View {
         ZStack {
             strokeBorder(LinearGradient(stops: [.init(color: .white.opacity(0.32 * strength), location: 0), .init(color: .white.opacity(0), location: 0.5)],
                                         startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.12)), lineWidth: 1)
-            fill(LinearGradient(colors: [.white.opacity(0.06 * strength), .white.opacity(0)], startPoint: .top, endPoint: UnitPoint(x: 0.5, y: 0.06)))
+            // A fixed depth, not a share of the height, so tall windows don't get a deeper glow.
+            fill(.white.opacity(0.06 * strength))
+                .mask(alignment: .top) { LinearGradient(colors: [.white, .clear], startPoint: .top, endPoint: .bottom).frame(height: 20) }
         }
         .blendMode(.plusLighter)
         .allowsHitTesting(false)
@@ -140,6 +146,24 @@ private struct TallTitleBar: NSViewRepresentable {
             window.toolbarStyle = .unifiedCompact
             // Not moved by any drag in the title bar, which would take the tabs' too: the tab row's empty space moves it.
             window.isMovable = false
+            // AppKit puts the buttons back on every relayout (resize, full screen, focus), so put them where they go each
+            // time: after its layout pass, as moving them during it gets undone.
+            for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+                guard let button = window.standardWindowButton(kind) else { continue }
+                button.postsFrameChangedNotifications = true
+                NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: button, queue: .main) { _ in
+                    DispatchQueue.main.async { Self.center(button) }
+                }
+                Self.center(button)
+            }
+        }
+
+        /// Centered in the tab row, which reaches `Panel.tabRowExtra` below the title bar. The title bar view isn't
+        /// flipped, so y counts up from its bottom.
+        private static func center(_ button: NSButton) {
+            guard let bar = button.superview else { return }
+            let y = ((bar.bounds.height - Panel.tabRowExtra - button.frame.height) / 2).rounded()
+            if button.frame.origin.y != y { button.setFrameOrigin(CGPoint(x: button.frame.origin.x, y: y)) }
         }
     }
 }
@@ -378,7 +402,7 @@ private struct CloseButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
-                .font(.system(size: size * 0.5, weight: .bold))
+                .font(.system(size: size * 0.7, weight: .semibold))
                 .frame(width: size, height: size)
                 .background(Circle().fill(isHovered ? AnyShapeStyle(.quaternary) : AnyShapeStyle(.clear)))
                 .contentShape(.circle)
