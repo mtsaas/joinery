@@ -1131,10 +1131,15 @@ struct JoineryTests {
         final class Host: MCPHost {
             var model = DataModel()
             func callLibraryTool(_ name: String, _ arguments: [String: Any]) async throws -> String { "library: \(name)" }
-            func edit(_ change: (inout DataModel) throws -> String) async throws -> String { try change(&model) }
-            func withVersions(_ body: (inout VersionState) throws -> String) async throws -> String {
-                var state = VersionState(model: model, named: NamedVersions())
-                defer { model = state.model }
+            var targets: [String?] = []
+            func edit(model: String?, _ change: (inout DataModel) throws -> String) async throws -> String {
+                targets.append(model)
+                return try change(&self.model)
+            }
+            func withVersions(model: String?, _ body: (inout VersionState) throws -> String) async throws -> String {
+                targets.append(model)
+                var state = VersionState(model: self.model, named: NamedVersions())
+                defer { self.model = state.model }
                 return try body(&state)
             }
         }
@@ -1149,6 +1154,11 @@ struct JoineryTests {
         let created = try await post(#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"create_tables","arguments":{"tables":[{"name":"users","columns":[{"name":"id","type":"uuid","primary_key":true}]}]}}}"#)
         #expect(created.hasPrefix("HTTP/1.1 200 OK"))
         #expect(host.model.tables.map(\.name) == ["users"])
+        // A tool given a model passes its ID on, for the app to pick that model, whether it edits or reads versions.
+        _ = try await post(#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"drop_tables","arguments":{"model":"abc","tables":["users"]}}}"#)
+        _ = try await post(#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"list_versions","arguments":{"model":"abc"}}}"#)
+        #expect(host.targets == [nil, "abc", "abc"])
+        #expect(host.model.tables.isEmpty)
         #expect(try await post(#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_models"}}"#).contains("library: list_models"))
         #expect(try await post(#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#).hasPrefix("HTTP/1.1 202"))
         #expect(try await post("{}", origin: "https://evil.example").hasPrefix("HTTP/1.1 403"))

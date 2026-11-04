@@ -110,6 +110,42 @@ final class Library {
             return (url, Details(modified: modified, opened: opened.map(Date.init(timeIntervalSinceReferenceDate:)),
                                  isFavorite: url.extendedAttribute(Self.favoriteAttribute) != nil))
         })
+        // A copy made in Finder carries its original's ID; the one met second gets its own.
+        var ids = Set<String>()
+        for url in allModels where !ids.insert(id(of: url)).inserted {
+            url.setExtendedAttribute(Self.idAttribute, to: nil)
+            ids.insert(id(of: url))
+        }
+    }
+
+    // MARK: IDs
+    //
+    // Kept on the file like favorites, so a model keeps its ID when renamed or moved, and assistants can name it by
+    // that while people rename it.
+
+    private static let idAttribute = URL.attributePrefix + "id"
+
+    /// The model's ID, given it now if it has none.
+    func id(of url: URL) -> String {
+        if let id = url.extendedAttribute(Self.idAttribute) { return String(decoding: id, as: UTF8.self) }
+        let id = UUID().uuidString.lowercased()
+        url.setExtendedAttribute(Self.idAttribute, to: Data(id.utf8))
+        return id
+    }
+
+    /// The model with `id`, in the library or open in a tab (a joined session's is only that).
+    func model(withID id: String) -> URL? {
+        let id = id.trimmingCharacters(in: .whitespaces).lowercased()
+        return (allModels + tabs.map(\.url)).first { $0.extendedAttribute(Self.idAttribute).map { String(decoding: $0, as: UTF8.self) } == id }
+    }
+
+    /// The tab showing `url`, opened behind the others if it isn't open, so an assistant can work on it without
+    /// changing what's in front.
+    func tab(for url: URL) throws -> OpenModel {
+        if let tab = tabs.first(where: { $0.url == url }) { return tab }
+        let tab = try OpenModel(url: url)
+        tabs.append(tab)
+        return tab
     }
 
     // MARK: Favorites and recents
@@ -235,8 +271,9 @@ final class Library {
             tabs.first { $0.url == url }?.saveNow()
             let copy = unique(Self.name(of: url) + " copy", extension: "joinery", in: url.deletingLastPathComponent())
             try files.copyItem(at: url, to: copy)
-            // A copy starts out ordinary, whatever the original was, though with its history.
+            // A copy starts out ordinary, whatever the original was, though with its history, and is a model of its own.
             copy.setExtendedAttribute(Self.favoriteAttribute, to: nil)
+            copy.setExtendedAttribute(Self.idAttribute, to: nil)
             reload()
             selection = copy
         }

@@ -5,11 +5,13 @@ import Foundation
 protocol MCPHost {
     /// Runs one of `MCP.libraryTools`.
     func callLibraryTool(_ name: String, _ arguments: [String: Any]) async throws -> String
-    /// Applies `change` to the open data model as one change, and one undo, made by an assistant.
-    func edit(_ change: (inout DataModel) throws -> String) async throws -> String
-    /// Runs `body` on the open data model and its named versions, keeping what it changes: the versions and what's
-    /// compared saved into the model's package, and a changed model (a version restored) applied as `edit` applies one.
-    func withVersions(_ body: (inout VersionState) throws -> String) async throws -> String
+    /// Applies `change` to the data model with ID `model`, or the open one for nil, as one change, and one undo, made
+    /// by an assistant.
+    func edit(model: String?, _ change: (inout DataModel) throws -> String) async throws -> String
+    /// Runs `body` on a data model (as `edit` picks it) and its named versions, keeping what it changes: the versions
+    /// and what's compared saved into the model's package, and a changed model (a version restored) applied as `edit`
+    /// applies one.
+    func withVersions(model: String?, _ body: (inout VersionState) throws -> String) async throws -> String
 }
 
 /// An MCP server, so AI assistants can read and edit models: Streamable HTTP at `url`, on this computer only. The app
@@ -133,6 +135,12 @@ enum MCP {
 
                     To let others edit the open data model live, start_sharing: it shares it through a relay and \
                     returns links to send, one to edit and one only to watch.
+
+                    Every tool but list_models, new_model and start_review takes a model: the ID of the data model to \
+                    work on, from list_models (new_model and start_review give theirs). Without it, a tool works on \
+                    the model open in front, which anyone else working in Joinery can change, so pass it whenever \
+                    more than one assistant may be at work. IDs stay the same when a model is renamed or moved. A \
+                    model that isn't open opens in a tab behind the others.
                     """,
             ])
         case "ping":
@@ -174,15 +182,27 @@ enum MCP {
     /// Runs a tool, as an assistant's call would.
     static func call(_ name: String, _ arguments: [String: Any], host: some MCPHost) async throws -> String {
         if libraryToolNames.contains(name) { return try await host.callLibraryTool(name, arguments) }
-        if VersionTools.handles(name, arguments) { return try await host.withVersions { try VersionTools.call(name, arguments, on: &$0) } }
+        let model = arguments["model"] as? String
+        if VersionTools.handles(name, arguments) { return try await host.withVersions(model: model) { try VersionTools.call(name, arguments, on: &$0) } }
         guard ModelTools.names.contains(name) else { throw ModelTools.Failure("There's no tool called \(name).") }
-        return try await host.edit { try ModelTools.call(name, arguments, on: &$0) }
+        return try await host.edit(model: model) { try ModelTools.call(name, arguments, on: &$0) }
     }
 
     // MARK: Tools
 
     /// Every tool, in the order an assistant meets them: the library's, named versions, then editing the model.
-    nonisolated(unsafe) static var tools: [[String: Any]] { libraryTools + VersionTools.definitions + ModelTools.definitions }
+    nonisolated(unsafe) static var tools: [[String: Any]] {
+        (libraryTools + VersionTools.definitions + ModelTools.definitions).map { tool in
+            guard let name = tool["name"] as? String, !["list_models", "new_model", "start_review"].contains(name),
+                  var schema = tool["inputSchema"] as? [String: Any] else { return tool }
+            var properties = schema["properties"] as? [String: Any] ?? [:]
+            properties["model"] = ["type": "string", "description": "The ID of the data model to work on, from list_models. The one open in front if left out."]
+            schema["properties"] = properties
+            var tool = tool
+            tool["inputSchema"] = schema
+            return tool
+        }
+    }
 
     private static var libraryToolNames: Set<String> { Set(libraryTools.compactMap { $0["name"] as? String }) }
 
@@ -190,18 +210,18 @@ enum MCP {
     nonisolated(unsafe) static let libraryTools: [[String: Any]] = [
         [
             "name": "list_models",
-            "description": "The data models in Joinery's library, by collection, and which one is open.",
+            "description": "The data models in Joinery's library, by collection, each with its ID, and which one is open in front.",
             "inputSchema": ["type": "object", "properties": [String: Any]()],
             "annotations": ["readOnlyHint": true],
         ],
         [
             "name": "open_model",
-            "description": "Opens a data model from the library in the window, for the other tools to work on.",
-            "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]],
+            "description": "Brings a data model to the front of the window, by name or ID (model), for the tools to work on when they're given no model.",
+            "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]]],
         ],
         [
             "name": "new_model",
-            "description": "Starts an empty data model and opens it.",
+            "description": "Starts an empty data model and opens it. Returns its ID, to pass to the other tools as model.",
             "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]],
         ],
         [

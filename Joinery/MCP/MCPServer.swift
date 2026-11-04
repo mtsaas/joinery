@@ -3,7 +3,7 @@ import Foundation
 import Network
 
 /// The Mac's side of the MCP server (`MCP`): listening on this Mac only, and the library tools. Edits go to the model
-/// open in the window, appear as they're made, save themselves, and undo like any other.
+/// a tool names by ID, or the one in front, appear as they're made, save themselves, and undo like any other.
 @MainActor @Observable
 final class MCPServer: @MainActor MCPHost {
     static let shared = MCPServer()
@@ -92,31 +92,38 @@ final class MCPServer: @MainActor MCPHost {
         case "list_models":
             let lines = all.map { url in
                 let collection = library.collection(of: url).map { $0.lastPathComponent + "/" } ?? ""
-                return "- " + collection + Library.name(of: url) + (url == library.selection ? " (open)" : "")
+                return "- " + collection + Library.name(of: url) + " (ID \(library.id(of: url)))" + (url == library.selection ? " (open)" : "")
             }
             return lines.isEmpty ? "The library is empty." : lines.joined(separator: "\n")
         case "open_model":
-            let wanted = (arguments["name"] as? String ?? "").lowercased()
-            guard let url = all.first(where: { Library.name(of: $0).lowercased() == wanted }) else {
-                throw ModelTools.Failure("There's no data model called \(arguments["name"] ?? ""). Use list_models to see them.")
+            let url: URL
+            if let id = arguments["model"] as? String {
+                url = try target(id).url
+            } else {
+                let wanted = (arguments["name"] as? String ?? "").lowercased()
+                guard let named = all.first(where: { Library.name(of: $0).lowercased() == wanted }) else {
+                    throw ModelTools.Failure("There's no data model called \(arguments["name"] ?? ""). Use list_models to see them.")
+                }
+                url = named
             }
             library.selection = url
-            return "Opened \(Library.name(of: url))."
+            return "Opened \(Library.name(of: url)), ID \(library.id(of: url))."
         case "new_model":
             library.newModel(in: library.selection.flatMap(library.collection(of:)))
             if let url = library.selection, let wanted = arguments["name"] as? String, !wanted.isEmpty {
                 library.rename(url, to: wanted)
             }
-            return "Opened a new, empty data model: \(library.open?.name ?? "Untitled Data Model")."
+            guard let open = library.open else { throw ModelTools.Failure("Couldn't make a data model: \(library.failure ?? "no data model opened").") }
+            return "Opened a new, empty data model: \(open.name), ID \(library.id(of: open.url)). Pass model: \"\(library.id(of: open.url))\" to the other tools to work on it."
         case "start_review":
             // Names can't hold these.
             let title = (arguments["title"] as? String ?? "").replacingOccurrences(of: ":", with: " –")
                 .replacingOccurrences(of: "/", with: "-").trimmingCharacters(in: .whitespacesAndNewlines)
             library.newModel(in: try library.reviewsCollection(), named: title.isEmpty ? "Review" : title)
             guard let open = library.open else { throw ModelTools.Failure("Couldn't start a review: \(library.failure ?? "no data model opened").") }
-            return "Opened \(open.name), a new, empty data model in Reviews. Next, draw the schema as it was before the change with create_tables, arrange it, then save it with save_version, named for the base, such as main."
+            return "Opened \(open.name), a new, empty data model in Reviews, ID \(library.id(of: open.url)); pass it as model to the other tools. Next, draw the schema as it was before the change with create_tables, arrange it, then save it with save_version, named for the base, such as main."
         case "start_sharing":
-            guard let open = library.open else { throw ModelTools.Failure("No data model is open in Joinery. Use open_model or new_model first.") }
+            let open = try target(arguments["model"] as? String)
             if open.session != nil, !(open.session is SessionHost) {
                 throw ModelTools.Failure("\(open.name) is a session joined from someone else; only its host can share it.")
             }
@@ -135,10 +142,8 @@ final class MCPServer: @MainActor MCPHost {
         }
     }
 
-    @MainActor func withVersions(_ body: (inout VersionState) throws -> String) async throws -> String {
-        guard let open = Library.shared.open else {
-            throw ModelTools.Failure("No data model is open in Joinery. Use open_model, new_model or start_review first.")
-        }
+    @MainActor func withVersions(model: String?, _ body: (inout VersionState) throws -> String) async throws -> String {
+        let open = try target(model)
         var state = VersionState(model: open.model, named: open.named)
         let result = try body(&state)
         try open.setNamed(state.named)
@@ -146,13 +151,26 @@ final class MCPServer: @MainActor MCPHost {
         return result
     }
 
-    @MainActor func edit(_ change: (inout DataModel) throws -> String) async throws -> String {
-        guard let open = Library.shared.open else {
-            throw ModelTools.Failure("No data model is open in Joinery. Use open_model or new_model first.")
-        }
+    @MainActor func edit(model id: String?, _ change: (inout DataModel) throws -> String) async throws -> String {
+        let open = try target(id)
         var model = open.model
         let result = try change(&model)
         open.change(to: model, byAssistant: true)
         return result
+    }
+
+    /// The model a tool works on: the one with ID `id`, opened behind the others if need be, or for nil the one in front.
+    @MainActor private func target(_ id: String?) throws -> OpenModel {
+        let library = Library.shared
+        guard let id else {
+            guard let open = library.open else {
+                throw ModelTools.Failure("No data model is open in Joinery. Pass a model ID from list_models, or use new_model or start_review.")
+            }
+            return open
+        }
+        guard let url = library.model(withID: id) else { throw ModelTools.Failure("There's no data model with ID \(id). Use list_models to see them.") }
+        do { return try library.tab(for: url) } catch {
+            throw ModelTools.Failure("Couldn't open \(Library.name(of: url)): \(error.localizedDescription)")
+        }
     }
 }
