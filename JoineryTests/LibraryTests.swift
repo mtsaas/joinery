@@ -103,6 +103,40 @@ struct LibraryTests {
         #expect(library.details[copy]?.isFavorite == false)
     }
 
+    @Test func aModelKeepsItsIDThroughARenameButNotACopy() throws {
+        let library = freshLibrary()
+        library.newModel()
+        let original = try #require(library.selection)
+        let id = library.id(of: original)
+        library.open?.saveNow()
+        library.rename(original, to: "Shop")
+        let renamed = try #require(library.selection)
+        #expect(library.id(of: renamed) == id)
+        #expect(library.model(withID: id.uppercased()) == renamed)
+
+        library.duplicate(renamed)
+        #expect(library.id(of: try #require(library.selection)) != id)
+
+        // Copied in Finder, ID and all: one of the two gets a new one.
+        try FileManager.default.copyItem(at: renamed, to: renamed.deletingLastPathComponent().appending(path: "Finder copy.joinery"))
+        library.reload()
+        #expect(Set(library.allModels.map(library.id(of:))).count == library.allModels.count)
+    }
+
+    @Test func anAssistantsModelOpensBehindTheOneInFront() throws {
+        let library = freshLibrary()
+        library.newModel(named: "Theirs")
+        let theirs = try #require(library.selection)
+        library.newModel(named: "Mine")
+        let mine = try #require(library.open)
+        library.close(try #require(library.tabs.first { $0.url == theirs }))
+
+        let tab = try library.tab(for: try #require(library.model(withID: library.id(of: theirs))))
+        #expect(tab.url == theirs)
+        #expect(library.open === mine, "what's in front stays in front")
+        #expect(try library.tab(for: theirs) === tab, "opened once")
+    }
+
     @Test func versionsThinOutAsTheyAge() throws {
         let calendar = Calendar.current
         let day = { (offset: Int, hour: Int) in
