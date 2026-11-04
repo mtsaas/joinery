@@ -455,7 +455,7 @@ struct TableDesigner: View {
                     DispatchQueue.main.async { focus = .sample(row + 1, column.id) }
                 }
                 .textFieldStyle(.plain)
-                .font(column.type == .text || column.type == .varchar ? .callout : .system(.callout, design: .monospaced))
+                .font(column.type.base == .text || column.type.base == .varchar ? .callout : .system(.callout, design: .monospaced))
                 .padding(.horizontal, 6)
                 .frame(maxHeight: .infinity)
                 .background(focus == .sample(row, column.id) ? Color.accentColor.opacity(0.15) : .clear,
