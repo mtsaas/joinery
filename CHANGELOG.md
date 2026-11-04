@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.0](https://github.com/mtsaas/joinery/compare/joinery-v0.3.2...joinery-v0.4.0) (2026-11-04)
+
+
+### Features
+
+* compound foreign keys, as one key in SQL and one FK mark on adjacent columns ([#34](https://github.com/mtsaas/joinery/issues/34)) ([c1bb009](https://github.com/mtsaas/joinery/commit/c1bb009383cbaff6822917556b5b0bbe4146788e))
+* **mcp:** name data models by ID, so assistants can work on separate models at once ([#32](https://github.com/mtsaas/joinery/issues/32)) ([afefa38](https://github.com/mtsaas/joinery/commit/afefa387ca05c359685f419bd6a1b72a7144eacf))
+
 ## [0.3.2](https://github.com/mtsaas/joinery/compare/joinery-v0.3.1...joinery-v0.3.2) (2026-11-03)
 
 
