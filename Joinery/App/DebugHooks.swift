@@ -53,36 +53,9 @@ enum DebugHooks {
         }
     }
 
-    /// CGWindowListCreateImage is obsoleted in the SDK, but an app may still capture its own windows without Screen
-    /// Recording permission, so it's looked up at run time. The biggest window, with any of the app's others over it
-    /// (popovers, menus) drawn where they are.
     private static func capture(to path: String) {
-        typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
-        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return print("snapshot failed") }
-        let image = { (window: NSWindow) in
-            unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0)?.takeRetainedValue()
-        }
-        var windows = NSApp.windows.filter(\.isVisible).sorted { $0.orderedIndex > $1.orderedIndex }
-        // Settings rather than the main window, the largest, whatever it's titled.
-        if environment["JOINERY_SETTINGS"] != nil, let main = windows.max(by: { $0.frame.width < $1.frame.width }) {
-            windows.removeAll { $0 === main }
-        }
-        guard let main = windows.max(by: { $0.frame.width < $1.frame.width }), let base = image(main) else { return print("snapshot failed") }
-        // Wide enough for what hangs over its edges, as a popover by the toolbar can.
-        let over = windows.filter { $0 !== main && $0.frame.intersects(main.frame) }
-        let bounds = over.reduce(main.frame) { $0.union($1.frame) }
-        let scale = CGFloat(base.width) / main.frame.width
-        guard let context = CGContext(data: nil, width: Int(bounds.width * scale), height: Int(bounds.height * scale), bitsPerComponent: 8,
-                                      bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
-                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
-        else { return print("snapshot failed") }
-        for window in [main] + over {
-            guard let picture = window === main ? base : image(window) else { continue }
-            context.draw(picture, in: CGRect(x: (window.frame.minX - bounds.minX) * scale, y: (window.frame.minY - bounds.minY) * scale,
-                                             width: window.frame.width * scale, height: window.frame.height * scale))
-        }
-        guard let composite = context.makeImage() else { return print("snapshot failed") }
-        try? NSBitmapImageRep(cgImage: composite).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+        guard let image = MCPServer.windowImage(skippingMain: environment["JOINERY_SETTINGS"] != nil) else { return print("snapshot failed") }
+        try? NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
     }
 
     @MainActor

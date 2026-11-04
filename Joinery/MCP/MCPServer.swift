@@ -115,6 +115,8 @@ final class MCPServer: @MainActor MCPHost {
             library.newModel(in: try library.reviewsCollection(), named: title.isEmpty ? "Review" : title)
             guard let open = library.open else { throw ModelTools.Failure("Couldn't start a review: \(library.failure ?? "no data model opened").") }
             return "Opened \(open.name), a new, empty data model in Reviews. Next, draw the schema as it was before the change with create_tables, arrange it, then save it with save_version, named for the base, such as main."
+        case "screenshot":
+            return try await screenshot()
         case "start_sharing":
             guard let open = library.open else { throw ModelTools.Failure("No data model is open in Joinery. Use open_model or new_model first.") }
             if open.session != nil, !(open.session is SessionHost) {
@@ -133,6 +135,50 @@ final class MCPServer: @MainActor MCPHost {
         default:
             throw ModelTools.Failure("There's no tool called \(name).")
         }
+    }
+
+    /// Saves a PNG of the window as it is, in whatever mode, and returns where.
+    private func screenshot() async throws -> String {
+        // ponytail: a fixed wait for wires and fades to settle after the last edit or compare.
+        try? await Task.sleep(for: .milliseconds(600))
+        guard let image = Self.windowImage(), let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else { throw ModelTools.Failure("Couldn't capture Joinery's window. Is it open and on screen?") }
+        // Downloads is the one folder both the sandboxed app and the assistant's shell can reach. The sandbox's home
+        // is its container, so the real one comes from the user record.
+        let home = URL(fileURLWithPath: String(cString: getpwuid(getuid())!.pointee.pw_dir))
+        let stamp = Date().formatted(.verbatim("\(year: .defaultDigits)-\(month: .twoDigits)-\(day: .twoDigits) at \(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)).\(minute: .twoDigits).\(second: .twoDigits)",
+                                               timeZone: .current, calendar: .current))
+        let name = (Library.shared.open?.name ?? "Joinery").replacingOccurrences(of: "/", with: "-")
+        let url = home.appending(path: "Downloads/Joinery \(name) \(stamp).png")
+        do { try png.write(to: url) } catch { throw ModelTools.Failure("Captured the window but couldn't save it: \(error.localizedDescription)") }
+        return "Saved to \(url.path)"
+    }
+
+    /// The app's biggest visible window (or, `skippingMain`, the next biggest, such as Settings), with any of its
+    /// others over it (popovers, menus) drawn where they are. CGWindowListCreateImage is obsoleted in the SDK, but an
+    /// app may still capture its own windows without Screen Recording permission, so it's looked up at run time.
+    static func windowImage(skippingMain: Bool = false) -> CGImage? {
+        typealias Capture = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        let image = { (window: NSWindow) in
+            unsafeBitCast(symbol, to: Capture.self)(.null, 1 << 3, UInt32(window.windowNumber), 1 << 0)?.takeRetainedValue()
+        }
+        var windows = NSApp.windows.filter(\.isVisible).sorted { $0.orderedIndex > $1.orderedIndex }
+        if skippingMain, let main = windows.max(by: { $0.frame.width < $1.frame.width }) { windows.removeAll { $0 === main } }
+        guard let main = windows.max(by: { $0.frame.width < $1.frame.width }), let base = image(main) else { return nil }
+        // Wide enough for what hangs over its edges, as a popover by the toolbar can.
+        let over = windows.filter { $0 !== main && $0.frame.intersects(main.frame) }
+        let bounds = over.reduce(main.frame) { $0.union($1.frame) }
+        let scale = CGFloat(base.width) / main.frame.width
+        guard let context = CGContext(data: nil, width: Int(bounds.width * scale), height: Int(bounds.height * scale), bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return nil }
+        for window in [main] + over {
+            guard let picture = window === main ? base : image(window) else { continue }
+            context.draw(picture, in: CGRect(x: (window.frame.minX - bounds.minX) * scale, y: (window.frame.minY - bounds.minY) * scale,
+                                             width: window.frame.width * scale, height: window.frame.height * scale))
+        }
+        return context.makeImage()
     }
 
     @MainActor func withVersions(_ body: (inout VersionState) throws -> String) async throws -> String {

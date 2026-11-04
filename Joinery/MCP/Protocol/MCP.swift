@@ -228,6 +228,16 @@ enum MCP {
             ],
         ],
         [
+            "name": "screenshot",
+            "description": """
+                A screenshot of Joinery's window exactly as it shows now, in whatever mode: editing, or versions \
+                compared as a diff. Saves it as a PNG in ~/Downloads and returns the path, to attach \
+                to a pull request or message. To capture a diff, call compare first.
+                """,
+            "inputSchema": ["type": "object", "properties": [String: Any]()],
+            "annotations": ["readOnlyHint": true],
+        ],
+        [
             "name": "start_sharing",
             "description": """
                 Shares the open data model live, so others can edit it with you in Joinery, by pasting a link into Join. \
