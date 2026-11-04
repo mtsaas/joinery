@@ -94,17 +94,10 @@ struct LibraryBrowser: View {
         }
     }
 
-    /// Along the surface's top: what's shown, and how many, then the controls at the trailing end, as Freeform's
-    /// toolbar has them. In glass, as the canvas's controls are, and as far in from the surface's corner, so its
-    /// corners are concentric with theirs.
+    /// Along the surface's top, at its trailing end, as Freeform's toolbar has them. In glass, as the canvas's controls
+    /// are, and as far in from the surface's corner, so its corners are concentric with theirs.
     private var controls: some View {
         HStack(spacing: 8) {
-            Text(title)
-                .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(.tint)
-                .lineLimit(1)
-            // Level with the models' leading edge below.
-            .padding(.leading, Self.contentInset - Panel.controlInset)
             Spacer(minLength: 0)
             ControlGroupGlass {
                 Button("Join", systemImage: "person.2.badge.plus") { showsJoin.toggle() }
@@ -206,15 +199,6 @@ struct LibraryBrowser: View {
     }
 
     // MARK: Models
-
-    private var title: String {
-        switch scope {
-        case .all: "All Data Models"
-        case .recents: "Recents"
-        case .favorites: "Favorites"
-        case .collection(let url): url.lastPathComponent
-        }
-    }
 
     /// What's in the chosen group, and matches the search: most recently changed first, or for Recents, used.
     private var shown: [URL] {
