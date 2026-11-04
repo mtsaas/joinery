@@ -619,6 +619,42 @@ struct JoineryTests {
         #expect(!all.contains("of the") && !all.contains("## Notes") && all.contains("Referenced by: orders.user_id, reviews.user_id"))
     }
 
+    @Test func wiresToEveryColumnOfACompoundKeyWriteOneForeignKey() {
+        var model = storefront()
+        // orders is keyed by (id, line); reviews points at both, and separately at users.
+        var line = Column(name: "line", type: .integer)
+        line.isPrimaryKey = true
+        model.tables[1].columns.append(line)
+        model.tables[2].columns += [Column(name: "order_id", type: .uuid), Column(name: "order_line", type: .integer)]
+        model.connect(model.tables[2].columns[3].id, to: line.id)
+        model.connect(model.tables[2].columns[2].id, to: model.tables[1].columns[0].id)
+
+        #expect(model.compoundForeignKeyRuns == [model.tables[2].id: [2...3]])
+        // Apart, the key is still one in SQL, but its FK marks don't merge.
+        model.moveColumn(model.tables[2].columns[2].id, in: model.tables[2].id, to: 1)
+        #expect(model.compoundForeignKeyRuns == [model.tables[2].id: []])
+        model.moveColumn(model.tables[2].columns[1].id, in: model.tables[2].id, to: 3)
+
+        let sql = model.markdown(of: nil, title: "Shop")
+        #expect(sql.contains("  user_id uuid NOT NULL REFERENCES users (id),\n  order_id uuid NOT NULL,\n  order_line integer NOT NULL,\n"
+                             + "  FOREIGN KEY (order_id, order_line) REFERENCES orders (id, line)\n);"))
+    }
+
+    @Test func addForeignKeyPairsColumnListsIntoACompoundKey() throws {
+        var model = storefront()
+        var line = Column(name: "line", type: .integer)
+        line.isPrimaryKey = true
+        model.tables[1].columns.append(line)
+        model.tables[2].columns += [Column(name: "order_id", type: .uuid), Column(name: "order_line", type: .integer)]
+        let reviews = model.tables[2].columns
+
+        _ = try ModelTools.call("add_foreign_key", ["from": "reviews.order_id, order_line", "to": "orders"], on: &model)
+        #expect(model.relationships.suffix(2).map { [$0.from, $0.to] } == [[reviews[2].id, model.tables[1].columns[0].id],
+                                                                           [reviews[3].id, line.id]])
+        #expect(throws: (any Error).self) { try ModelTools.call("add_foreign_key", ["from": "reviews.order_id", "to": "orders"], on: &model) }
+        #expect(throws: (any Error).self) { try ModelTools.call("add_foreign_key", ["from": "", "to": "orders"], on: &model) }
+    }
+
     @Test func copiedTablesPasteWithTheirKeysTiesAndSchema() throws {
         var model = storefront()
         let orders = model.tables[1], reviews = model.tables[2]

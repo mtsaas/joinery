@@ -13,6 +13,7 @@ extension DataModel {
             owner[column].map { "\($0.table.name).\($0.table.columns[$0.row].name)" }
         }
         let referencing = Dictionary(grouping: relationships, by: \.from)
+        let compoundKeys = compoundForeignKeys
 
         var lines = ["# \(title)", ""]
         if ids != nil, chosen.count < tables.count {
@@ -43,17 +44,24 @@ extension DataModel {
         let qualified = { (table: Table) in [groupName(table), table.name].compactMap { $0 }.map(Self.sqlName).joined(separator: ".") }
         for (number, table) in chosen.enumerated() {
             let keys = table.columns.filter(\.isPrimaryKey)
+            let compound = (compoundKeys[table.id] ?? []).sorted { (owner[$0[0].from]?.row ?? 0) < (owner[$1[0].from]?.row ?? 0) }
+            let grouped = Set(compound.joined().map(\.id))
             var parts = table.columns.map { column in
                 var part = "  \(Self.sqlName(column.name)) \(column.type.rawValue)"
                 if column.isPrimaryKey, keys.count == 1 { part += " PRIMARY KEY" } else if !column.isNullable { part += " NOT NULL" }
                 if column.isUnique, !column.isPrimaryKey { part += " UNIQUE" }
-                for relationship in referencing[column.id] ?? [] {
+                for relationship in referencing[column.id] ?? [] where !grouped.contains(relationship.id) {
                     guard let (target, row) = owner[relationship.to] else { continue }
                     part += " REFERENCES \(qualified(target)) (\(Self.sqlName(target.columns[row].name)))"
                 }
                 return part
             }
             if keys.count > 1 { parts.append("  PRIMARY KEY (\(keys.map { Self.sqlName($0.name) }.joined(separator: ", ")))") }
+            let names = { (ids: [Column.ID]) in ids.compactMap { owner[$0].map { Self.sqlName($0.table.columns[$0.row].name) } }.joined(separator: ", ") }
+            for wires in compound {
+                guard let target = owner[wires[0].to]?.table else { continue }
+                parts.append("  FOREIGN KEY (\(names(wires.map(\.from)))) REFERENCES \(qualified(target)) (\(names(wires.map(\.to))))")
+            }
             let columnList = { (index: TableIndex) in table.columns(of: index).map { Self.sqlName($0.name) }.joined(separator: ", ") }
             for index in table.liveIndexes where index.isUnique {
                 parts.append("  CONSTRAINT \(Self.sqlName(table.name(of: index))) UNIQUE (\(columnList(index)))")
