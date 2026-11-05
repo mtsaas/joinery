@@ -64,6 +64,24 @@ extension DataModel {
         }
         let first = column.min() ?? 0
         column = column.map { $0 - first }
+        // No column much taller than the whole is wide: from the left, a column too tall moves tables one over, those
+        // whose own references are further right still, fewest wires lengthened first (leaves hanging off one table).
+        let tableHeights = block.map { Metrics.size(of: $0).height }
+        let stacked = tableHeights.reduce(0) { $0 + $1 + 36 }
+        let cap = max((stacked * (Metrics.tableWidth + 180) / 1.2).squareRoot(), tableHeights.max() ?? 0)
+        var at = 0
+        while at <= column.max() ?? 0 {
+            var inColumn = (0..<count).filter { column[$0] == at }
+            var tall = inColumn.reduce(0) { $0 + tableHeights[$1] + 36 }
+            let movable = { (table: Int) in after[table].allSatisfy { column[$0] > at + 1 } }
+            while tall > cap, let table = inColumn.filter(movable)
+                    .max(by: { (after[$0].count - before[$0].count, block[$1].name) < (after[$1].count - before[$1].count, block[$0].name) }) {
+                column[table] += 1
+                tall -= tableHeights[table] + 36
+                inColumn.removeAll { $0 == table }
+            }
+            at += 1
+        }
 
         // Nodes: the tables, then a point for each column a wire passes through on its way to a table further over,
         // so long wires get a lane of their own. Segments join nodes in neighboring columns.

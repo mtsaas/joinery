@@ -116,8 +116,24 @@ extension DataModel {
         let area = margins.reduce(0) { $0 + ($1.size.width + Self.blockGap) * ($1.size.height + Self.blockGap) }
         let rowWidth = max((area * 2).squareRoot(), margins.map(\.size.width).max() ?? 0)
         var positions: [Table.ID: CGPoint] = [:]
+        // Tallest first; laid out left to right, blocks others reference come before them, so their wires read that way too.
+        var rank = [Int](repeating: 0, count: blocks.count)
+        if !refine {
+            let blockOf = Dictionary(blocks.enumerated().flatMap { at, block in block.tables.map { ($0.id, at) } }, uniquingKeysWith: { a, _ in a })
+            let owner = columnLocations
+            var references = [Set<Int>](repeating: [], count: blocks.count)
+            for wire in relationships {
+                guard let child = owner[wire.from].flatMap({ blockOf[$0.table.id] }), let parent = owner[wire.to].flatMap({ blockOf[$0.table.id] }),
+                      child != parent else { continue }
+                references[child].insert(parent)
+            }
+            // ponytail: ranks settle in as many passes as there are blocks; a cycle between blocks just stops there.
+            for _ in blocks.indices {
+                for at in blocks.indices { rank[at] = references[at].map { rank[$0] + 1 }.max() ?? 0 }
+            }
+        }
         var cursor = CGPoint.zero, rowHeight: CGFloat = 0
-        for index in margins.indices.sorted(by: { margins[$0].size.height > margins[$1].size.height }) {
+        for index in margins.indices.sorted(by: { (rank[$0], margins[$1].size.height) < (rank[$1], margins[$0].size.height) }) {
             let block = margins[index]
             if cursor.x > 0 && cursor.x + block.size.width > rowWidth {
                 cursor = CGPoint(x: 0, y: cursor.y + rowHeight + Self.blockGap)
