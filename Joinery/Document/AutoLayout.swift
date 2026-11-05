@@ -47,9 +47,9 @@ extension DataModel {
         let neighbors = adjacency()
         // Either way, each group's tables (or each set of joined ones) together as a block, so groups stay apart.
         let positions = switch layout {
-        case .orthogonalGroups: packedBlocks(of: arranged, withinColumns: false) { Self.block($0, neighbors: neighbors) }
-        // Its columns are what references what, so tables only swap within one.
-        case .hierarchical: packedBlocks(of: arranged, withinColumns: true, hierarchical)
+        case .orthogonalGroups: packedBlocks(of: arranged, refine: true) { Self.block($0, neighbors: neighbors) }
+        // Already ordered and placed to cross little; swapping tables about would only undo that.
+        case .hierarchical: packedBlocks(of: arranged, refine: false, layered)
         }
         for index in tables.indices {
             if let position = positions[tables[index].id] { tables[index].position = before.origin + position }
@@ -81,7 +81,7 @@ extension DataModel {
     /// The tables in blocks: each group's; then the rest, by what joins them; then those joined to nothing, together.
     /// Each block is laid out by `arrange`, then the blocks are packed in rows, tallest first, about twice as wide as
     /// tall, with room for groups' boundaries and names.
-    private func packedBlocks(of tables: [Table], withinColumns: Bool,
+    private func packedBlocks(of tables: [Table], refine: Bool,
                               _ arrange: ([Table]) -> (positions: [Table.ID: CGPoint], size: CGSize)) -> [Table.ID: CGPoint] {
         let neighbors = adjacency()
         // Blocks: each group's tables; then the rest, by what joins them; then those joined to nothing, together.
@@ -106,7 +106,7 @@ extension DataModel {
         if !alone.isEmpty { blocks.append((alone, false)) }
 
         let laidOut = blocks.map { block in
-            (layout: refined(arrange(block.tables), of: block.tables, withinColumns: withinColumns), isGroup: block.isGroup)
+            (layout: refine ? refined(arrange(block.tables), of: block.tables) : arrange(block.tables), isGroup: block.isGroup)
         }
         let margins = laidOut.map { block -> (left: CGFloat, top: CGFloat, size: CGSize) in
             let padding = block.isGroup ? Metrics.groupPadding : 0, label = block.isGroup ? Metrics.groupLabelHeight : 0
@@ -136,10 +136,8 @@ extension DataModel {
 
     /// A block's layout improved by swapping its tables between their places while that makes their wires shorter, each
     /// crossing counted as `crossingCost` of length: the nearest places first, a few rounds, the same every time. Then
-    /// each column stacked again, as tables of different heights may have swapped. `withinColumns`, only tables in the
-    /// same column swap.
-    private func refined(_ layout: (positions: [Table.ID: CGPoint], size: CGSize), of block: [Table],
-                         withinColumns: Bool) -> (positions: [Table.ID: CGPoint], size: CGSize) {
+    /// each column stacked again, as tables of different heights may have swapped.
+    private func refined(_ layout: (positions: [Table.ID: CGPoint], size: CGSize), of block: [Table]) -> (positions: [Table.ID: CGPoint], size: CGSize) {
         let count = block.count
         guard count > 2, Self.refinementRounds > 0 else { return layout }
         let index = Dictionary(uniqueKeysWithValues: block.enumerated().map { ($1.id, $0) })
@@ -168,7 +166,7 @@ extension DataModel {
         for _ in 0..<Self.refinementRounds {
             var isImproved = false
             for a in 0..<count where !wiresOf[a].isEmpty {
-                let nearest = (0..<count).filter { $0 != a && (!withinColumns || places[$0].x == places[a].x) }.sorted { (places[$0].distance(to: places[a]), $0) < (places[$1].distance(to: places[a]), $1) }
+                let nearest = (0..<count).filter { $0 != a }.sorted { (places[$0].distance(to: places[a]), $0) < (places[$1].distance(to: places[a]), $1) }
                 for b in nearest.prefix(12) {
                     let affected = Array(Set(wiresOf[a] + wiresOf[b]))
                     let before = cost(affected)
@@ -226,53 +224,6 @@ extension DataModel {
         let used = bottoms.filter { $0 > 0 }.count
         return (positions, CGSize(width: CGFloat(used) * (Metrics.tableWidth + layoutGap.width) - layoutGap.width,
                                   height: (bottoms.max() ?? 0) - layoutGap.height))
-    }
-
-    // MARK: Hierarchical
-
-    /// A block of tables in columns by what they reference: each one column right of the furthest table its foreign
-    /// keys reference (a cycle broken where it's found), and down each column in the order of those tables' places, so
-    /// wires cross as little as they can.
-    private func hierarchical(_ block: [Table]) -> (positions: [Table.ID: CGPoint], size: CGSize) {
-        let inBlock = Set(block.map(\.id))
-        let owner = columnLocations.mapValues(\.table.id)
-        var parents: [Table.ID: Set<Table.ID>] = [:]
-        for relationship in relationships {
-            guard let child = owner[relationship.from], let parent = owner[relationship.to], child != parent,
-                  inBlock.contains(child), inBlock.contains(parent) else { continue }
-            parents[child, default: []].insert(parent)
-        }
-        var columns: [Table.ID: Int] = [:], visiting = Set<Table.ID>()
-        func column(of id: Table.ID) -> Int {
-            if let known = columns[id] { return known }
-            guard visiting.insert(id).inserted else { return 0 }
-            let value = parents[id, default: []].map { column(of: $0) + 1 }.max() ?? 0
-            visiting.remove(id)
-            columns[id] = value
-            return value
-        }
-        for table in block { _ = column(of: table.id) }
-
-        var rows: [Table.ID: CGFloat] = [:], positions: [Table.ID: CGPoint] = [:], height: CGFloat = 0
-        let last = columns.values.max() ?? 0
-        for index in 0...last {
-            let members = block.filter { columns[$0.id] == index }.sorted { a, b in
-                let place = { (table: Table) -> CGFloat in
-                    let known = parents[table.id, default: []].compactMap { rows[$0] }
-                    return known.isEmpty ? .infinity : known.reduce(0, +) / CGFloat(known.count)
-                }
-                return (place(a), a.name) < (place(b), b.name)
-            }
-            var y: CGFloat = 0
-            for table in members {
-                positions[table.id] = CGPoint(x: CGFloat(index) * (Metrics.tableWidth + Self.layoutGap.width), y: y)
-                rows[table.id] = y + Metrics.size(of: table).height / 2
-                y += Metrics.size(of: table).height + Self.layoutGap.height
-            }
-            height = max(height, y - Self.layoutGap.height)
-        }
-        return (positions, CGSize(width: CGFloat(last + 1) * (Metrics.tableWidth + Self.layoutGap.width) - Self.layoutGap.width,
-                                  height: height))
     }
 
     // MARK: Helpers

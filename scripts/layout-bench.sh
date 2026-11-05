@@ -5,6 +5,6 @@ set -e
 cd "$(dirname "$0")/.."
 out="${TMPDIR:-/tmp}/joinery-layout-bench"
 swiftc -O -D DEBUG -o "$out" Joinery/Document/DataModel.swift Joinery/Document/DataModel+Editing.swift Joinery/Document/Ports.swift \
-  Joinery/Document/Placement.swift Joinery/Document/AutoLayout.swift Joinery/Document/Untangler.swift Joinery/Debug/SyntheticModel.swift \
-  Joinery/Canvas/Geometry.swift Joinery/Canvas/Metrics.swift scripts/LayoutBench/main.swift
+  Joinery/Document/Placement.swift Joinery/Document/AutoLayout.swift Joinery/Document/LayeredLayout.swift Joinery/Document/Untangler.swift Joinery/Debug/SyntheticModel.swift \
+  Joinery/Document/Geometry.swift Joinery/Document/Metrics.swift scripts/LayoutBench/main.swift
 "$out" "$@"
