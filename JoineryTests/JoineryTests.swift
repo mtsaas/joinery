@@ -1285,12 +1285,23 @@ struct JoineryTests {
         #expect(report.contains("- refunds.order_id → orders.id"))
         #expect(SchemaDiff(from: before, to: before).report(from: "main", to: "current") == "No changes from main to current.")
 
-        // Copied as Markdown: the changes, then the tables added and changed as they end up, with their SQL.
-        let markdown = SchemaDiff(from: before, to: after).markdown(from: "main", to: "current", title: "Shop", after: after)
+        // Copied as Markdown: only what changed, as a patch.
+        let markdown = SchemaDiff(from: before, to: after).markdown(from: "main", to: "current", title: "Shop")
         #expect(markdown.hasPrefix("# Shop: main → current"))
-        #expect(markdown.contains("## Changes") && markdown.contains("  ~ total integer → amount numeric"))
-        #expect(markdown.contains("### refunds") && markdown.contains("CREATE TABLE orders (") && markdown.contains("CREATE TABLE refunds ("))
-        #expect(markdown.components(separatedBy: "\n# ").count == 1)
+        #expect(markdown.contains("""
+            ```diff
+              table orders
+            -   total integer
+            +   amount numeric
+            +   note text nullable
+
+            + table refunds
+            +   order_id uuid
+
+            + foreign key refunds.order_id → orders.id
+            ```
+            """))
+        #expect(!markdown.contains("id uuid primary key"))
 
         // Only made implicit: a change, without a constraint.
         var implicit = after

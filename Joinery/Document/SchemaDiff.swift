@@ -164,16 +164,45 @@ extension SchemaDiff {
         return lines.joined(separator: "\n")
     }
 
-    /// The changes as Markdown, for an AI assistant to make them, in code or migrations: the list of changes, then
-    /// the tables added and changed as they are in `after` (the later model compared), with the SQL for them.
-    func markdown(from: String, to: String, title: String, after: DataModel) -> String {
+    /// The changes as Markdown, for an AI assistant to make them, in code or migrations: like a patch, only what
+    /// changed, as + and - lines. A changed column is its old line then its new one.
+    func markdown(from: String, to: String, title: String) -> String {
         var lines = ["# \(title): \(from) → \(to)", ""]
-        guard !isEmpty else { return (lines + ["No changes from \(from) to \(to).", ""]).joined(separator: "\n") }
-        let changed = Set(tables.filter { $0.value != .removed }.keys)
-        lines += ["Changes to make to the schema to go from \(from) to \(to)."
-                  + (changed.isEmpty ? "" : " After them, the tables added or changed as they should end up."), "",
-                  "## Changes", "", report(from: from, to: to), ""]
-        if !changed.isEmpty { lines.append(after.markdown(of: changed, title: nil)) }
+        guard !isEmpty else { return (lines + ["No changes.", ""]).joined(separator: "\n") }
+        func describe(_ column: Column) -> String {
+            [column.name, column.type.rawValue, column.isNullable ? "nullable" : nil, column.isPrimaryKey ? "primary key" : nil,
+             column.isUnique ? "unique" : nil].compactMap { $0 }.joined(separator: " ")
+        }
+        var blocks: [[String]] = []
+        for table in model.tables {
+            switch tables[table.id] {
+            case .added: blocks.append(["+ table \(table.name)"] + table.columns.map { "+   \(describe($0))" })
+            case .removed: blocks.append(["- table \(table.name)"])
+            case .modified:
+                // Old rows of changed columns sit just above the new, so in order they read as a patch does.
+                blocks.append((oldNames[table.id].map { ["- table \($0)", "+ table \(table.name)"] } ?? ["  table \(table.name)"])
+                    + table.columns.compactMap { column in
+                        switch columns[column.id] {
+                        case .added, .modified: "+   \(describe(column))"
+                        case .removed: "-   \(describe(column))"
+                        default: nil
+                        }
+                    })
+            default: break
+            }
+        }
+        let keys = model.relationships.compactMap { relationship -> [String]? in
+            guard let change = relationships[relationship.id], let from = model.qualifiedName(of: relationship.from),
+                  let to = model.qualifiedName(of: relationship.to) else { return nil }
+            let line = { (implicit: Bool) in "foreign key \(from) → \(to)" + (implicit ? " (implicit, no constraint)" : "") }
+            return switch change {
+            case .added: ["+ " + line(relationship.isImplicit)]
+            case .removed: ["- " + line(relationship.isImplicit)]
+            case .modified: ["- " + line(!relationship.isImplicit), "+ " + line(relationship.isImplicit)]
+            }
+        }
+        if !keys.isEmpty { blocks.append(keys.flatMap { $0 }) }
+        lines += ["\(summary).", "", "```diff", blocks.map { $0.joined(separator: "\n") }.joined(separator: "\n\n"), "```", ""]
         return lines.joined(separator: "\n")
     }
 }
