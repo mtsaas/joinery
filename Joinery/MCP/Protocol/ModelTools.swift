@@ -249,10 +249,12 @@ enum ModelTools {
         return result
     }
 
-    /// The model as JSON: tables in order, each column's foreign key as "table.column".
+    /// The model as JSON: tables in order, each column's foreign key as "table.column", marked if it's implicit (not
+    /// enforced by the database).
     static func describe(_ model: DataModel) throws -> String {
         let references = Dictionary(model.relationships.compactMap { r in model.qualifiedName(of: r.to).map { (r.from, $0) } },
                                     uniquingKeysWith: { first, _ in first })
+        let implicit = Set(model.relationships.filter(\.isImplicit).map(\.from))
         let groupNames = Dictionary(model.groups.map { ($0.id, $0.name) }, uniquingKeysWith: { first, _ in first })
         let schemas: [[String: Any]] = model.groups.map { group in
             ["name": group.name, "color": group.color.rawValue, "tables": model.members(of: group.id).map(\.name),
@@ -270,6 +272,7 @@ enum ModelTools {
                     if column.isNullable { description["nullable"] = true }
                     if column.isUnique { description["unique"] = true }
                     if let reference = references[column.id] { description["references"] = reference }
+                    if implicit.contains(column.id) { description["implicit_reference"] = true }
                     return description
                 },
             ]

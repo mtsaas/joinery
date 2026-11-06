@@ -183,10 +183,18 @@ struct VersionHistory: View {
 }
 
 private extension DataModel {
-    /// Without where things are: tables all at the origin, no zip ties.
+    /// Without how it looks: tables all at the origin, the usual width and color, ungrouped, their columns in one order;
+    /// no zip ties.
     var arrangementless: DataModel {
         var model = self
-        for index in model.tables.indices { model.tables[index].position = .zero }
+        model.groups = []
+        for index in model.tables.indices {
+            model.tables[index].position = .zero
+            model.tables[index].width = nil
+            model.tables[index].color = .blue
+            model.tables[index].group = nil
+            model.tables[index].columns.sort { $0.id.uuidString < $1.id.uuidString }
+        }
         model.zipTies = []
         for index in model.relationships.indices { model.relationships[index].zipTies = [] }
         return model

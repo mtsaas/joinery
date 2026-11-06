@@ -120,6 +120,7 @@ extension DataModel {
         for wire in clip.relationships {
             guard let id = wireIDs[wire.id], let index = relationships.firstIndex(where: { $0.id == id }) else { continue }
             relationships[index].zipTies = wire.zipTies.compactMap { tieIDs[$0] }
+            relationships[index].isImplicit = wire.isImplicit
         }
         repair()
         return (tableIDs, Array(tieIDs.values), Array(Set(groupIDs.values)))

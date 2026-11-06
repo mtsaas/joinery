@@ -640,6 +640,35 @@ struct JoineryTests {
                              + "  FOREIGN KEY (order_id, order_line) REFERENCES orders (id, line)\n);"))
     }
 
+    @Test func anImplicitRelationshipIsntAForeignKey() throws {
+        let base = storefront()
+        var model = base
+        let wire = try #require(model.relationships.first)
+        let column = try #require(model.columnLocations[wire.from])
+        let name = column.table.columns[column.row].name
+
+        // Saved only when set, so files without it read as before, and it reads back.
+        let plain = String(decoding: try JSONEncoder().encode(wire), as: UTF8.self)
+        #expect(!plain.contains("implicit"))
+        model.setImplicit(true, wire.id)
+        let implicit = try #require(model.relationships.first)
+        #expect(try JSONDecoder().decode(Relationship.self, from: JSONEncoder().encode(implicit)).isImplicit)
+
+        // In SQL, no constraint; in the tables, a reference marked implicit, not an FK.
+        let before = base.markdown(of: nil, title: "Shop"), after = model.markdown(of: nil, title: "Shop")
+        #expect(before.components(separatedBy: "REFERENCES").count == after.components(separatedBy: "REFERENCES").count + 1)
+        #expect(after.contains("(implicit)") && after.contains("| \(name) |"))
+
+        // A comparison shows it changed; undoing it in a replica puts the foreign key back.
+        let diff = SchemaDiff(from: base, to: model)
+        #expect(diff.relationships[wire.id] == .modified)
+        var replica = Replica(base)
+        let undo = replica.apply(Replica(base).ops(to: Replica(model)))
+        #expect(replica.model.relationships.first?.isImplicit == true)
+        _ = replica.apply(undo)
+        #expect(replica.model.relationships.first?.isImplicit == false)
+    }
+
     @Test func addForeignKeyPairsColumnListsIntoACompoundKey() throws {
         var model = storefront()
         var line = Column(name: "line", type: .integer)
@@ -1160,6 +1189,21 @@ struct JoineryTests {
         #expect(SchemaDiff(from: before, to: before).summary == "No changes")
         // The same comparison draws the same model.
         #expect(SchemaDiff(from: before, to: after) == diff)
+        // Hiding what's removed leaves out the coupons table and its key, but keeps the changes to orders.
+        let kept = diff.modelWithoutRemoved
+        #expect(kept.tables.map(\.name).sorted() == ["orders", "refunds", "users"])
+        #expect(kept.relationships.allSatisfy { diff.relationships[$0.id] != .removed } && kept.relationships.count == after.relationships.count)
+        #expect(kept.table(try id("orders"))?.columns.count == orders.columns.count)
+
+        // A table removed with its group: drawn in it, so laying it out keeps it there; hidden, the group goes too.
+        var promos = before
+        promos.groups.append(TableGroup(name: "promos", color: .pink))
+        let coupons = try #require(promos.tables.firstIndex { $0.name == "coupons" })
+        promos.tables[coupons].group = promos.groups[0].id
+        let regrouped = SchemaDiff(from: promos, to: after)
+        #expect(regrouped.model.groups.map(\.name) == ["promos"] && regrouped.model.table(promos.tables[coupons].id)?.group == promos.groups[0].id)
+        #expect(regrouped.modelWithoutRemoved.groups.isEmpty)
+        #expect(promos.takingLayout(from: regrouped.model, only: [promos.tables[coupons].id]) == promos)
     }
 
     /// The whole server minus the socket, as any platform's app drives it: request bytes in, response bytes out.
@@ -1240,6 +1284,18 @@ struct JoineryTests {
         #expect(report.contains("  + note text nullable"))
         #expect(report.contains("- refunds.order_id → orders.id"))
         #expect(SchemaDiff(from: before, to: before).report(from: "main", to: "current") == "No changes from main to current.")
+
+        // Copied as Markdown: the changes, then the tables added and changed as they end up, with their SQL.
+        let markdown = SchemaDiff(from: before, to: after).markdown(from: "main", to: "current", title: "Shop", after: after)
+        #expect(markdown.hasPrefix("# Shop: main → current"))
+        #expect(markdown.contains("## Changes") && markdown.contains("  ~ total integer → amount numeric"))
+        #expect(markdown.contains("### refunds") && markdown.contains("CREATE TABLE orders (") && markdown.contains("CREATE TABLE refunds ("))
+        #expect(markdown.components(separatedBy: "\n# ").count == 1)
+
+        // Only made implicit: a change, without a constraint.
+        var implicit = after
+        implicit.setImplicit(true, try #require(after.relationships.first).id)
+        #expect(SchemaDiff(from: after, to: implicit).report(from: "a", to: "b").contains("- refunds.order_id → orders.id, now implicit (no constraint)"))
     }
 
     /// A pull request reviewed, then updated: main, the first draft and now, each compared with the others.

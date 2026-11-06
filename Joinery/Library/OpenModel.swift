@@ -102,21 +102,36 @@ final class OpenModel {
             if NamedVersions.isCurrent(name) { return layOut(.current, as: shown, only: only) }
             guard let saved = named.version(named: name)?.model else { return nil }
             let laid = saved.takingLayout(from: shown, only: only)
+            guard laid != saved else { return laid }
             var new = named
             new.update(name, to: laid)
             do { try setNamed(new) } catch {
                 Library.shared.failure = "Couldn't keep the layout: \(error.localizedDescription)"
                 return nil
             }
+            registerLayoutUndo(target, back: saved, only: only)
             return laid
         case .history(let url):
-            guard let saved = try? DataModel(contentsOf: url) else { return nil }
+            guard let saved = laidHistory[url] ?? (try? DataModel(contentsOf: url)) else { return nil }
             let laid = saved.takingLayout(from: shown, only: only)
+            guard laid != saved else { return laid }
             do { try laid.fileData.write(to: url, options: .atomic) } catch {
                 Library.shared.failure = "Couldn't keep the layout: \(error.localizedDescription)"
                 return nil
             }
+            laidHistory[url] = laid
+            registerLayoutUndo(target, back: saved, only: only)
             return laid
+        }
+    }
+
+    /// Versions in the version history laid out since it was opened, as they are now, for the window to show.
+    private(set) var laidHistory: [URL: DataModel] = [:]
+
+    /// Undoing a version's layout lays it out as it was; that registers the redo.
+    private func registerLayoutUndo(_ target: Laid, back saved: DataModel, only: Set<Table.ID>?) {
+        undoManager.registerUndo(withTarget: self) { model in
+            MainActor.assumeIsolated { _ = model.layOut(target, as: saved, only: only) }
         }
     }
 

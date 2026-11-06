@@ -267,18 +267,49 @@ struct LibraryTests {
         let saved = try #require(open.named.version(named: "main"))
         let now = open.model
 
-        // Moving a table, coloring it and renaming it, as shown: only the move and color count, and only there.
+        // Moving a table, coloring, resizing and renaming it, as shown: all but the name count, and only there.
         var shown = saved.model
         shown.tables[0].position.x += 300
         shown.tables[0].color = shown.tables[0].color == .red ? .blue : .red
         shown.tables[0].name = "renamed"
+        shown.tables[0].width = 400
         let laid = try #require(open.layOut(.named("Main"), as: shown))
         #expect(laid.tables[0].position == shown.tables[0].position && laid.tables[0].color == shown.tables[0].color)
+        #expect(laid.tables[0].width == 400, "resized, as layout")
         #expect(laid.tables[0].name == saved.model.tables[0].name)
         let version = try #require(open.named.version(named: "main"))
         #expect(version.model == laid && version.date == saved.date && open.named.names == ["main"])
         #expect(open.model == now)
         #expect(try OpenModel(url: url).named.version(named: "main") == version, "kept in the package")
+
+        // Columns reordered, as shown, with rows the version doesn't have (a column removed since, drawn by a
+        // comparison) ignored.
+        var reordered = laid
+        var ghost = reordered.tables[0].columns[0]
+        ghost.id = UUID()
+        reordered.tables[0].columns.insert(ghost, at: 0)
+        reordered.tables[0].columns.swapAt(1, 2)
+        let sorted = try #require(open.layOut(.named("main"), as: reordered))
+        #expect(sorted.tables[0].columns.map(\.id) == Array(reordered.tables[0].columns.dropFirst()).map(\.id))
+        #expect(sorted.tables[0].columns.count == laid.tables[0].columns.count)
+
+        // Grouped, as shown: the group and who's in it, but not a group of tables the version doesn't have.
+        var regrouped = sorted
+        let sales = TableGroup(name: "sales", color: .green)
+        regrouped.groups.append(sales)
+        regrouped.tables[0].group = sales.id
+        regrouped.tables[1].group = sales.id
+        var elsewhere = regrouped.tables[0]
+        elsewhere.id = UUID()
+        elsewhere.group = UUID()
+        regrouped.tables.append(elsewhere)
+        regrouped.groups.append(TableGroup(id: elsewhere.group!, name: "other", color: .pink))
+        let grouped0 = try #require(open.layOut(.named("main"), as: regrouped))
+        #expect(grouped0.groups.map(\.name) == ["sales"] && grouped0.tables.filter { $0.group == sales.id }.count == 2)
+        #expect(grouped0.tables.count == sorted.tables.count)
+        var ungrouped = grouped0
+        for index in ungrouped.tables.indices { ungrouped.tables[index].group = nil }
+        #expect(try #require(open.layOut(.named("main"), as: ungrouped)).groups.isEmpty, "ungrouped, the group goes")
 
         // A group's color too.
         var grouped = laid
@@ -306,6 +337,39 @@ struct LibraryTests {
         // Now, the model as it is, undoably.
         open.layOut(.named(NamedVersions.current), as: moved)
         #expect(open.model.tables[0].position == moved.tables[0].position)
+    }
+
+    @Test func layingOutAVersionCanBeUndone() throws {
+        let library = freshLibrary()
+        let examples = try #require(library.collections.first { $0.name == Library.examplesName })
+        library.selection = try #require(examples.models.first { Library.name(of: $0) == "Storefront" })
+        let open = try #require(library.open)
+        let undo = open.undoManager
+        undo.groupsByEvent = false
+        var named = open.named
+        named.save(open.model, as: "main")
+        try open.setNamed(named)
+        let saved = try #require(open.named.version(named: "main")).model
+        func step(_ change: () -> Void) { undo.beginUndoGrouping(); change(); undo.endUndoGrouping() }
+
+        // A named version: undone and redone.
+        var shown = saved
+        shown.tables[0].position.x += 300
+        step { open.layOut(.named("main"), as: shown) }
+        undo.undo()
+        #expect(open.named.version(named: "main")?.model == saved)
+        undo.redo()
+        #expect(open.named.version(named: "main")?.model.tables[0].position == shown.tables[0].position)
+
+        // A version in the version history: its file, and as the window shows it.
+        let old = try #require(open.history.versions.first)
+        let before = try DataModel(contentsOf: old.url)
+        var moved = before
+        moved.tables[0].position.y += 120
+        step { open.layOut(.history(old.url), as: moved) }
+        #expect(open.laidHistory[old.url]?.tables[0].position == moved.tables[0].position)
+        undo.undo()
+        #expect(try DataModel(contentsOf: old.url) == before && open.laidHistory[old.url] == before)
     }
 
     @Test func aReviewsBaselineFromBeforeNamedVersionsBecomesOne() throws {
