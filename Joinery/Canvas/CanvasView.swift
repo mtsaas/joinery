@@ -50,7 +50,7 @@ struct CanvasView: View {
                                            avoidingTables: wiresAvoidTables)
         let colors = routingCache.wireColors(for: routed)
         let (foreignKeys, socketColors, foreignKeyRuns) = routingCache.colorTables {
-            (Dictionary(routed.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } }, uniquingKeysWith: { first, _ in first }),
+            (Dictionary(routed.relationships.compactMap { r in r.isImplicit ? nil : colors[r.id].map { (r.from, $0) } }, uniquingKeysWith: { first, _ in first }),
              self.socketColors(routing, colors: colors), routed.compoundForeignKeyRuns)
         }
         // While tables are dragged, groups as dropping them there would leave them: one they'd join reaches round them.
@@ -328,12 +328,11 @@ struct CanvasView: View {
     // MARK: Command palette
 
     /// New Table first, then what applies to the selection, tools and view, then every table to jump to.
-    /// Commands that change the schema, not just the layout: left out while only the layout can change, as when
-    /// comparing versions.
+    /// Commands that change the schema, not just how it looks: left out while only that can change, as when comparing
+    /// versions. Groups and their ports are how it looks.
     private static let schemaCommands: Set<String> = [
-        "new-table", "add-column", "rename", "group", "ungroup", "ungroup-tables", "ungroup-table", "delete", "rename-group",
-        "rename-column", "edit-type", "insert-column", "delete-column", "delete-port", "remove-port", "delete-key", "bundle",
-        "remove-ports",
+        "new-table", "add-column", "rename", "delete", "rename-column", "edit-type", "insert-column", "delete-column", "delete-key",
+        "implicit",
     ]
 
     private func isAllowed(_ command: PaletteCommand) -> Bool {
@@ -646,6 +645,12 @@ struct CanvasView: View {
                 }
             }
             slots[.south] = deleteCable(hit.relationship)
+            let isImplicit = model.relationships.first { $0.id == hit.relationship }?.isImplicit ?? false
+            slots[.east] = PaletteCommand(id: "implicit", title: isImplicit ? "Make Foreign Key" : "Make Implicit",
+                                          subtitle: isImplicit ? "enforced by the database" : "not a foreign key in the database",
+                                          symbol: isImplicit ? "link" : "line.diagonal") {
+                model.setImplicit(!isImplicit, hit.relationship)
+            }
         case .canvas:
             slots[.north] = PaletteCommand(id: "new-table", title: "New Table", symbol: "plus.rectangle", shortcut: "T") {
                 canvas.addTable(to: &model, at: wheel.point)
@@ -686,6 +691,7 @@ struct CanvasView: View {
         let selectedTies = canvas.selectedTies, hoveredTie = canvas.hoveredTie, changes = diff?.relationships ?? [:]
         let selectedWires = Set(canvas.selection.compactMap { if case .relationship(let id) = $0 { id } else { nil } })
         let routed = routedModel, relationships = routed.relationships
+        let implicitWires = Set(relationships.filter(\.isImplicit).map(\.id))
         // Each cable's ties, wire or bus, for where they're drawn along it: as routed, so with a cable being pulled
         // through the pointer, and out of the ties it's been tugged out of, as its drawn wire is.
         var cableTies = Dictionary(routed.relationships.map { ($0.id, $0.zipTies) }, uniquingKeysWith: { first, _ in first })
@@ -721,8 +727,9 @@ struct CanvasView: View {
                         context.stroke(path, with: .color(color.mix(with: .black, by: Theme.selectedWireDarkening)),
                                        style: StrokeStyle(lineWidth: Metrics.selectedWireWidth, lineCap: .round))
                     }
+                    let isDashed = change == .removed || implicitWires.contains(relationship.id)
                     context.stroke(path, with: .color(color.opacity(isDimmed ? 0.28 : 1)),
-                                   style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round, dash: change == .removed ? [6, 5] : []))
+                                   style: StrokeStyle(lineWidth: Metrics.wireWidth, lineCap: .round, dash: isDashed ? [6, 5] : []))
                 }
                 // Each port's bus, then the port over where its wires meet it.
                 // In a fixed order, as dictionaries' can change from one routing to the next.
@@ -2270,7 +2277,7 @@ private final class RoutingCache {
         let (light, dark) = (Themes.shared.light, Themes.shared.dark)
         if let colors, colors.model == model, colors.light == light, colors.dark == dark { return colors.colors }
         let locations = model.columnLocations
-        var wireColors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
+        var wireColors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, r.isImplicit ? Theme.implicitWire : $0.table.color.color) } },
                                     uniquingKeysWith: { first, _ in first })
         // A port's bus, by its ID, is its column's table's color, as the wires to that column are.
         for port in model.groups.flatMap(\.ports) { wireColors[port.id] = port.column.flatMap { locations[$0]?.table.color.color } }

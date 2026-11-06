@@ -54,19 +54,29 @@ struct SchemaDiff: Equatable {
             model.tables[index].columns = merged
             if oldNames[table.id] != nil || merged.contains(where: { columns[$0.id] != nil }) { tables[table.id] = .modified }
         }
-        let groups = Set(after.groups.map(\.id))
-        for var table in before.tables where !later.contains(table.id) {
+        // A removed table keeps its group, and a group removed with it comes back too, so laying them out keeps it.
+        var groups = Set(after.groups.map(\.id))
+        for table in before.tables where !later.contains(table.id) {
             tables[table.id] = .removed
             for column in table.columns { columns[column.id] = .removed }
-            if let group = table.group, !groups.contains(group) { table.group = nil }
+            if let id = table.group, !groups.contains(id), let group = before.groups.first(where: { $0.id == id }) {
+                groups.insert(id)
+                model.groups.append(group)
+            }
             model.tables.append(table)
         }
 
         struct Ends: Hashable { let from, to: Column.ID }
         let then = Set(before.relationships.map { Ends(from: $0.from, to: $0.to) })
         let now = Set(after.relationships.map { Ends(from: $0.from, to: $0.to) })
-        for relationship in after.relationships where !then.contains(Ends(from: relationship.from, to: relationship.to)) {
-            relationships[relationship.id] = .added
+        let wasImplicit = Dictionary(before.relationships.map { (Ends(from: $0.from, to: $0.to), $0.isImplicit) }, uniquingKeysWith: { first, _ in first })
+        for relationship in after.relationships {
+            let ends = Ends(from: relationship.from, to: relationship.to)
+            if !then.contains(ends) {
+                relationships[relationship.id] = .added
+            } else if wasImplicit[ends] != relationship.isImplicit {
+                relationships[relationship.id] = .modified
+            }
         }
         for var relationship in before.relationships where !now.contains(Ends(from: relationship.from, to: relationship.to)) {
             relationships[relationship.id] = .removed
@@ -80,6 +90,15 @@ struct SchemaDiff: Equatable {
         var bytes = id.uuid
         bytes.0 ^= 0xFF
         return UUID(uuid: bytes)
+    }
+
+    /// `model` without the tables and foreign keys removed: the changes to what's still there.
+    var modelWithoutRemoved: DataModel {
+        var shown = model
+        shown.tables.removeAll { tables[$0.id] == .removed }
+        shown.relationships.removeAll { relationships[$0.id] == .removed }
+        shown.removeEmptyGroups()
+        return shown
     }
 
     var isEmpty: Bool { tables.isEmpty && relationships.isEmpty }
@@ -133,12 +152,28 @@ extension SchemaDiff {
                 }
             }
         })
-        for (title, change) in [("Foreign keys added", Change.added), ("Foreign keys removed", .removed)] {
+        for (title, change) in [("Foreign keys added", Change.added), ("Foreign keys removed", .removed), ("Foreign keys changed", .modified)] {
             section(title, model.relationships.filter { relationships[$0.id] == change }.compactMap { relationship in
                 guard let from = model.qualifiedName(of: relationship.from), let to = model.qualifiedName(of: relationship.to) else { return nil }
-                return "- \(from) → \(to)"
+                // Only whether it's implicit changes one that's still there.
+                let kind = change == .modified ? (relationship.isImplicit ? ", now implicit (no constraint)" : ", now a foreign key constraint")
+                    : relationship.isImplicit ? " (implicit, no constraint)" : ""
+                return "- \(from) → \(to)\(kind)"
             })
         }
+        return lines.joined(separator: "\n")
+    }
+
+    /// The changes as Markdown, for an AI assistant to make them, in code or migrations: the list of changes, then
+    /// the tables added and changed as they are in `after` (the later model compared), with the SQL for them.
+    func markdown(from: String, to: String, title: String, after: DataModel) -> String {
+        var lines = ["# \(title): \(from) → \(to)", ""]
+        guard !isEmpty else { return (lines + ["No changes from \(from) to \(to).", ""]).joined(separator: "\n") }
+        let changed = Set(tables.filter { $0.value != .removed }.keys)
+        lines += ["Changes to make to the schema to go from \(from) to \(to)."
+                  + (changed.isEmpty ? "" : " After them, the tables added or changed as they should end up."), "",
+                  "## Changes", "", report(from: from, to: to), ""]
+        if !changed.isEmpty { lines.append(after.markdown(of: changed, title: nil)) }
         return lines.joined(separator: "\n")
     }
 }

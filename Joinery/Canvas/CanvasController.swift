@@ -69,11 +69,22 @@ final class CanvasController {
 
     /// The selected tables (and selected groups' tables), or every table with none selected, as Markdown for an AI
     /// assistant: their columns, the SQL to make them, and their notes.
+    /// With two versions' changes shown, what changed instead, for an assistant to make the same changes.
     func copyMarkdown(from model: DataModel, title: String) {
         let ids = model.clip(tables: selectedTables, groups: selectedGroups).tables.map(\.id)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(model.markdown(of: ids.isEmpty ? nil : Set(ids), title: title), forType: .string)
+        NSPasteboard.general.setString(changes.map { $0.diff.markdown(from: $0.from, to: $0.to, title: title, after: $0.after) }
+                                       ?? model.markdown(of: ids.isEmpty ? nil : Set(ids), title: title), forType: .string)
     }
+
+    /// Two versions' changes shown: the diff, the later version, and what to call each.
+    struct Changes: Equatable {
+        var diff: SchemaDiff
+        var after: DataModel
+        var from: String
+        var to: String
+    }
+    var changes: Changes?
 
     /// Tables just copied that are joined to others: offered more of those to copy with them, until dismissed.
     var copiedTables: Set<Table.ID>?
@@ -231,9 +242,9 @@ final class CanvasController {
         if window != self.window { self.window = window }
     }
     var selection: Set<Item> = []
-    /// Showing something only its layout can change in, such as versions compared: tables move and wires are tied, but
-    /// no cell is edited, the designer only shows tables, and the palette and wheel leave out what would change the
-    /// schema. (Other edits are dropped by whatever keeps the layout.)
+    /// Showing something only its layout can change in, such as versions compared: tables move, resize, are grouped and
+    /// have their columns reordered, and wires are tied, but no cell is edited, the designer only shows tables, and the
+    /// palette and wheel leave out what would change the schema. (Other edits are dropped by whatever keeps the layout.)
     var isLayoutOnly = false {
         didSet {
             guard isLayoutOnly else { return }

@@ -522,12 +522,12 @@ struct ModelEditor: View {
     @State private var preview: VersionHistory.Preview?
     /// With an earlier version shown: it, it and now together with the changes marked, or now.
     @State private var comparison = Comparison.changes
+    /// Showing the changes without the tables and foreign keys removed.
+    @AppStorage("hidesRemoved") private var hidesRemoved = false
 
-    /// Lays out a version compared as `shown` is, and shows it as it is now if it's the version history's.
+    /// Lays out a version compared as `shown` is.
     private func layOut(_ target: OpenModel.Laid, as shown: DataModel, only: Set<Table.ID>? = nil) {
-        guard let laid = open.layOut(target, as: shown, only: only), case .history(let url) = target, var preview else { return }
-        if url == preview.version.url { preview.model = laid } else { preview.before = laid }
-        self.preview = preview
+        open.layOut(target, as: shown, only: only)
     }
 
     var body: some View {
@@ -535,10 +535,17 @@ struct ModelEditor: View {
         // moved is kept where it is in the version it's shown from. A review's version shows its own change, before
         // and after, not how it is now.
         let compared = open.named.compared(current: open.model)
+        // The version history's versions as laid out since, and as undone.
+        let preview = preview.map { preview in
+            var laid = preview
+            laid.model = open.laidHistory[preview.version.url] ?? preview.model
+            laid.before = preview.before.map { open.laidHistory[preview.version.beforeURL] ?? $0 }
+            return laid
+        }
         let (before, after): (DataModel?, DataModel) = preview.map { preview in preview.before.map { ($0, preview.model) } ?? (preview.model, open.model) }
             ?? (compared?.before, compared?.after ?? open.model)
         let diff = before.flatMap { comparison == .changes ? SchemaDiff(from: $0, to: after) : nil }
-        let shown = before.map { comparison == .then ? $0 : diff?.model ?? after }
+        let shown = before.map { comparison == .then ? $0 : (hidesRemoved ? diff?.modelWithoutRemoved : diff?.model) ?? after }
         let isComparing = before != nil
         // The versions compared, to lay out: earlier and later.
         let sides: (from: OpenModel.Laid, to: OpenModel.Laid)? = if let preview {
@@ -629,20 +636,20 @@ struct ModelEditor: View {
             .overlay(alignment: .bottom) {
                 if let preview, preview.before != nil {
                     let when = "\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened))"
-                    ComparisonBar(comparison: $comparison, isReview: true, endsReview: false,
+                    ComparisonBar(comparison: $comparison, hidesRemoved: $hidesRemoved, isReview: true, endsReview: false,
                                   caption: diff.map { "Reviewed \(when): \($0.summary)" } ?? "\(comparison == .then ? "Before" : "After") the change reviewed \(when)") {
                         self.preview = nil
                     }
                     .padding(.bottom, 20)
                 } else if let preview {
                     let when = "\(VersionHistory.title(of: preview.version.date)) at \(preview.version.date.formatted(date: .omitted, time: .shortened))"
-                    ComparisonBar(comparison: $comparison, isReview: false, endsReview: false,
+                    ComparisonBar(comparison: $comparison, hidesRemoved: $hidesRemoved, isReview: false, endsReview: false,
                                   caption: diff.map { "\(when) to now: \($0.summary)" } ?? (comparison == .then ? when : "Now")) {
                         self.preview = nil
                     }
                     .padding(.bottom, 20)
                 } else if let compared = open.named.comparison {
-                    ComparisonBar(comparison: $comparison, isReview: true, endsReview: true, caption: nil,
+                    ComparisonBar(comparison: $comparison, hidesRemoved: $hidesRemoved, isReview: true, endsReview: true, caption: nil,
                                   versions: (open.named.names, Binding { compared } set: { open.compare($0) })) {
                         open.endComparison()
                     }
@@ -651,6 +658,16 @@ struct ModelEditor: View {
             }
             // Comparing, it's only there to look at and lay out.
             .onChange(of: isComparing, initial: true) { canvas.isLayoutOnly = isComparing }
+            // For Copy as Markdown: the changes, named as the bar names the sides.
+            .onChange(of: diff, initial: true) {
+                let names: (String, String) = if let preview {
+                    preview.before != nil ? ("before the change", "after the change") : (VersionHistory.title(of: preview.version.date)
+                        + " at " + preview.version.date.formatted(date: .omitted, time: .shortened), "now")
+                } else {
+                    (open.named.comparison?.from ?? "before", open.named.comparison?.to ?? "after")
+                }
+                canvas.changes = diff.map { .init(diff: $0, after: after, from: names.0, to: names.1) }
+            }
             // Filled from empty, or changing while compared (by an assistant, in a review), it stays in view, unless
             // panned or zoomed since.
             .onChange(of: model.wrappedValue.bounds) { old, new in
@@ -792,6 +809,7 @@ extension Notification.Name {
 /// Comparing two versions: which to show, what the difference is, and a way back to editing.
 private struct ComparisonBar: View {
     @Binding var comparison: Comparison
+    @Binding var hidesRemoved: Bool
     /// Reviewing a change, before and after it, rather than looking at an earlier version.
     let isReview: Bool
     /// The comparison open now, which ending stops, rather than a version kept in the version history.
@@ -819,6 +837,12 @@ private struct ComparisonBar: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
+            if comparison == .changes {
+                Toggle("Hide Removed", systemImage: "eye.slash", isOn: $hidesRemoved)
+                    .toggleStyle(.button)
+                    .labelStyle(.iconOnly)
+                    .help(hidesRemoved ? "Show the tables and foreign keys removed" : "Hide the tables and foreign keys removed")
+            }
             if let versions {
                 versionPicker("From", versions.names, versions.compared.from)
                 Image(systemName: "arrow.right").foregroundStyle(.secondary)

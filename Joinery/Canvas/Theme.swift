@@ -15,6 +15,8 @@ enum Theme {
     /// How much darker a header's edge is than the header.
     static let headerEdgeDarkening = 0.07
     static var socket: Color { pair(\.socket) }
+    /// An implicit relationship's wire, not a foreign key: grey, whatever it references, and dashed.
+    static let implicitWire = Color.gray
     /// Lines showing a dragged table lining up with another: there, but quiet.
     static let guide = Color.accentColor.opacity(0.45)
 
