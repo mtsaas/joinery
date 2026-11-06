@@ -73,14 +73,13 @@ final class CanvasController {
     func copyMarkdown(from model: DataModel, title: String) {
         let ids = model.clip(tables: selectedTables, groups: selectedGroups).tables.map(\.id)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(changes.map { $0.diff.markdown(from: $0.from, to: $0.to, title: title, after: $0.after) }
+        NSPasteboard.general.setString(changes.map { $0.diff.markdown(from: $0.from, to: $0.to, title: title) }
                                        ?? model.markdown(of: ids.isEmpty ? nil : Set(ids), title: title), forType: .string)
     }
 
-    /// Two versions' changes shown: the diff, the later version, and what to call each.
+    /// Two versions' changes shown: the diff, and what to call each version.
     struct Changes: Equatable {
         var diff: SchemaDiff
-        var after: DataModel
         var from: String
         var to: String
     }

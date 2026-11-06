@@ -666,7 +666,7 @@ struct ModelEditor: View {
                 } else {
                     (open.named.comparison?.from ?? "before", open.named.comparison?.to ?? "after")
                 }
-                canvas.changes = diff.map { .init(diff: $0, after: after, from: names.0, to: names.1) }
+                canvas.changes = diff.map { .init(diff: $0, from: names.0, to: names.1) }
             }
             // Filled from empty, or changing while compared (by an assistant, in a review), it stays in view, unless
             // panned or zoomed since.
