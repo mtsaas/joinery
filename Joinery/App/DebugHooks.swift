@@ -13,10 +13,24 @@ import SwiftUI
 /// - `JOINERY_SCRIPT`: semicolon-separated steps run against the first document after a second:
 ///   `move <table> <dx> <dy>`, `tie <x1> <y1> <x2> <y2>` (canvas points; shows the line for half a second, then
 ///   ties), `select <table>`, `edit <table>`, `space` (toggles held), `click <x> <y>` (on canvas or a wire), `nudge <dx> <dy>` (moves the selection), `place <x> <y>` (puts the selected ties there),
-///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>|shift+cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `feedback-on`, `handle <n> <dx> <dy>`, `feedback-note <text>`, `feedback-save`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point), `focus <table> <zoom>` (centers on that table), `shake <table> <seconds>` (drags it about and prints frame stats), `generate <tables> <foreign keys>` (replaces the model with a made-up one; see `scripts/scale-test.sh`), `quit`, `select-ties`, `group <table> <table>…` (groups them, as ⌘G), `groups` (prints them), `hold-drag <table> <dx> <dy>` (drags it that far in view points and holds), `wheel` (prints it), `wheel-pick <direction>` (east, northWest, …), `wheel-color <color>`, `ties` (prints them),
+///   `type <text>` and `key tab|return|escape|up|down|cmd+<letter>|shift+cmd+<letter>` (real key events), `selection`, `counts`, `rightdrag <x1> <y1> <x2> <y2>`, `rightclick <x> <y>`, `drop-preview <table.column> <x> <y>`, `open-palette`, `feedback-on`, `handle <n> <dx> <dy>`, `feedback-note <text>`, `feedback-save`, `palette` (prints its state), `dump` (prints the tables), `zoom <factor>`, `look <x> <y> <zoom>` (centers on that canvas point), `focus <table> <zoom>` (centers on that table), `shake <table> <seconds>` (drags it about and prints frame stats), `generate <tables> <foreign keys>` (replaces the model with a made-up one; see `scripts/scale-test.sh`), `quit`, `select-ties`, `group <table> <table>…` (groups them, as ⌘G), `groups` (prints them), `hold-drag <table> <dx> <dy>` (drags it that far in view points and holds), `rightclick` prints the context menu and closes it after `JOINERY_MENU_SECONDS` (default 1), `menu-pick <id>` (runs a command on it: `implicit`, `color:red`, …), `ties` (prints them),
 ///   `end-review` (as End Comparison), `theme <name>` (chooses that palette), `open-model <name>` (in a tab), `show-library` (goes home), `peek [seconds]` (toggles the tabs' previews, animated over that long), `next-tab`, `window` (prints its title bar), `tabs` (prints them, and the zoom and undo state of the one in front),`history [index]` (opens version history at that version), `wait <seconds>`.
 @MainActor
 enum DebugHooks {
+    /// A context menu about to open: in a script, printed, and closed after a while, as it holds up everything else.
+    static func menuOpening(_ menu: NSMenu) {
+        guard environment["JOINERY_SCRIPT"] != nil else { return }
+        func lines(_ menu: NSMenu, _ indent: String) -> [String] {
+            menu.items.flatMap { item in
+                item.isSeparatorItem ? [indent + "—"]
+                    : [indent + (item.state == .on ? "✓ " : "") + item.title + (item.image == nil ? " [no icon]" : "")] + (item.submenu.map { lines($0, indent + "    ") } ?? [])
+            }
+        }
+        print("context menu:\n" + lines(menu, "  ").joined(separator: "\n"))
+        let seconds = environment["JOINERY_MENU_SECONDS"].flatMap(Double.init) ?? 1
+        menu.perform(#selector(NSMenu.cancelTracking), with: nil, afterDelay: seconds, inModes: [.common])
+    }
+
     private static let environment = ProcessInfo.processInfo.environment
     private static var hasRunScript = false
 
@@ -234,19 +248,9 @@ enum DebugHooks {
                 let onScreen = window.convertPoint(toScreen: inWindow)
                 event.location = CGPoint(x: onScreen.x, y: screenHeight - onScreen.y)
                 if let scroll = NSEvent(cgEvent: event) { NSApp.postEvent(scroll, atStart: false) }
-            case "wheel":
-                if let wheel = canvas.wheel {
-                    print("wheel at \(Int(wheel.center.x)), \(Int(wheel.center.y)) on \(wheel.target)")
-                } else {
-                    print("wheel closed")
-                }
-            case "wheel-pick" where words.count == 2:
-                // Synthesized pointer moves don't reach SwiftUI's hover, so pick by name: east, northWest, …
-                let direction = CommandWheel.Direction.allCases.first { "\($0)" == words[1] }
-                NotificationCenter.default.post(name: .pickFromWheel, object: canvas, userInfo: ["direction": direction as Any])
-            case "wheel-color" where words.count == 2:
-                // One of the wheel's colors, by name.
-                NotificationCenter.default.post(name: .pickFromWheel, object: canvas, userInfo: ["color": TableColor(rawValue: words[1]) as Any])
+            case "menu-pick" where words.count == 2:
+                // A command on the last context menu, by ID: "implicit", "color:red", …
+                NotificationCenter.default.post(name: .pickFromMenu, object: canvas, userInfo: ["id": words[1]])
             case "generate" where numbers.count >= 2:
                 document.wrappedValue = .synthetic(tables: Int(numbers[0]), foreignKeys: Int(numbers[1]),
                                                    groups: numbers.count > 2 ? Int(numbers[2]) : 0)
@@ -672,7 +676,7 @@ extension Notification.Name {
     static let saveFeedback = Notification.Name("JoinerySaveFeedback")
     /// Clicks the empty canvas or a wire at `userInfo["point"]`, in canvas points.
     static let click = Notification.Name("JoineryClick")
-    static let pickFromWheel = Notification.Name("JoineryPickFromWheel")
+    static let pickFromMenu = Notification.Name("JoineryPickFromMenu")
     static let openSettings = Notification.Name("JoineryOpenSettings")
     static let hover = Notification.Name("JoineryHover")
     static let pressAt = Notification.Name("JoineryPressAt")

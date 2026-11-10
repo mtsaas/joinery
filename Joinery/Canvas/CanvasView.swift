@@ -7,7 +7,7 @@ import SwiftUI
 /// Scroll or hold Space and drag to pan; pinch or ⌘-scroll to zoom. Click a wire to select it; double-click to add a
 /// bend point it runs through. Drag from a socket onto another column to add a foreign key, or onto a table to give it
 /// a column for one. With the zip-tie tool (Z) or Option, drag across wires to zip-tie them. Right-drag pans; a
-/// right-click opens the command wheel. Double-click a cell to edit it.
+/// right-click opens a context menu. Double-click a cell to edit it.
 ///
 /// Keyboard: T adds a table, Return edits the selected one, arrows nudge, Delete removes, ⌘A selects everything. While
 /// editing, Tab and Shift-Tab step through cells, Return adds a column, Escape finishes.
@@ -177,15 +177,6 @@ struct CanvasView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .overlay {
-            if let wheel = canvas.wheel {
-                let contents = wheelContents(wheel)
-                CommandWheel(center: wheel.center, slots: contents.slots.filter { isAllowed($0.value) }, extras: contents.extras.filter(isAllowed),
-                             color: contents.color) {
-                    canvas.wheel = nil
-                }
-            }
-        }
         .overlay(alignment: .top) {
             if canvas.showsPalette {
                 // Clicking anywhere else closes it.
@@ -277,10 +268,11 @@ struct CanvasView: View {
         .onChange(of: canvas.selection) {
             if let cell = canvas.cell, !canvas.selection.contains(.table(cell.table)) { leaveGrid() }
         }
-        .onChange(of: canvas.wheelRequest) { _, request in
+        .onChange(of: canvas.menuRequest) { _, request in
             guard let request else { return }
-            canvas.wheelRequest = nil
-            openWheel(at: request)
+            canvas.menuRequest = nil
+            // After this update: the menu's loop holds everything up until it closes, drawing the menu itself too.
+            DispatchQueue.main.async { openMenu(for: request) }
         }
         .onChange(of: canvas.isSpaceHeld) { if !canvas.isSpaceHeld { canvas.panOrigin = nil } }
         .onChange(of: canvas.isStrokeFinished) {
@@ -318,7 +310,7 @@ struct CanvasView: View {
         .onReceive(NotificationCenter.default.publisher(for: .openSettings)) { note in
             if note.object as AnyObject? === canvas { openSettings() }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .pickFromWheel)) { debugPickFromWheel($0) }
+        .onReceive(NotificationCenter.default.publisher(for: .pickFromMenu)) { debugPickFromMenu($0) }
         .onReceive(NotificationCenter.default.publisher(for: .click)) { note in
             if note.object as AnyObject? === canvas, let point = note.userInfo?["point"] as? CGPoint { click(at: point) }
         }
@@ -462,17 +454,17 @@ struct CanvasView: View {
         return commands
     }
 
-    // MARK: Command wheel
+    // MARK: Context menu
 
-    /// Opens the wheel for whatever's under `viewPoint`. Right-clicking something not selected selects it alone, as in
+    /// Opens the context menu for whatever's under the click. Right-clicking something not selected selects it alone, as in
     /// Finder; right-clicking empty canvas keeps the selection, so it can be aligned from anywhere.
-    private func openWheel(at viewPoint: CGPoint) {
+    private func openMenu(for request: CanvasController.MenuRequest) {
         isCanvasFocused = true
-        let point = canvas.canvasPoint(viewPoint)
+        let point = canvas.canvasPoint(request.point)
         let routing = routingCache.routing(for: routedModel, tableOffsets: canvas.tableOffsets, tieOffsets: canvas.tieOffsets,
                                            avoidingTables: wiresAvoidTables)
         let reach = Metrics.wireHitRadius / canvas.zoom
-        let target: CanvasController.Wheel.Target
+        let target: CanvasController.ContextMenu.Target
         let ports = currentPorts
         if let port = model.portSocket(at: point, within: Metrics.socketReach(zoom: canvas.zoom), in: ports)?.port
             ?? model.port(at: point, in: ports) {
@@ -502,21 +494,23 @@ struct CanvasView: View {
         } else {
             target = .canvas
         }
-        // Kept clear of the edges, so every label shows.
-        let size = canvas.viewSize
-        let center = CGPoint(x: min(max(viewPoint.x, 190), max(size.width - 190, 190)),
-                             y: min(max(viewPoint.y, 110), max(size.height - 150, 110)))
-        canvas.wheel = .init(center: center, point: point, target: target)
+        let menu = CanvasController.ContextMenu(point: point, target: target)
+        canvas.contextMenu = menu
+        guard let view = request.event.window?.contentView else { return }
+        let shown = MenuEntry.menu(MenuEntry.filter(menuSections(menu), isAllowed))
+        #if DEBUG
+        DebugHooks.menuOpening(shown)
+        #endif
+        shown.popUp(positioning: nil, at: view.convert(request.event.locationInWindow, from: nil), in: view)
     }
 
     #if DEBUG
-    /// A command or color on the open wheel, picked by a debug script.
-    private func debugPickFromWheel(_ note: Notification) {
-        guard note.object as AnyObject? === canvas, let wheel = canvas.wheel else { return }
-        canvas.wheel = nil
-        if let color = note.userInfo?["color"] as? TableColor { return wheelContents(wheel).color?.set(color) ?? () }
-        guard let direction = note.userInfo?["direction"] as? CommandWheel.Direction else { return }
-        wheelContents(wheel).slots[direction]?.action()
+    /// A command on the last context menu, by ID ("color:red" for a color), picked by a debug script.
+    private func debugPickFromMenu(_ note: Notification) {
+        guard note.object as AnyObject? === canvas, let menu = canvas.contextMenu, let id = note.userInfo?["id"] as? String else { return }
+        let commands = MenuEntry.commands(in: MenuEntry.filter(menuSections(menu), isAllowed))
+        guard let command = commands.first(where: { $0.id == id }) else { return print("no \(id) in", commands.map(\.id)) }
+        command.action()
     }
     #endif
 
@@ -528,147 +522,141 @@ struct CanvasView: View {
         return (Set(loose), groups)
     }
 
-    /// What the wheel offers. With two or more tables or ties selected, aligning, each way pointing where things go:
-    /// left edges to the west, top edges to the north. Otherwise, what suits what was right-clicked.
-    private func wheelContents(_ wheel: CanvasController.Wheel) -> (slots: [CommandWheel.Direction: PaletteCommand],
-                                                                   extras: [PaletteCommand],
-                                                                   color: (current: TableColor, set: (TableColor) -> Void)?) {
+    /// What the context menu offers, in sections. With two or more tables or ties selected, arranging them;
+    /// otherwise, what suits what was right-clicked. What would delete comes last, on its own.
+    private func menuSections(_ menu: CanvasController.ContextMenu) -> [[MenuEntry]] {
         let tables = canvas.selectedTables
-        var slots: [CommandWheel.Direction: PaletteCommand] = [:], extras: [PaletteCommand] = []
-        var color: (current: TableColor, set: (TableColor) -> Void)?
         let deleteSelection = PaletteCommand(id: "delete", title: "Delete", symbol: "trash", shortcut: "⌫", isDestructive: true) {
             canvas.deleteSelection(in: &model)
         }
-        let copyMarkdown = self.copyMarkdown
+        let copyMarkdown = MenuEntry.command(self.copyMarkdown)
         let groupSelection = PaletteCommand(id: "group", title: "Group", symbol: "rectangle.dashed", shortcut: "⌘G") {
             canvas.groupSelection(in: &model)
         }
         let untangle = PaletteCommand(id: "untangle", title: "Untangle", symbol: "point.3.filled.connected.trianglepath.dotted") {
             canvas.untangleSelection(of: $model)
         }
+        func colors(_ current: TableColor?, _ set: @escaping (TableColor) -> Void) -> MenuEntry {
+            .submenu("Color", symbol: "paintpalette", [TableColor.allCases.map { MenuEntry.color($0, current: current, set: set) }])
+        }
         if let (aligned, ties) = canvas.alignable {
-            let directions: [DataModel.Alignment: CommandWheel.Direction] = [.left: .west, .right: .east, .top: .north,
-                                                                           .bottom: .south, .center: .northWest, .middle: .southWest]
-            for (alignment, direction) in directions {
-                slots[direction] = PaletteCommand(id: alignment.title, title: alignment.title, symbol: alignment.symbol) {
-                    model.align(aligned, ties: ties, alignment)
+            func align(_ alignments: [DataModel.Alignment]) -> [MenuEntry] {
+                alignments.map { alignment in
+                    .command(PaletteCommand(id: alignment.title, title: alignment.title, symbol: alignment.symbol) {
+                        model.align(aligned, ties: ties, alignment)
+                    })
                 }
             }
+            var arrange: [MenuEntry] = [.submenu("Align", symbol: "align.horizontal.left", [align([.left, .center, .right]), align([.top, .middle, .bottom])])]
             if tables.count >= 3 {
-                slots[.northEast] = PaletteCommand(id: "distribute-h", title: "Distribute Horizontally",
-                                                   symbol: "distribute.horizontal.center") { model.distribute(tables, horizontally: true) }
-                slots[.southEast] = PaletteCommand(id: "distribute-v", title: "Distribute Vertically",
-                                                   symbol: "distribute.vertical.center") { model.distribute(tables, horizontally: false) }
+                arrange.append(.submenu("Distribute", symbol: "distribute.horizontal.center", [[
+                    .command(PaletteCommand(id: "distribute-h", title: "Horizontally", symbol: "distribute.horizontal.center") {
+                        model.distribute(tables, horizontally: true)
+                    }),
+                    .command(PaletteCommand(id: "distribute-v", title: "Vertically", symbol: "distribute.vertical.center") {
+                        model.distribute(tables, horizontally: false)
+                    }),
+                ]]))
             }
-            extras = [groupSelection, untangle, copyMarkdown, deleteSelection]
             // The selection's color, all at once.
             let (loose, groups) = colorTargets
-            if let current = model.groups.first(where: { groups.contains($0.id) })?.color ?? model.tables.first(where: { loose.contains($0.id) })?.color {
-                color = (current, { color in model.recolor(tables: loose, groups: groups, color) })
-            }
-            return (slots, extras, color)
+            let current = model.groups.first(where: { groups.contains($0.id) })?.color ?? model.tables.first(where: { loose.contains($0.id) })?.color
+            return [arrange, [.command(groupSelection), .command(untangle), colors(current) { model.recolor(tables: loose, groups: groups, $0) }],
+                    [copyMarkdown], [.command(deleteSelection)]]
         }
-        switch wheel.target {
+        switch menu.target {
         case .table(let id):
-            guard let table = model.table(id) else { break }
-            slots[.north] = PaletteCommand(id: "rename", title: "Rename", symbol: "pencil", shortcut: "⏎") { canvas.edit(.name(of: id)) }
-            slots[.east] = PaletteCommand(id: "add-column", title: "Add Column", symbol: "plus") {
-                addColumn(to: id, after: table.columns.last?.id)
-            }
-            slots[.south] = PaletteCommand(id: "delete", title: "Delete Table", symbol: "trash", isDestructive: true) {
-                model.removeTable(id)
-            }
-            color = (table.color, { binding(for: id).wrappedValue.color = $0 })
-            extras = [PaletteCommand(id: "design", title: "Open in Designer", symbol: "tablecells.badge.ellipsis") {
-                withAnimation(.smooth(duration: 0.25)) { canvas.designing = id }
-            }, copyMarkdown]
-            if table.group != nil {
-                slots[.west] = PaletteCommand(id: "ungroup-table", title: "Remove from Group", symbol: "rectangle.dashed.badge.record") {
+            guard let table = model.table(id) else { return [] }
+            let grouping = table.group == nil ? groupSelection
+                : PaletteCommand(id: "ungroup-table", title: "Remove from Group", symbol: "rectangle.dashed.badge.record") {
                     canvas.removeSelectionFromGroups(in: &model)
                 }
-            } else {
-                slots[.west] = groupSelection
-            }
+            return [
+                [.command(PaletteCommand(id: "rename", title: "Rename", symbol: "pencil", shortcut: "⏎") { canvas.edit(.name(of: id)) }),
+                 .command(PaletteCommand(id: "add-column", title: "Add Column", symbol: "plus") { addColumn(to: id, after: table.columns.last?.id) }),
+                 .command(PaletteCommand(id: "design", title: "Open in Designer", symbol: "tablecells.badge.ellipsis") {
+                     withAnimation(.smooth(duration: 0.25)) { canvas.designing = id }
+                 })],
+                [.command(grouping), colors(table.color) { binding(for: id).wrappedValue.color = $0 }],
+                [copyMarkdown],
+                [.command(PaletteCommand(id: "delete", title: "Delete Table", symbol: "trash", isDestructive: true) { model.removeTable(id) })],
+            ]
         case .group(let id):
-            guard let group = model.groups.first(where: { $0.id == id }) else { break }
-            slots[.north] = PaletteCommand(id: "rename-group", title: "Rename", symbol: "pencil") { canvas.renamingGroup = id }
-            slots[.south] = PaletteCommand(id: "ungroup", title: "Ungroup", symbol: "rectangle.dashed", shortcut: "⇧⌘G") {
-                canvas.ungroupSelection(in: &model)
-            }
-            extras = [untangle] + portCommands(for: [id]) + [copyMarkdown, deleteSelection]
-            color = (group.color, { color in
-                if let index = model.groups.firstIndex(where: { $0.id == id }) { model.groups[index].color = color }
-            })
+            guard let group = model.groups.first(where: { $0.id == id }) else { return [] }
+            return [
+                [.command(PaletteCommand(id: "rename-group", title: "Rename", symbol: "pencil") { canvas.renamingGroup = id }),
+                 .command(PaletteCommand(id: "ungroup", title: "Ungroup", symbol: "rectangle.dashed", shortcut: "⇧⌘G") { canvas.ungroupSelection(in: &model) })],
+                [.command(untangle)] + portCommands(for: [id]).map(MenuEntry.command) + [colors(group.color) { color in
+                    if let index = model.groups.firstIndex(where: { $0.id == id }) { model.groups[index].color = color }
+                }],
+                [copyMarkdown],
+                [.command(deleteSelection)],
+            ]
         case .column(let id, let tableID):
-            guard let table = model.table(tableID), let column = table.columns.first(where: { $0.id == id }) else { break }
-            func toggle(_ title: String, _ symbol: String, _ isOn: Bool, _ change: @escaping (inout Column) -> Void) -> PaletteCommand {
-                PaletteCommand(id: title, title: title, subtitle: isOn ? "On" : "Off", symbol: symbol) { updateColumn(id, in: tableID, change) }
+            guard let table = model.table(tableID), let column = table.columns.first(where: { $0.id == id }) else { return [] }
+            func toggle(_ title: String, _ symbol: String, _ isOn: Bool, _ change: @escaping (inout Column) -> Void) -> MenuEntry {
+                .command(PaletteCommand(id: title, title: title, subtitle: isOn ? "On" : "Off", symbol: symbol, isOn: isOn) {
+                    updateColumn(id, in: tableID, change)
+                })
             }
             func edit(_ part: Metrics.GridColumn) {
                 canvas.cell = CanvasController.Cell(table: tableID, row: .column(id), part: part)
                 begin(canvas.cell!, replacingWith: nil, selectingAll: true)
             }
-            slots[.west] = toggle("Primary Key", "key", column.isPrimaryKey) { $0.isPrimaryKey.toggle() }
-            slots[.north] = toggle("Required", "asterisk", !column.isNullable) { $0.isNullable.toggle() }
-            slots[.east] = toggle("Unique", "1.circle", column.isUnique) { $0.isUnique.toggle() }
-            slots[.northWest] = PaletteCommand(id: "rename-column", title: "Rename Column", symbol: "pencil") { edit(.name) }
-            slots[.northEast] = PaletteCommand(id: "edit-type", title: "Change Type", symbol: "textformat") { edit(.type) }
-            slots[.southEast] = PaletteCommand(id: "insert-column", title: "Insert Column Below", symbol: "plus") {
-                addColumn(to: tableID, after: id)
-            }
-            slots[.south] = PaletteCommand(id: "delete-column", title: "Delete Column", symbol: "trash", isDestructive: true) {
-                deleteColumn(at: CanvasController.Cell(table: tableID, row: .column(id), part: .name))
-            }
-            color = (table.color, { binding(for: tableID).wrappedValue.color = $0 })
+            return [
+                [.command(PaletteCommand(id: "rename-column", title: "Rename Column", symbol: "pencil") { edit(.name) }),
+                 .command(PaletteCommand(id: "edit-type", title: "Change Type", symbol: "textformat") { edit(.type) }),
+                 .command(PaletteCommand(id: "insert-column", title: "Insert Column Below", symbol: "plus") { addColumn(to: tableID, after: id) })],
+                [toggle("Primary Key", "key", column.isPrimaryKey) { $0.isPrimaryKey.toggle() },
+                 toggle("Required", "asterisk", !column.isNullable) { $0.isNullable.toggle() },
+                 toggle("Unique", "1.circle", column.isUnique) { $0.isUnique.toggle() }],
+                [colors(table.color) { binding(for: tableID).wrappedValue.color = $0 }],
+                [.command(PaletteCommand(id: "delete-column", title: "Delete Column", symbol: "trash", isDestructive: true) {
+                    deleteColumn(at: CanvasController.Cell(table: tableID, row: .column(id), part: .name))
+                })],
+            ]
         case .tie(let id):
-            guard let tie = model.zipTies.first(where: { $0.id == id }) else { break }
+            guard let tie = model.zipTies.first(where: { $0.id == id }) else { return [] }
             if tie.relationships.count == 1 {
-                slots[.north] = PaletteCommand(id: "remove-bend", title: "Remove Bend Point",
-                                               symbol: "point.topleft.down.to.point.bottomright.curvepath") { model.removeZipTie(id) }
-                slots[.south] = deleteCable(tie.relationships[0])
-            } else {
-                slots[.south] = PaletteCommand(id: "cut", title: "Cut Zip Tie", symbol: "scissors", isDestructive: true) {
-                    model.removeZipTie(id)
-                }
-                if tie.heldDirection != nil {
-                    slots[.north] = PaletteCommand(id: "turn", title: "Turn with Wires", symbol: "arrow.triangle.2.circlepath") { release(id) }
-                }
+                return [[.command(PaletteCommand(id: "remove-bend", title: "Remove Bend Point",
+                                                 symbol: "point.topleft.down.to.point.bottomright.curvepath") { model.removeZipTie(id) })],
+                        [.command(deleteCable(tie.relationships[0]))]]
             }
+            let turn = tie.heldDirection == nil ? [] : [MenuEntry.command(PaletteCommand(id: "turn", title: "Turn with Wires",
+                                                                                          symbol: "arrow.triangle.2.circlepath") { release(id) })]
+            return [turn, [.command(PaletteCommand(id: "cut", title: "Cut Zip Tie", symbol: "scissors", isDestructive: true) { model.removeZipTie(id) })]]
         case .port(let id):
-            slots[.south] = PaletteCommand(id: "delete-port", title: "Delete Port", symbol: "trash", shortcut: "⌫", isDestructive: true) {
+            return [[.command(PaletteCommand(id: "delete-port", title: "Delete Port", symbol: "trash", shortcut: "⌫", isDestructive: true) {
                 model.removePort(id)
-            }
+            })]]
         case .wire(let hit):
-            slots[.north] = PaletteCommand(id: "bend", title: "Add Bend Point", symbol: "point.topleft.down.to.point.bottomright.curvepath") {
-                if let bend = model.addBendPoint(on: hit.relationship, at: hit.point, direction: hit.tangent, segment: hit.segment) {
-                    canvas.selection = [.zipTie(bend)]
-                }
-            }
-            slots[.south] = deleteCable(hit.relationship)
             let isImplicit = model.relationships.first { $0.id == hit.relationship }?.isImplicit ?? false
-            slots[.east] = PaletteCommand(id: "implicit", title: isImplicit ? "Make Foreign Key" : "Make Implicit",
-                                          subtitle: isImplicit ? "enforced by the database" : "not a foreign key in the database",
-                                          symbol: isImplicit ? "link" : "line.diagonal") {
-                model.setImplicit(!isImplicit, hit.relationship)
-            }
+            return [
+                [.command(PaletteCommand(id: "bend", title: "Add Bend Point", symbol: "point.topleft.down.to.point.bottomright.curvepath") {
+                    if let bend = model.addBendPoint(on: hit.relationship, at: hit.point, direction: hit.tangent, segment: hit.segment) {
+                        canvas.selection = [.zipTie(bend)]
+                    }
+                 })],
+                [.command(PaletteCommand(id: "implicit", title: isImplicit ? "Make Foreign Key" : "Make Implicit",
+                                         subtitle: isImplicit ? "enforced by the database" : "not a foreign key in the database",
+                                         symbol: isImplicit ? "link" : "line.diagonal") { model.setImplicit(!isImplicit, hit.relationship) })],
+                [.command(deleteCable(hit.relationship))],
+            ]
         case .canvas:
-            slots[.north] = PaletteCommand(id: "new-table", title: "New Table", symbol: "plus.rectangle", shortcut: "T") {
-                canvas.addTable(to: &model, at: wheel.point)
-            }
-            slots[.east] = PaletteCommand(id: "fit", title: "Zoom to Fit", symbol: "arrow.up.left.and.arrow.down.right") {
-                canvas.zoomToFit(model.bounds)
-            }
-            slots[.west] = PaletteCommand(id: "select-all", title: "Select All", symbol: "checkmark.rectangle.stack") {
-                canvas.selection = Set(model.tables.map { .table($0.id) } + model.zipTies.map { .zipTie($0.id) })
-            }
-            slots[.south] = PaletteCommand(id: "palette", title: "All Commands", symbol: "command", shortcut: "⌘K") {
-                canvas.togglePalette()
-            }
-            slots[.northEast] = PaletteCommand(id: "avoid", title: "Wires Avoid Tables", subtitle: wiresAvoidTables ? "On" : "Off",
-                                               symbol: "point.topleft.down.to.point.bottomright.curvepath") { wiresAvoidTables.toggle() }
-            extras = canvas.selection.isEmpty ? [copyMarkdown] : [copyMarkdown, deleteSelection]
+            return [
+                [.command(PaletteCommand(id: "new-table", title: "New Table", symbol: "plus.rectangle", shortcut: "T") {
+                    canvas.addTable(to: &model, at: menu.point)
+                })],
+                [.command(PaletteCommand(id: "select-all", title: "Select All", symbol: "checkmark.rectangle.stack") {
+                    canvas.selection = Set(model.tables.map { .table($0.id) } + model.zipTies.map { .zipTie($0.id) })
+                 }),
+                 .command(PaletteCommand(id: "fit", title: "Zoom to Fit", symbol: "arrow.up.left.and.arrow.down.right") { canvas.zoomToFit(model.bounds) }),
+                 .command(PaletteCommand(id: "avoid", title: "Wires Avoid Tables", subtitle: wiresAvoidTables ? "On" : "Off",
+                                         symbol: "point.topleft.down.to.point.bottomright.curvepath", isOn: wiresAvoidTables) { wiresAvoidTables.toggle() })],
+                [copyMarkdown, .command(PaletteCommand(id: "palette", title: "All Commands…", symbol: "command", shortcut: "⌘K") { canvas.togglePalette() })],
+                canvas.selection.isEmpty ? [] : [.command(deleteSelection)],
+            ]
         }
-        return (slots, extras, color)
     }
 
     /// Whether keys are for the canvas itself rather than a cell being edited, a group being named or the palette's search.
@@ -1744,11 +1732,12 @@ struct CanvasView: View {
         canvas.cell = cell(at: point, in: table)
     }
 
-    /// Double-clicking a cell edits it with its text selected; on a key cell, it toggles the primary key.
+    /// Double-clicking a table's header opens it in the designer; a cell, edits it with its text selected, or on a key
+    /// cell, toggles the primary key. (Return, or typing, on the header renames the table.)
     private func doubleClickCell(at point: CGPoint, in table: Table) {
         let target = cell(at: point, in: table)
-        // On its header, its name edited in place; Tab goes on to its columns. The designer is a right-click away.
-        guard target.part != .key || target.row == .header else { return togglePrimaryKey(target) }
+        if target.row == .header { return withAnimation(.smooth(duration: 0.25)) { canvas.designing = table.id } }
+        guard target.part != .key else { return togglePrimaryKey(target) }
         begin(target, replacingWith: nil, selectingAll: true)
     }
 

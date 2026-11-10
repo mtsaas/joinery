@@ -10,6 +10,8 @@ struct PaletteCommand: Identifiable {
     var isDestructive = false
     /// The symbol's color, if it shows one, as a color to choose does.
     var tint: Color?
+    /// A setting's state, shown as a checkmark in a menu.
+    var isOn: Bool?
     let action: () -> Void
 
     /// How well `query` matches `text` as letters in order, higher being better: consecutive letters and letters
