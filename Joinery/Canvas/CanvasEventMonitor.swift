@@ -4,7 +4,7 @@ import SwiftUI
 /// Input SwiftUI has no gesture or key handler for, watched in the window over the canvas's frame:
 /// - Two-finger scrolling or the mouse wheel pans; pinching or ⌘-scrolling zooms, around the pointer.
 /// - Holding Space turns dragging anywhere into panning.
-/// - Right-dragging pans; a right-click without dragging opens the command wheel there instead of a context menu.
+/// - Right-dragging pans; a right-click without dragging opens the context menu for what's there.
 ///   Escape closes it.
 /// - In the command palette, the arrow keys move through the matches and Escape closes it.
 /// - On a table's grid, the spreadsheet keys: arrows, Tab and Return move the cursor; typing, F2, Delete and Space
@@ -55,7 +55,8 @@ struct CanvasEventMonitor: NSViewRepresentable {
         }
 
         /// What a key does on the grid, or nil to let it through.
-        private func cellCommand(for event: NSEvent, isEditing: Bool) -> CanvasController.CellCommand? {
+        /// On a table's header, not being edited, delete passes by, to delete the table.
+        private func cellCommand(for event: NSEvent, isEditing: Bool, onHeader: Bool) -> CanvasController.CellCommand? {
             let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
             let shift = modifiers == .shift
             switch event.keyCode {
@@ -75,7 +76,7 @@ struct CanvasEventMonitor: NSViewRepresentable {
             case Key.delete where modifiers == .command:
                 return .deleteColumn
             case Key.delete, Key.forwardDelete:
-                return isEditing ? nil : .clear
+                return isEditing || onHeader ? nil : .clear
             case Key.f2:
                 return isEditing ? nil : .edit(replacingWith: nil)
             case Key.space where !isEditing && modifiers.isEmpty:
@@ -105,8 +106,6 @@ struct CanvasEventMonitor: NSViewRepresentable {
             guard let canvas, let window, event.window === window else { return false }
             let isTyping = window.firstResponder is NSTextView
             switch event.type {
-            case .keyDown where canvas.wheel != nil && event.keyCode == Key.escape:
-                canvas.wheel = nil
             case .keyDown where canvas.designing != nil:
                 // The table designer's keys, even while typing in it: what's typed applies as it closes.
                 let modifiers = event.modifierFlags.intersection([.command, .shift, .option, .control])
@@ -135,7 +134,7 @@ struct CanvasEventMonitor: NSViewRepresentable {
                     canvas.draft += text
                     return true
                 }
-                guard let command = cellCommand(for: event, isEditing: canvas.isEditingCell) else { return false }
+                guard let command = cellCommand(for: event, isEditing: canvas.isEditingCell, onHeader: canvas.cell?.row == .header) else { return false }
                 canvas.cellCommand = command
             case .keyDown, .keyUp:
                 guard !isTyping, event.keyCode == Key.space,
@@ -152,7 +151,6 @@ struct CanvasEventMonitor: NSViewRepresentable {
                     rightClick = nil
                     return false
                 }
-                canvas.wheel = nil
                 rightClick = event
             case .rightMouseDragged:
                 guard let down = rightClick else { return false }
@@ -174,7 +172,7 @@ struct CanvasEventMonitor: NSViewRepresentable {
                     panLocation = nil
                     NSCursor.pop()
                 } else {
-                    canvas.wheelRequest = convert(down.locationInWindow, from: nil)
+                    canvas.menuRequest = .init(point: convert(down.locationInWindow, from: nil), event: down)
                 }
             case .magnify, .scrollWheel:
                 let location = convert(event.locationInWindow, from: nil)

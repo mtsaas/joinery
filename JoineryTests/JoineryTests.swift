@@ -364,14 +364,6 @@ struct JoineryTests {
         #expect(after(cell(.column(id), .key), .previous) == header)
     }
 
-    @Test func commandWheelPicksByDirection() {
-        #expect(CommandWheel.direction(of: CGPoint(x: 5, y: 3)) == nil, "the middle picks nothing")
-        #expect(CommandWheel.direction(of: CGPoint(x: -80, y: 10)) == .west)
-        #expect(CommandWheel.direction(of: CGPoint(x: 0, y: -30)) == .north, "y runs down")
-        #expect(CommandWheel.direction(of: CGPoint(x: 40, y: 38)) == .southEast)
-        #expect(CommandWheel.direction(of: CGPoint(x: 50, y: -1)) == .east)
-        #expect(CommandWheel.direction(of: CGPoint(x: -50, y: -1)) == .west, "either side of ±180°")
-    }
 
     @Test func assistantToolsBuildASchemaInOneCall() throws {
         var model = DataModel()
@@ -1266,6 +1258,16 @@ struct JoineryTests {
         let steps = ["PR 482", "start_review", "create_tables", "arrange", "save_version", "alter_table", "compare", "list_versions"]
         let positions = steps.map { text.range(of: $0)?.lowerBound }
         #expect(!positions.contains(nil) && positions.compactMap { $0 } == positions.compactMap { $0 }.sorted())
+    }
+
+    @Test func aContextMenuLeavesOutWhatsNotAllowed() {
+        func command(_ id: String) -> MenuEntry { .command(PaletteCommand(id: id, title: id, symbol: "circle") {}) }
+        let sections: [[MenuEntry]] = [[command("rename"), .submenu("More", symbol: "circle", [[command("delete")]])], [command("delete")], [command("fit")]]
+        let kept = MenuEntry.filter(sections) { $0.id != "delete" }
+        // The submenu and the section left empty go too.
+        #expect(kept.map { $0.count } == [1, 1])
+        #expect(MenuEntry.commands(in: kept).map(\.id) == ["rename", "fit"])
+        #expect(MenuEntry.commands(in: sections).map(\.id) == ["rename", "delete", "delete", "fit"])
     }
 
     @Test func aReviewReportsItsChangesInWords() throws {

@@ -243,7 +243,7 @@ final class CanvasController {
     var selection: Set<Item> = []
     /// Showing something only its layout can change in, such as versions compared: tables move, resize, are grouped and
     /// have their columns reordered, and wires are tied, but no cell is edited, the designer only shows tables, and the
-    /// palette and wheel leave out what would change the schema. (Other edits are dropped by whatever keeps the layout.)
+    /// palette and context menu leave out what would change the schema. (Other edits are dropped by whatever keeps the layout.)
     var isLayoutOnly = false {
         didSet {
             guard isLayoutOnly else { return }
@@ -271,21 +271,23 @@ final class CanvasController {
     #endif
     var showsPalette = false
 
-    /// The right-click command wheel, while it's open.
-    struct Wheel {
+    /// What was last right-clicked, and where, in canvas points: what the context menu is for.
+    struct ContextMenu {
         enum Target {
             case canvas, table(Table.ID), column(Column.ID, in: Table.ID), tie(ZipTie.ID), wire(WireSimulation.Hit), group(TableGroup.ID), port(GroupPort.ID)
         }
-        /// In view points.
-        var center: CGPoint
-        /// What was right-clicked, and where, in canvas points.
         var point: CGPoint
         var target: Target
     }
 
-    var wheel: Wheel?
-    /// A right-click to open the wheel for, in view points; the view works out what's under it.
-    var wheelRequest: CGPoint?
+    var contextMenu: ContextMenu?
+    /// A right-click to open the context menu for: where, in view points (the view works out what's under it), and
+    /// the click, to open the menu at.
+    struct MenuRequest: Equatable {
+        var point: CGPoint
+        var event: NSEvent
+    }
+    var menuRequest: MenuRequest?
     /// Which of the palette's matches is highlighted.
     var paletteHighlight = 0
 
