@@ -1210,7 +1210,8 @@ struct JoineryTests {
         #expect((initialized["instructions"] as? String)?.contains("save_version") == true)
         let tools = try #require(try await result("tools/list")["tools"] as? [[String: Any]])
         let names = tools.compactMap { $0["name"] as? String }
-        #expect(Set(VersionTools.names).isSubset(of: names))
+        #expect(Set(VersionTools.names).union(["list_branches", "create_branch", "checkout_branch"]).isSubset(of: names))
+        #expect((initialized["instructions"] as? String)?.contains("create_branch") == true)
         #expect(!names.contains("mark_baseline") && !names.contains("get_changes"))
         #expect((tools.first { $0["name"] as? String == "start_review" }?["description"] as? String)?.contains("save_version") == true)
         let prompts = try #require(try await result("prompts/list")["prompts"] as? [[String: Any]])

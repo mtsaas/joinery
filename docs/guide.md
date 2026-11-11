@@ -91,6 +91,7 @@ Other assistants can use the same URL. Those that only run local commands can br
 | `list_models`, `open_model`, `new_model` | Choose what to work on |
 | `start_review` | Starts reviewing a schema change: see below |
 | `save_version`, `list_versions`, `compare`, `restore_version`, `delete_version` | Named versions, such as `main` and `draft 1`, and what changed between any two: see below |
+| `list_branches`, `create_branch`, `checkout_branch` | Branches, as in git: start one to try a design, switch between them. The editing tools change the branch checked out |
 | `get_model` | Every table, column, type, key and foreign key, and where everything is: each table's and schema's frame, and the bounds of it all |
 | `create_tables` | Adds tables. A column's `references` (`"users"` or `"users.id"`) makes it a foreign key, so a whole data model can be made in one call. They're placed in open space, clear of every table and schema: a schema's new tables as a compact block beside the rest of it, otherwise beside the tables they reference, otherwise beside everything |
 | `set_sample_data` | Fills a table's sample data (the spreadsheet in its designer) with rows of column name to value, replacing or appending. `create_tables` takes `sample_rows` and `notes` too, `alter_table` takes `notes`, and `get_model` returns both |
