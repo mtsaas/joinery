@@ -23,9 +23,11 @@ struct History {
 
     let folder: URL
 
-    /// The history kept in the `.joinery` package at `url`.
-    init(of url: URL) {
-        folder = url.appending(path: "Versions", directoryHint: .isDirectory)
+    /// The history of `branch` kept in the `.joinery` package at `url`: `main`'s in `Versions`, others' in
+    /// `Branches/<name>`.
+    init(of url: URL, branch: String = Branches.main) {
+        folder = branch == Branches.main ? url.appending(path: "Versions", directoryHint: .isDirectory)
+            : url.appending(path: "Branches", directoryHint: .isDirectory).appending(path: branch, directoryHint: .isDirectory)
     }
 
     /// Newest first.
@@ -91,4 +93,36 @@ struct History {
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss.SSS"
         return formatter
     }()
+}
+
+/// A model's branches, as in git: lines of versions going their own ways from a version on another. The model as it is
+/// belongs to the one checked out, `head`, and versions are saved on it. `main` is every model's first. Kept in the
+/// package as `branches.json`; with none there, there's only `main`.
+struct Branches: Codable, Equatable {
+    struct Branch: Codable, Equatable {
+        var name: String
+        /// The branch it was started from, and when the version it was started from was saved there.
+        var parent: String
+        var forked: Date
+    }
+
+    static let main = "main"
+    static let fileName = "branches.json"
+
+    var head = main
+    /// Oldest first; `main` isn't one.
+    var others: [Branch] = []
+
+    var names: [String] { [Self.main] + others.map(\.name) }
+
+    /// The branch called `name`, ignoring case, as it's spelled.
+    func named(_ name: String) -> String? {
+        let wanted = Self.clean(name).lowercased()
+        return names.first { $0.lowercased() == wanted }
+    }
+
+    /// Trimmed, and with no `/` or `:`, so it can name its folder.
+    static func clean(_ name: String) -> String {
+        name.trimmingCharacters(in: .whitespacesAndNewlines).replacing("/", with: "-").replacing(":", with: "-")
+    }
 }

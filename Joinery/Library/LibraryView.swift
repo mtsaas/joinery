@@ -564,10 +564,10 @@ struct ModelEditor: View {
                         ControlGroupGlass {
                             ZoomMenu(canvas: canvas, bounds: open.model.bounds)
                             Toggle("Version History", systemImage: "clock.arrow.circlepath", isOn: $showsHistory)
-                                .help("Earlier versions of this data model: step through them with the arrow keys, and restore one")
+                                .help("Earlier versions of this data model and its branches: step through them with the arrow keys, restore one, or start a branch")
                                 .popover(isPresented: $showsHistory, arrowEdge: .bottom) {
                                     VersionHistory(open: open, preview: $preview)
-                                        .frame(width: 340, height: 520)
+                                        .frame(width: 380, height: 560)
                                 }
                         }
                         ModelTitle(name: open.name) { Library.shared.rename(open.url, to: $0) }
