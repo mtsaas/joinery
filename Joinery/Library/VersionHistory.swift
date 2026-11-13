@@ -64,6 +64,13 @@ struct VersionHistory: View {
                         .listRowInsets(EdgeInsets(top: 0, leading: 8, bottom: 0, trailing: 8))
                         .listRowSeparator(.hidden)
                         .tag(graph.rows[index].version.map(Item.version) ?? .now)
+                        .contextMenu {
+                            let branch = graph.rows[index].branch
+                            if branch != Branches.main {
+                                Button("Delete Branch “\(branch)”…", role: .destructive) { deleting = branch }
+                                    .disabled(branch == open.branches.head)
+                            }
+                        }
                 }
             }
         }
@@ -119,12 +126,6 @@ struct VersionHistory: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .keyboardShortcut(.defaultAction)
-                        if row.branch != Branches.main {
-                            Button(role: .destructive) { deleting = row.branch } label: {
-                                Text("Delete “\(row.branch)”…").foregroundStyle(.red).frame(maxWidth: .infinity)
-                            }
-                            .controlSize(.large)
-                        }
                     } else {
                         Button { restore(version) } label: {
                             Text("Restore This Version").frame(maxWidth: .infinity)
