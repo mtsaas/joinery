@@ -29,6 +29,8 @@ struct VersionHistory: View {
     @State private var selection: Item? = .now
     /// Naming a branch to start from the selection.
     @State private var newBranch: String?
+    /// A branch to delete, once confirmed.
+    @State private var deleting: String?
     @FocusState private var isFocused: Bool
 
     private var versions: [History.Version] { graph.rows.compactMap(\.version) }
@@ -117,6 +119,12 @@ struct VersionHistory: View {
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         .keyboardShortcut(.defaultAction)
+                        if row.branch != Branches.main {
+                            Button(role: .destructive) { deleting = row.branch } label: {
+                                Text("Delete “\(row.branch)”…").foregroundStyle(.red).frame(maxWidth: .infinity)
+                            }
+                            .controlSize(.large)
+                        }
                     } else {
                         Button { restore(version) } label: {
                             Text("Restore This Version").frame(maxWidth: .infinity)
@@ -134,6 +142,23 @@ struct VersionHistory: View {
         }
         .padding(12)
         .background(.bar)
+        .confirmationDialog("Delete “\(deleting ?? "")” and its versions?", isPresented: Binding { deleting != nil } set: { if !$0 { deleting = nil } }) {
+            Button("Delete Branch", role: .destructive) { deleteBranch() }
+        } message: {
+            Text("This can't be undone.")
+        }
+    }
+
+    private func deleteBranch() {
+        guard let branch = deleting else { return }
+        deleting = nil
+        do {
+            try open.deleteBranch(branch)
+            preview = nil
+            selection = .now
+        } catch {
+            Library.shared.failure = "Couldn't delete “\(branch)”: \(error.localizedDescription)"
+        }
     }
 
     private static let rowHeight: CGFloat = 40

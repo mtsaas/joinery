@@ -151,6 +151,14 @@ final class MCPServer: @MainActor MCPHost {
             let left = open.branches.head
             try open.checkOut(name)
             return "Checked out \(name), with its \(open.model.tables.count) tables as they were left there. \(left) is kept as it was."
+        case "delete_branch":
+            let open = try target(arguments["model"] as? String)
+            do {
+                try open.deleteBranch(arguments["name"] as? String ?? "")
+            } catch {
+                throw ModelTools.Failure(error.localizedDescription + " " + branchNames(open))
+            }
+            return "Deleted \(Branches.clean(arguments["name"] as? String ?? "")) and its versions. " + branchNames(open)
         case "start_sharing":
             let open = try target(arguments["model"] as? String)
             if open.session != nil, !(open.session is SessionHost) {

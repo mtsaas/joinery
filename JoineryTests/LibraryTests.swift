@@ -258,6 +258,18 @@ struct LibraryTests {
         let line = try #require(graph.lines.first { $0.lane == 1 })
         let fork = graph.rows[line.bottom]
         #expect(line.from == 0 && fork.branch == Branches.main && fork.version?.date == reopened.branches.others[0].forked)
+
+        // Deleting: not main nor the one checked out; one started from it then starts from where it did.
+        try reopened.startBranch("child", from: nil, of: "idea-1")
+        #expect(throws: OpenModel.BranchFailure.self) { try reopened.deleteBranch("child") }
+        #expect(throws: OpenModel.BranchFailure.self) { try reopened.deleteBranch("main") }
+        try reopened.checkOut("main")
+        let folder = reopened.history(of: "idea-1").folder
+        let ideaForked = reopened.branches.others[0].forked
+        try reopened.deleteBranch("IDEA-1")
+        #expect(reopened.branches.names == ["main", "child"])
+        #expect(reopened.branches.others[0].parent == Branches.main && reopened.branches.others[0].forked == ideaForked)
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
     }
 
     @Test func savingAVersionKeepsItForGood() throws {

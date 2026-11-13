@@ -135,6 +135,24 @@ final class OpenModel {
         scheduleSave()
     }
 
+    /// Deletes the branch called `name` and its versions, for good. Branches started from it then start from where it
+    /// did. `main` and the branch checked out can't be.
+    func deleteBranch(_ name: String) throws {
+        guard let name = branches.named(name), let deleted = branches.others.first(where: { $0.name == name }) else {
+            throw BranchFailure(errorDescription: branches.named(name) == Branches.main ? "“main” can't be deleted."
+                : "There's no branch called “\(Branches.clean(name))”.")
+        }
+        guard name != branches.head else { throw BranchFailure(errorDescription: "“\(name)” is checked out: check out another branch first.") }
+        var new = branches
+        new.others.removeAll { $0.name == name }
+        for index in new.others.indices where new.others[index].parent == name {
+            new.others[index].parent = deleted.parent
+            new.others[index].forked = deleted.forked
+        }
+        try setBranches(new)
+        try? FileManager.default.removeItem(at: history(of: name).folder)
+    }
+
     // MARK: Layout while comparing
 
     /// A version that can be laid out while it's shown: the model as it is, a named version, or one kept in the

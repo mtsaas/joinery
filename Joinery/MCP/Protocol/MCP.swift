@@ -135,7 +135,7 @@ enum MCP {
 
                     A data model can also have branches, as in git: separate lines of work, each with its own \
                     version history, starting with "main". create_branch starts one and checks it out, checkout_branch \
-                    switches, list_branches says what there is. The editing tools always change the branch checked \
+                    switches, list_branches says what there is, delete_branch deletes one. The editing tools always change the branch checked \
                     out. Branches aren't merged. To see how two branches differ: on one, save_version (named for it), \
                     checkout_branch the other, then compare that version with current.
 
@@ -285,6 +285,14 @@ enum MCP {
                 Switches to another branch, as git checkout does: the model as it is is kept on the branch it's on, \
                 and becomes as the other branch was left. Can't be undone in Joinery; check the first branch out again \
                 to go back. Named versions belong to the data model, not a branch, so they stay.
+                """,
+            "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]],
+        ],
+        [
+            "name": "delete_branch",
+            "description": """
+                Deletes a branch and its version history, for good: it can't be undone. Not "main", nor the branch \
+                checked out (checkout_branch another first). Branches started from it then start from where it did.
                 """,
             "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]],
         ],
