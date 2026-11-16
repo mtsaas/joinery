@@ -133,6 +133,12 @@ enum MCP {
                     the change is updated later, save_version the state reviewed so far ("draft 1"), apply what's new, \
                     and compare any pair. The review_schema_changes prompt has the steps in full.
 
+                    A data model can also have branches, as in git: separate lines of work, each with its own \
+                    version history, starting with "main". create_branch starts one and checks it out, checkout_branch \
+                    switches, list_branches says what there is, delete_branch deletes one. The editing tools always change the branch checked \
+                    out. Branches aren't merged. To see how two branches differ: on one, save_version (named for it), \
+                    checkout_branch the other, then compare that version with current.
+
                     To let others edit the open data model live, start_sharing: it shares it through a relay and \
                     returns links to send, one to edit and one only to watch.
 
@@ -246,6 +252,49 @@ enum MCP {
                 "properties": ["title": ["type": "string", "description": "What's being reviewed, briefly, such as \"PR 482: refunds\"."]],
                 "required": ["title"],
             ],
+        ],
+        [
+            "name": "list_branches",
+            "description": """
+                The data model's branches, as in git, and which is checked out: separate lines of work, each with its \
+                own version history, such as "main" and "try-uuid-keys". For each: what it was started from, its newest \
+                version, and how it differs from the model as it is now. The editing tools change the branch checked out.
+                """,
+            "inputSchema": ["type": "object", "properties": [String: Any]()],
+            "annotations": ["readOnlyHint": true],
+        ],
+        [
+            "name": "create_branch",
+            "description": """
+                Starts a branch, as git checkout -b does, and checks it out, so the editing tools change it and the \
+                branch it came from stays as it was. Use one to try a design without disturbing the one there is. \
+                Starts from the model as it is now, or from another branch's newest version with from.
+                """,
+            "inputSchema": [
+                "type": "object",
+                "properties": [
+                    "name": ["type": "string", "description": "What to call it, such as \"try-uuid-keys\". Matched ignoring case; / and : become -."],
+                    "from": ["type": "string", "description": "A branch to start from, at its newest version. The model as it is now if left out."],
+                ],
+                "required": ["name"],
+            ],
+        ],
+        [
+            "name": "checkout_branch",
+            "description": """
+                Switches to another branch, as git checkout does: the model as it is is kept on the branch it's on, \
+                and becomes as the other branch was left. Can't be undone in Joinery; check the first branch out again \
+                to go back. Named versions belong to the data model, not a branch, so they stay.
+                """,
+            "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]],
+        ],
+        [
+            "name": "delete_branch",
+            "description": """
+                Deletes a branch and its version history, for good: it can't be undone. Not "main", nor the branch \
+                checked out (checkout_branch another first). Branches started from it then start from where it did.
+                """,
+            "inputSchema": ["type": "object", "properties": ["name": ["type": "string"]], "required": ["name"]],
         ],
         [
             "name": "start_sharing",

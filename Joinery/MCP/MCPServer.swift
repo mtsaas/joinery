@@ -122,6 +122,43 @@ final class MCPServer: @MainActor MCPHost {
             library.newModel(in: try library.reviewsCollection(), named: title.isEmpty ? "Review" : title)
             guard let open = library.open else { throw ModelTools.Failure("Couldn't start a review: \(library.failure ?? "no data model opened").") }
             return "Opened \(open.name), a new, empty data model in Reviews, ID \(library.id(of: open.url)); pass it as model to the other tools. Next, draw the schema as it was before the change with create_tables, arrange it, then save it with save_version, named for the base, such as main."
+        case "list_branches":
+            return branches(of: try target(arguments["model"] as? String))
+        case "create_branch":
+            let open = try target(arguments["model"] as? String)
+            let name = arguments["name"] as? String ?? ""
+            var parent = open.branches.head
+            if let from = arguments["from"] as? String {
+                guard let named = open.branches.named(from) else {
+                    throw ModelTools.Failure("There's no branch called \(Branches.clean(from)). " + branchNames(open))
+                }
+                parent = named
+            }
+            do {
+                // The branch checked out starts from the model as it is; another from its newest version.
+                try open.startBranch(name, from: parent == open.branches.head ? nil : open.history(of: parent).versions.first, of: parent)
+            } catch {
+                throw ModelTools.Failure(error.localizedDescription + " " + branchNames(open))
+            }
+            return "Started \(open.branches.head) from \(parent) and checked it out: the editing tools now change it, and \(parent) stays as it was.\n\n" + branches(of: open)
+        case "checkout_branch":
+            let open = try target(arguments["model"] as? String)
+            let wanted = arguments["name"] as? String ?? ""
+            guard let name = open.branches.named(wanted) else {
+                throw ModelTools.Failure("There's no branch called \(Branches.clean(wanted)). Start one with create_branch. " + branchNames(open))
+            }
+            guard name != open.branches.head else { return "\(name) is checked out already." }
+            let left = open.branches.head
+            try open.checkOut(name)
+            return "Checked out \(name), with its \(open.model.tables.count) tables as they were left there. \(left) is kept as it was."
+        case "delete_branch":
+            let open = try target(arguments["model"] as? String)
+            do {
+                try open.deleteBranch(arguments["name"] as? String ?? "")
+            } catch {
+                throw ModelTools.Failure(error.localizedDescription + " " + branchNames(open))
+            }
+            return "Deleted \(Branches.clean(arguments["name"] as? String ?? "")) and its versions. " + branchNames(open)
         case "start_sharing":
             let open = try target(arguments["model"] as? String)
             if open.session != nil, !(open.session is SessionHost) {
@@ -140,6 +177,29 @@ final class MCPServer: @MainActor MCPHost {
         default:
             throw ModelTools.Failure("There's no tool called \(name).")
         }
+    }
+
+    /// A model's branches, for an assistant: what each started from, its newest version, and how it differs from now.
+    @MainActor private func branches(of open: OpenModel) -> String {
+        var lines = ["Branches, oldest first:"]
+        for name in open.branches.names {
+            var line = "- \(name)"
+            if let branch = open.branches.others.first(where: { $0.name == name }) {
+                line += ": started from \(branch.parent) as it was \(VersionTools.stamp(branch.forked))"
+            }
+            if name == open.branches.head {
+                line += " (checked out: the data model as it is now)"
+            } else if let newest = open.history(of: name).versions.first, let model = try? DataModel(contentsOf: newest.url) {
+                line += (line.contains(":") ? "; " : ": ") + "newest version \(VersionTools.stamp(newest.date)), \(model.tables.count) tables; from current: "
+                    + SchemaDiff(from: open.model, to: model).summary.lowercased()
+            }
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    @MainActor private func branchNames(_ open: OpenModel) -> String {
+        "Branches: " + open.branches.names.joined(separator: ", ") + "; \(open.branches.head) is checked out."
     }
 
     @MainActor func withVersions(model: String?, _ body: (inout VersionState) throws -> String) async throws -> String {

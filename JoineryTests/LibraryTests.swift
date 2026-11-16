@@ -219,6 +219,59 @@ struct LibraryTests {
         #expect(history.versions.contains { $0.isReview })
     }
 
+    @Test func branchesKeepTheirOwnVersionsAndCheckOutTheirNewest() throws {
+        let library = freshLibrary()
+        let examples = try #require(library.collections.first { $0.name == Library.examplesName })
+        library.selection = examples.models.first { Library.name(of: $0) == "Storefront" }
+        let open = try #require(library.open)
+        let original = open.model
+
+        // From now: an idea, edited on its own branch.
+        try open.startBranch(" idea/1 ", from: nil, of: Branches.main)
+        #expect(open.branches.head == "idea-1")
+        #expect(throws: OpenModel.BranchFailure.self) { try open.startBranch("IDEA-1", from: nil, of: Branches.main) }
+        var idea = open.model
+        idea.tables[0].name = "on_the_idea"
+        open.change(to: idea)
+
+        // Back on main it's as it was, and can't be undone into the idea.
+        try open.checkOut("main")
+        #expect(open.model == original)
+        #expect(!open.undoManager.canUndo)
+        try open.checkOut("idea-1")
+        #expect(open.model == idea)
+        #expect(open.history(of: "idea-1").versions.map(\.reason) == ["Before switching to main", "Branched from main"])
+
+        // Kept in the package: opened again, it's still on the idea.
+        let url = open.url
+        open.saveNow()
+        let reopened = try OpenModel(url: url)
+        #expect(reopened.branches.head == "idea-1")
+        #expect(reopened.model == idea)
+
+        // Drawn as a graph: now on the idea's lane, which bends in from main's version it started from.
+        let graph = Graph(branches: reopened.branches, versions: Dictionary(uniqueKeysWithValues: reopened.branches.names.map {
+            ($0, reopened.history(of: $0).versions)
+        }))
+        #expect(graph.lanes == 2)
+        #expect(graph.rows.first.map { [$0.version == nil, $0.isTip, $0.lane == 1] } == [true, true, true])
+        let line = try #require(graph.lines.first { $0.lane == 1 })
+        let fork = graph.rows[line.bottom]
+        #expect(line.from == 0 && fork.branch == Branches.main && fork.version?.date == reopened.branches.others[0].forked)
+
+        // Deleting: not main nor the one checked out; one started from it then starts from where it did.
+        try reopened.startBranch("child", from: nil, of: "idea-1")
+        #expect(throws: OpenModel.BranchFailure.self) { try reopened.deleteBranch("child") }
+        #expect(throws: OpenModel.BranchFailure.self) { try reopened.deleteBranch("main") }
+        try reopened.checkOut("main")
+        let folder = reopened.history(of: "idea-1").folder
+        let ideaForked = reopened.branches.others[0].forked
+        try reopened.deleteBranch("IDEA-1")
+        #expect(reopened.branches.names == ["main", "child"])
+        #expect(reopened.branches.others[0].parent == Branches.main && reopened.branches.others[0].forked == ideaForked)
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+    }
+
     @Test func savingAVersionKeepsItForGood() throws {
         let folder = FileManager.default.temporaryDirectory.appending(path: "JoineryTests-\(UUID().uuidString).joinery", directoryHint: .isDirectory)
         try DataModel().write(to: folder)

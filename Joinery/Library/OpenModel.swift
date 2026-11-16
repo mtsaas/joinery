@@ -19,19 +19,22 @@ final class OpenModel {
     /// comes back to the front.
     @ObservationIgnored let canvas = CanvasController()
     @ObservationIgnored private var pendingSave: Task<Void, Never>?
-    private(set) var history: History
+    /// Versions to go back to, of the branch checked out.
+    var history: History { history(of: branches.head) }
+    func history(of branch: String) -> History { History(of: url, branch: branch) }
     /// When an AI assistant last changed it, to save a version before the first of each spell of changes.
     @ObservationIgnored private var lastAssistantChange: Date?
 
     init(url: URL) throws {
         self.url = url
-        history = History(of: url)
         let model = try DataModel(contentsOf: url)
         self.model = model
         replica = Replica(model)
         // A file from before packages becomes one, to keep versions in.
         if !url.isPackage { try model.write(to: url) }
         named = Self.readNamed(in: url)
+        branches = (try? Data(contentsOf: url.appending(path: Branches.fileName)))
+            .flatMap { try? JSONDecoder().decode(Branches.self, from: $0) } ?? Branches()
         saveVersion("Opened")
     }
 
@@ -77,6 +80,77 @@ final class OpenModel {
         } catch {
             Library.shared.failure = "Couldn't change what's compared: \(error.localizedDescription)"
         }
+    }
+
+    // MARK: Branches
+
+    /// Its branches, and which is checked out.
+    private(set) var branches = Branches()
+
+    struct BranchFailure: LocalizedError {
+        let errorDescription: String?
+    }
+
+    private func setBranches(_ new: Branches) throws {
+        try JSONEncoder().encode(new).write(to: url.appending(path: Branches.fileName), options: .atomic)
+        branches = new
+    }
+
+    /// Starts a branch called `name` from `version`, one of `parent`'s, or from the model as it is with nil, and checks
+    /// it out.
+    func startBranch(_ name: String, from version: History.Version?, of parent: String) throws {
+        let name = Branches.clean(name)
+        guard !name.isEmpty else { throw BranchFailure(errorDescription: "A branch needs a name.") }
+        if let taken = branches.named(name) { throw BranchFailure(errorDescription: "There's already a branch called “\(taken)”.") }
+        var version = version, parent = parent
+        if version == nil {
+            saveVersion("Before branching to \(name)")
+            (version, parent) = (history.versions.first, branches.head)
+        }
+        guard let version else { throw BranchFailure(errorDescription: "There's no version to start it from.") }
+        try history(of: name).save(try DataModel(contentsOf: version.url), reason: "Branched from \(parent)")
+        var new = branches
+        new.others.append(Branches.Branch(name: name, parent: parent, forked: version.date))
+        try setBranches(new)
+        try checkOut(name)
+    }
+
+    /// Switches to the branch called `name`: keeps the model as it is as a version of the branch it's on, then becomes
+    /// that branch's newest version. As in git it can't be undone; checking the other branch out again goes back.
+    func checkOut(_ name: String) throws {
+        guard let name = branches.named(name), name != branches.head else { return }
+        guard let tip = history(of: name).versions.first else { throw BranchFailure(errorDescription: "“\(name)” has no versions.") }
+        let new = try DataModel(contentsOf: tip.url)
+        saveNow()
+        saveVersion("Before switching to \(name)")
+        var switched = branches
+        switched.head = name
+        try setBranches(switched)
+        let next = Replica(new, keeping: replica, was: model)
+        let ops = replica.ops(to: next)
+        _ = replica.apply(ops)
+        model = new
+        onChange?(ops)
+        undoManager.removeAllActions()
+        scheduleSave()
+    }
+
+    /// Deletes the branch called `name` and its versions, for good. Branches started from it then start from where it
+    /// did. `main` and the branch checked out can't be.
+    func deleteBranch(_ name: String) throws {
+        guard let name = branches.named(name), let deleted = branches.others.first(where: { $0.name == name }) else {
+            throw BranchFailure(errorDescription: branches.named(name) == Branches.main ? "“main” can't be deleted."
+                : "There's no branch called “\(Branches.clean(name))”.")
+        }
+        guard name != branches.head else { throw BranchFailure(errorDescription: "“\(name)” is checked out: check out another branch first.") }
+        var new = branches
+        new.others.removeAll { $0.name == name }
+        for index in new.others.indices where new.others[index].parent == name {
+            new.others[index].parent = deleted.parent
+            new.others[index].forked = deleted.forked
+        }
+        try setBranches(new)
+        try? FileManager.default.removeItem(at: history(of: name).folder)
     }
 
     // MARK: Layout while comparing
@@ -137,7 +211,6 @@ final class OpenModel {
     /// It's been renamed or moved, to `url`, and stays open.
     func moved(to url: URL) {
         self.url = url
-        history = History(of: url)
     }
 
     /// Saves the model as it is now as a version, to go back to. Failing to is no reason to stop the change coming.
