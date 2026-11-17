@@ -39,7 +39,7 @@ extension DataModel {
     var compoundForeignKeys: [Table.ID: [[Relationship]]] {
         let owner = columnLocations
         var wires: [Table.ID: [Table.ID: [Relationship]]] = [:], targets: [Table.ID: Table] = [:]
-        for wire in relationships {
+        for wire in relationships where !wire.isImplicit {
             guard let from = owner[wire.from]?.table.id, let target = owner[wire.to]?.table else { continue }
             wires[from, default: [:]][target.id, default: []].append(wire)
             targets[target.id] = target
@@ -331,6 +331,12 @@ extension DataModel {
         if zipTies[index].relationships.isEmpty { zipTies.remove(at: index) }
     }
 
+    /// Makes a relationship implicit, not a foreign key in the database, or a foreign key again.
+    mutating func setImplicit(_ isImplicit: Bool, _ id: Relationship.ID) {
+        guard let index = relationships.firstIndex(where: { $0.id == id }) else { return }
+        relationships[index].isImplicit = isImplicit
+    }
+
     /// Moves a column to before the one at `insertion` in its table, or last if that's past them all.
     mutating func moveColumn(_ id: Column.ID, in table: Table.ID, to insertion: Int) {
         guard let index = tables.firstIndex(where: { $0.id == table }),
@@ -533,10 +539,21 @@ private extension Array where Element: Hashable {
     }
 }
 
+extension [Column] {
+    /// Puts the columns also in `other` in the order they're in there, each in a place one of them had, so columns
+    /// only here (and those only there) don't move anything else.
+    mutating func order(as other: [Column]) {
+        let rank = Dictionary(other.enumerated().map { ($1.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let slots = indices.filter { rank[self[$0].id] != nil }
+        let sorted = slots.map { self[$0] }.sorted { rank[$0.id]! < rank[$1.id]! }
+        for (slot, column) in zip(slots, sorted) { self[slot] = column }
+    }
+}
+
 extension DataModel {
-    /// This model laid out as `other` is: where its tables are and their colors, the zip ties on its wires, and its
-    /// groups' colors and where their ports sit. Only the layout: its tables, columns and foreign keys stay as they
-    /// are. With `only`, just those tables move. Colors count as layout: they're how it looks, not what it is.
+    /// This model laid out as `other` is: where its tables are, their widths, colors and the order of their columns,
+    /// its groups (which tables are in each, their names, colors and ports), and the zip ties on its wires. Only how it
+    /// looks: its tables, columns and foreign keys stay as they are. With `only`, just those tables move.
     func takingLayout(from other: DataModel, only: Set<Table.ID>? = nil) -> DataModel {
         var laid = self
         let tables = Dictionary(other.tables.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
@@ -544,10 +561,18 @@ extension DataModel {
             guard let table = tables[laid.tables[index].id] else { continue }
             laid.tables[index].position = table.position
             laid.tables[index].color = table.color
+            laid.tables[index].width = table.width
+            laid.tables[index].group = table.group
+            laid.tables[index].columns.order(as: table.columns)
         }
+        if only == nil { laid.groups = other.groups }
+        // A group that isn't here, as those of tables in another version, is left out, and one with no tables here.
+        let groups = Set(laid.groups.map(\.id))
+        for index in laid.tables.indices where laid.tables[index].group.map({ !groups.contains($0) }) ?? false {
+            laid.tables[index].group = nil
+        }
+        laid.removeEmptyGroups()
         guard only == nil else { return laid }
-        let colors = Dictionary(other.groups.map { ($0.id, $0.color) }, uniquingKeysWith: { first, _ in first })
-        for index in laid.groups.indices { laid.groups[index].color = colors[laid.groups[index].id] ?? laid.groups[index].color }
         // A tie holds wires and groups' buses, which are named for their ports.
         let wires = Set(laid.relationships.map(\.id) + laid.groups.flatMap(\.ports).map(\.id))
         laid.zipTies = other.zipTies.compactMap { tie in
@@ -559,16 +584,7 @@ extension DataModel {
         for index in laid.relationships.indices {
             laid.relationships[index].zipTies = threaded[laid.relationships[index].id] ?? []
         }
-        let ports = Dictionary(other.groups.flatMap(\.ports).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for group in laid.groups.indices {
-            for index in laid.groups[group].ports.indices {
-                guard let port = ports[laid.groups[group].ports[index].id] else { continue }
-                laid.groups[group].ports[index].side = port.side
-                laid.groups[group].ports[index].along = port.along
-                laid.groups[group].ports[index].zipTies = port.zipTies
-            }
-        }
-        // Ties on wires or buses this model hasn't come off them.
+        // Ties on wires or buses this model hasn't come off them, and ports for columns it hasn't unplugged.
         laid.repair()
         return laid
     }

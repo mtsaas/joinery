@@ -45,7 +45,7 @@ struct CanvasCommands: Commands {
             }
             .keyboardShortcut("c", modifiers: [.command, .shift])
             .disabled(canvas == nil)
-            .help("The selected tables, or all of them, as Markdown to give an AI assistant: columns, SQL and notes")
+            .help("The selected tables, or all of them, as Markdown to give an AI assistant: columns, SQL and notes. Comparing versions, the changes")
             Button("Paste") { edit(#selector(NSText.paste(_:))) { $0.paste(into: &$1) } }
                 .keyboardShortcut("v")
             Button("Select All") { edit(#selector(NSText.selectAll(_:))) { canvas, model in canvas.selectAll(in: model) } }

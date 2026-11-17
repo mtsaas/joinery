@@ -4,8 +4,9 @@ import Foundation
 /// SQL to make them, and their notes.
 extension DataModel {
     /// `ids`, or every table if nil, as Markdown under `title`: a Tables section (each table's columns, keys and what
-    /// references it), a Schema section (PostgreSQL to create them) and a Notes section, if any have notes.
-    func markdown(of ids: Set<Table.ID>?, title: String) -> String {
+    /// references it), a Schema section (PostgreSQL to create them) and a Notes section, if any have notes. Without a
+    /// title, just the sections, to go in another document.
+    func markdown(of ids: Set<Table.ID>?, title: String?) -> String {
         let chosen = tables.filter { ids?.contains($0.id) ?? true }
         let owner = columnLocations
         let groupName = { (table: Table) in table.group.flatMap { id in self.groups.first { $0.id == id }?.name } }
@@ -15,8 +16,9 @@ extension DataModel {
         let referencing = Dictionary(grouping: relationships, by: \.from)
         let compoundKeys = compoundForeignKeys
 
-        var lines = ["# \(title)", ""]
-        if ids != nil, chosen.count < tables.count {
+        var lines: [String] = []
+        if let title { lines += ["# \(title)", ""] }
+        if title != nil, ids != nil, chosen.count < tables.count {
             lines += ["\(chosen.count) of the \(tables.count) tables in this data model.", ""]
         }
 
@@ -26,8 +28,10 @@ extension DataModel {
             if let schema = groupName(table) { lines.append("Schema: `\(schema)`") }
             lines += ["", "| Column | Type | Key | Required | References |", "|---|---|---|---|---|"]
             for column in table.columns {
-                let targets = referencing[column.id]?.compactMap { reference($0.to) } ?? []
-                let keys = [column.isPrimaryKey ? "PK" : nil, targets.isEmpty ? nil : "FK", column.isUnique ? "unique" : nil].compactMap { $0 }
+                let wires = referencing[column.id] ?? []
+                let targets = wires.compactMap { wire in reference(wire.to).map { wire.isImplicit ? "\($0) (implicit)" : $0 } }
+                let isForeignKey = wires.contains { !$0.isImplicit }
+                let keys = [column.isPrimaryKey ? "PK" : nil, isForeignKey ? "FK" : nil, column.isUnique ? "unique" : nil].compactMap { $0 }
                 lines.append("| \(column.name) | \(column.type.rawValue) | \(keys.joined(separator: ", ")) | "
                              + "\(column.isNullable ? "no" : "yes") | \(targets.joined(separator: ", ")) |")
             }
@@ -50,7 +54,7 @@ extension DataModel {
                 var part = "  \(Self.sqlName(column.name)) \(column.type.rawValue)"
                 if column.isPrimaryKey, keys.count == 1 { part += " PRIMARY KEY" } else if !column.isNullable { part += " NOT NULL" }
                 if column.isUnique, !column.isPrimaryKey { part += " UNIQUE" }
-                for relationship in referencing[column.id] ?? [] where !grouped.contains(relationship.id) {
+                for relationship in referencing[column.id] ?? [] where !grouped.contains(relationship.id) && !relationship.isImplicit {
                     guard let (target, row) = owner[relationship.to] else { continue }
                     part += " REFERENCES \(qualified(target)) (\(Self.sqlName(target.columns[row].name)))"
                 }

@@ -511,14 +511,14 @@ final class ModelPreviews {
     static func make(_ model: DataModel) -> Preview {
         let routing = Routing(model: model)
         let locations = model.columnLocations
-        let colors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, $0.table.color.color) } },
+        let colors = Dictionary(model.relationships.compactMap { r in locations[r.to].map { (r.id, r.isImplicit ? Theme.implicitWire : $0.table.color.color) } },
                                 uniquingKeysWith: { first, _ in first })
         return Preview(
             model: model,
             wires: model.relationships.compactMap { r in
                 routing.routes[r.id].map { (Path(smoothing: $0.points), colors[r.id] ?? .gray) }
             },
-            foreignKeys: Dictionary(model.relationships.compactMap { r in colors[r.id].map { (r.from, $0) } },
+            foreignKeys: Dictionary(model.relationships.compactMap { r in r.isImplicit ? nil : colors[r.id].map { (r.from, $0) } },
                                     uniquingKeysWith: { first, _ in first }),
             bounds: model.bounds)
     }

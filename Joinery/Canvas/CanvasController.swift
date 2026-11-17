@@ -69,11 +69,21 @@ final class CanvasController {
 
     /// The selected tables (and selected groups' tables), or every table with none selected, as Markdown for an AI
     /// assistant: their columns, the SQL to make them, and their notes.
+    /// With two versions' changes shown, what changed instead, for an assistant to make the same changes.
     func copyMarkdown(from model: DataModel, title: String) {
         let ids = model.clip(tables: selectedTables, groups: selectedGroups).tables.map(\.id)
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(model.markdown(of: ids.isEmpty ? nil : Set(ids), title: title), forType: .string)
+        NSPasteboard.general.setString(changes.map { $0.diff.markdown(from: $0.from, to: $0.to, title: title) }
+                                       ?? model.markdown(of: ids.isEmpty ? nil : Set(ids), title: title), forType: .string)
     }
+
+    /// Two versions' changes shown: the diff, and what to call each version.
+    struct Changes: Equatable {
+        var diff: SchemaDiff
+        var from: String
+        var to: String
+    }
+    var changes: Changes?
 
     /// Tables just copied that are joined to others: offered more of those to copy with them, until dismissed.
     var copiedTables: Set<Table.ID>?
@@ -231,9 +241,9 @@ final class CanvasController {
         if window != self.window { self.window = window }
     }
     var selection: Set<Item> = []
-    /// Showing something only its layout can change in, such as versions compared: tables move and wires are tied, but
-    /// no cell is edited, the designer only shows tables, and the palette and wheel leave out what would change the
-    /// schema. (Other edits are dropped by whatever keeps the layout.)
+    /// Showing something only its layout can change in, such as versions compared: tables move, resize, are grouped and
+    /// have their columns reordered, and wires are tied, but no cell is edited, the designer only shows tables, and the
+    /// palette and context menu leave out what would change the schema. (Other edits are dropped by whatever keeps the layout.)
     var isLayoutOnly = false {
         didSet {
             guard isLayoutOnly else { return }
@@ -261,21 +271,23 @@ final class CanvasController {
     #endif
     var showsPalette = false
 
-    /// The right-click command wheel, while it's open.
-    struct Wheel {
+    /// What was last right-clicked, and where, in canvas points: what the context menu is for.
+    struct ContextMenu {
         enum Target {
             case canvas, table(Table.ID), column(Column.ID, in: Table.ID), tie(ZipTie.ID), wire(WireSimulation.Hit), group(TableGroup.ID), port(GroupPort.ID)
         }
-        /// In view points.
-        var center: CGPoint
-        /// What was right-clicked, and where, in canvas points.
         var point: CGPoint
         var target: Target
     }
 
-    var wheel: Wheel?
-    /// A right-click to open the wheel for, in view points; the view works out what's under it.
-    var wheelRequest: CGPoint?
+    var contextMenu: ContextMenu?
+    /// A right-click to open the context menu for: where, in view points (the view works out what's under it), and
+    /// the click, to open the menu at.
+    struct MenuRequest: Equatable {
+        var point: CGPoint
+        var event: NSEvent
+    }
+    var menuRequest: MenuRequest?
     /// Which of the palette's matches is highlighted.
     var paletteHighlight = 0
 

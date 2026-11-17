@@ -258,6 +258,15 @@ struct Relationship: Codable, Identifiable, Equatable {
     var from: Column.ID
     var to: Column.ID
     var zipTies: [ZipTie.ID] = []
+    /// True for a relationship the data has but the database doesn't enforce: no foreign key constraint. Nil, not
+    /// false, otherwise, so files and shared sessions without it read as they did.
+    private var implicit: Bool?
+
+    /// Implicit, not a foreign key: drawn dashed and grey, and left out of the SQL's constraints.
+    var isImplicit: Bool {
+        get { implicit == true }
+        set { implicit = newValue ? true : nil }
+    }
 }
 
 /// Clamps wires side by side at one point, which they pass through square to the tie. Holding a single wire, it's a
