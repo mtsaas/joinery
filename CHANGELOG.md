@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.5.0](https://github.com/mtsaas/joinery/compare/joinery-v0.4.0...joinery-v0.5.0) (2026-11-25)
+
+
+### Features
+
+* branches in version history, drawn as a git-style graph ([cb6e381](https://github.com/mtsaas/joinery/commit/cb6e381ce4735fa778a90a9ce635b30e078cb4ed))
+* branches in version history, drawn as a git-style graph ([cba2ee7](https://github.com/mtsaas/joinery/commit/cba2ee7ceac53a0d6447156fa14dcf1d06ee3efb))
+* delete a branch by right-clicking any of its versions ([b289083](https://github.com/mtsaas/joinery/commit/b289083a79b578ad320707daf5ada7634c4cde3b))
+* delete branches, from version history and over MCP ([4541e69](https://github.com/mtsaas/joinery/commit/4541e691877fd10f9093ee355643d3ca6324dfdc))
+* **mcp:** list, create and check out branches ([ed48be4](https://github.com/mtsaas/joinery/commit/ed48be4f60b3656a0218d0ee2cf45401730e0da5))
+* show index, notes and schema changes in the diff ([ba73577](https://github.com/mtsaas/joinery/commit/ba735777d5207d9b47431fc0634b2e1673e0b362))
+* show index, notes and schema changes in the diff ([e19aaf0](https://github.com/mtsaas/joinery/commit/e19aaf054e73d1d33b6d2f3ded439e7a7e8a2985))
+
+
+### Bug Fixes
+
+* give Relationship an explicit init so Xcode 26 builds ([c99e309](https://github.com/mtsaas/joinery/commit/c99e309122857a44f0ce64c2192b762e62548536))
+* split diff report expressions Xcode 26 couldn't type-check in time ([a963382](https://github.com/mtsaas/joinery/commit/a963382bdd2085e931424ff5950e2dcec61f1c33))
+
 ## [0.4.0](https://github.com/mtsaas/joinery/compare/joinery-v0.3.2...joinery-v0.4.0) (2026-11-04)
 
 
