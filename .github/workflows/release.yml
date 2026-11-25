@@ -77,7 +77,7 @@ jobs:
   app:
     needs: release-please
     if: needs.release-please.outputs.app == 'true' || github.event_name == 'workflow_dispatch'
-    runs-on: macos-26
+    runs-on: xcode-27  # the app uses the macOS 27 SDK; macos-26 has only Xcode 26
     env:
       VERSION: ${{ inputs.version || needs.release-please.outputs.app_version }}
       TAG: joinery-v${{ inputs.version || needs.release-please.outputs.app_version }}
