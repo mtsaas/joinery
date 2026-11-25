@@ -229,6 +229,7 @@ struct LibraryTests {
         // From now: an idea, edited on its own branch.
         try open.startBranch(" idea/1 ", from: nil, of: Branches.main)
         #expect(open.branches.head == "idea-1")
+        #expect(open.history(of: "idea-1").versions.isEmpty)
         #expect(throws: OpenModel.BranchFailure.self) { try open.startBranch("IDEA-1", from: nil, of: Branches.main) }
         var idea = open.model
         idea.tables[0].name = "on_the_idea"
@@ -240,7 +241,7 @@ struct LibraryTests {
         #expect(!open.undoManager.canUndo)
         try open.checkOut("idea-1")
         #expect(open.model == idea)
-        #expect(open.history(of: "idea-1").versions.map(\.reason) == ["Before switching to main", "Branched from main"])
+        #expect(open.history(of: "idea-1").versions.map(\.reason) == ["Before switching to main"])
 
         // Kept in the package: opened again, it's still on the idea.
         let url = open.url

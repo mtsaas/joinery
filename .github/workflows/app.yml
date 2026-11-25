@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   app:
-    runs-on: macos-26
+    runs-on: xcode-27  # the app uses the macOS 27 SDK; macos-26 has only Xcode 26
     steps:
       - uses: actions/checkout@v4
       - name: Keep the core portable
