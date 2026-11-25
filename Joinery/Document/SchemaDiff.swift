@@ -1,10 +1,15 @@
 import Foundation
 
-/// What changed from one data model to another: tables, columns and foreign keys added, removed or changed. Tables and
-/// columns are matched by ID, so a rename is a change, not one removed and another added; foreign keys by the columns
-/// they join. Where things are, their colors, notes and sample data aren't changes.
+/// What changed from one data model to another: tables, columns, indexes, notes, schemas and foreign keys added,
+/// removed or changed. Tables, columns and indexes are matched by ID, so a rename is a change, not one removed and
+/// another added; foreign keys by the columns they join. Where things are, their colors and sample data aren't changes.
 struct SchemaDiff: Equatable {
     enum Change { case added, removed, modified }
+    /// A line about a table besides its columns: its schema, an index or a line of its notes, as it was or as it is.
+    struct Detail: Equatable {
+        var change: Change
+        var text: String
+    }
 
     /// The later model with everything removed since put back, where it was, to draw the two at once.
     private(set) var model: DataModel
@@ -15,6 +20,8 @@ struct SchemaDiff: Equatable {
     private(set) var formerly: Set<Column.ID> = []
     /// Renamed tables' earlier names.
     private(set) var oldNames: [Table.ID: String] = [:]
+    /// Tables' schema, index and notes changes, the old lines before the new; for tables added, all they have.
+    private(set) var details: [Table.ID: [Detail]] = [:]
 
     init(from before: DataModel, to after: DataModel) {
         model = after
@@ -25,9 +32,13 @@ struct SchemaDiff: Equatable {
             guard let old = earlier[table.id] else {
                 tables[table.id] = .added
                 for column in table.columns { columns[column.id] = .added }
+                let added = Self.details(from: nil, before, to: table, after)
+                if !added.isEmpty { details[table.id] = added }
                 continue
             }
             if old.name != table.name { oldNames[table.id] = old.name }
+            let changed = Self.details(from: old, before, to: table, after)
+            if !changed.isEmpty { details[table.id] = changed }
             let now = Set(table.columns.map(\.id))
             let then = Dictionary(old.columns.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             var merged: [Column] = []
@@ -52,7 +63,9 @@ struct SchemaDiff: Equatable {
                 merged.insert(column, at: at)
             }
             model.tables[index].columns = merged
-            if oldNames[table.id] != nil || merged.contains(where: { columns[$0.id] != nil }) { tables[table.id] = .modified }
+            if oldNames[table.id] != nil || details[table.id] != nil || merged.contains(where: { columns[$0.id] != nil }) {
+                tables[table.id] = .modified
+            }
         }
         // A removed table keeps its group, and a group removed with it comes back too, so laying them out keeps it.
         var groups = Set(after.groups.map(\.id))
@@ -92,6 +105,46 @@ struct SchemaDiff: Equatable {
         return UUID(uuid: bytes)
     }
 
+    /// How a table's schema, indexes and notes changed from `old` (nil, it's new): each changed index as it was then as
+    /// it is, matched by ID; notes line by line, all the old then all the new.
+    private static func details(from old: Table?, _ before: DataModel, to new: Table, _ after: DataModel) -> [Detail] {
+        func schema(_ table: Table?, _ model: DataModel) -> String? {
+            table?.group.flatMap { id in model.groups.first { $0.id == id }?.name }
+        }
+        func describe(_ index: TableIndex, in table: Table) -> String {
+            (index.isUnique ? "unique " : "") + "index \(table.name(of: index)) (\(table.columns(of: index).map(\.name).joined(separator: ", ")))"
+        }
+        func notes(_ table: Table?) -> [String] {
+            let text = table?.notes.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return text.isEmpty ? [] : text.components(separatedBy: .newlines).map { "note: \($0)" }
+        }
+        var lines: [Detail] = []
+        let then = schema(old, before), now = schema(new, after)
+        if then != now {
+            if let then { lines.append(Detail(change: .removed, text: "schema \(then)")) }
+            if let now { lines.append(Detail(change: .added, text: "schema \(now)")) }
+        }
+        // Colors aren't changes; what an index is on, whether it's unique and its name are.
+        let was = Dictionary((old?.liveIndexes ?? []).map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let kept = Set(new.liveIndexes.map(\.id))
+        for index in new.liveIndexes {
+            if let old, let former = was[index.id] {
+                guard old.columns(of: former).map(\.id) != new.columns(of: index).map(\.id) || former.isUnique != index.isUnique
+                        || former.name != index.name else { continue }
+                lines.append(Detail(change: .removed, text: describe(former, in: old)))
+            }
+            lines.append(Detail(change: .added, text: describe(index, in: new)))
+        }
+        if let old {
+            lines += old.liveIndexes.filter { !kept.contains($0.id) }.map { Detail(change: .removed, text: describe($0, in: old)) }
+        }
+        let oldNotes = notes(old), newNotes = notes(new)
+        if oldNotes != newNotes {
+            lines += oldNotes.map { Detail(change: .removed, text: $0) } + newNotes.map { Detail(change: .added, text: $0) }
+        }
+        return lines
+    }
+
     /// `model` without the tables and foreign keys removed: the changes to what's still there.
     var modelWithoutRemoved: DataModel {
         var shown = model
@@ -110,6 +163,11 @@ struct SchemaDiff: Equatable {
         // Columns of tables added or removed come with them; only the rest count, and a changed one once.
         let owners = model.columnLocations
         let changedColumns = columns.keys.count { !formerly.contains($0) && owners[$0].map { tables[$0.table.id] == .modified } ?? false }
+        // Tables changed only in their indexes, notes or schema, which nothing above counts.
+        let otherChanges = details.keys.count { id in
+            tables[id] == .modified && oldNames[id] == nil
+                && !(model.table(id)?.columns.contains { columns[$0.id] != nil } ?? false)
+        }
         var parts: [String] = []
         for (noun, changes) in [("table", tables), ("key", relationships)] {
             let added = count(changes, .added), removed = count(changes, .removed)
@@ -117,6 +175,7 @@ struct SchemaDiff: Equatable {
             if removed > 0 { parts.append((added > 0 ? "\(removed)" : plural(removed, noun)) + " removed") }
             if noun == "table", !oldNames.isEmpty { parts.append(plural(oldNames.count, "table") + " renamed") }
             if noun == "table", changedColumns > 0 { parts.append(plural(changedColumns, "column") + " changed") }
+            if noun == "table", otherChanges > 0 { parts.append("indexes, notes or schema changed on " + plural(otherChanges, "table")) }
         }
         return parts.isEmpty ? "No changes" : parts.joined(separator: ", ")
     }
@@ -138,7 +197,8 @@ extension SchemaDiff {
             lines += items
         }
         section("Tables added", model.tables.filter { tables[$0.id] == .added }.map { table in
-            "- \(table.name): " + table.columns.map(describe).joined(separator: ", ")
+            (["- \(table.name): " + table.columns.map(describe).joined(separator: ", ")] + (details[table.id] ?? []).map { "  \($0.text)" })
+                .joined(separator: "\n")
         })
         section("Tables removed", model.tables.filter { tables[$0.id] == .removed }.map { "- \($0.name)" })
         section("Tables changed", model.tables.filter { tables[$0.id] == .modified }.flatMap { table in
@@ -150,7 +210,7 @@ extension SchemaDiff {
                     table.columns.first { $0.id == Self.former(of: column.id) }.map { "  ~ \(describe($0)) → \(describe(column))" }
                 default: nil
                 }
-            }
+            } + (details[table.id] ?? []).map { "  \($0.change == .removed ? "-" : "+") \($0.text)" }
         })
         for (title, change) in [("Foreign keys added", Change.added), ("Foreign keys removed", .removed), ("Foreign keys changed", .modified)] {
             section(title, model.relationships.filter { relationships[$0.id] == change }.compactMap { relationship in
@@ -173,10 +233,13 @@ extension SchemaDiff {
             [column.name, column.type.rawValue, column.isNullable ? "nullable" : nil, column.isPrimaryKey ? "primary key" : nil,
              column.isUnique ? "unique" : nil].compactMap { $0 }.joined(separator: " ")
         }
+        func detailLines(_ table: Table) -> [String] {
+            (details[table.id] ?? []).map { "\($0.change == .removed ? "-" : "+")   \($0.text)" }
+        }
         var blocks: [[String]] = []
         for table in model.tables {
             switch tables[table.id] {
-            case .added: blocks.append(["+ table \(table.name)"] + table.columns.map { "+   \(describe($0))" })
+            case .added: blocks.append(["+ table \(table.name)"] + table.columns.map { "+   \(describe($0))" } + detailLines(table))
             case .removed: blocks.append(["- table \(table.name)"])
             case .modified:
                 // Old rows of changed columns sit just above the new, so in order they read as a patch does.
@@ -187,7 +250,7 @@ extension SchemaDiff {
                         case .removed: "-   \(describe(column))"
                         default: nil
                         }
-                    })
+                    } + detailLines(table))
             default: break
             }
         }
