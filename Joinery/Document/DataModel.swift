@@ -262,6 +262,14 @@ struct Relationship: Codable, Identifiable, Equatable {
     /// false, otherwise, so files and shared sessions without it read as they did.
     private var implicit: Bool?
 
+    /// Spelled out: older Swift (Xcode 26) makes the memberwise one private, for `implicit`.
+    init(id: ID = UUID(), from: Column.ID, to: Column.ID, zipTies: [ZipTie.ID] = []) {
+        self.id = id
+        self.from = from
+        self.to = to
+        self.zipTies = zipTies
+    }
+
     /// Implicit, not a foreign key: drawn dashed and grey, and left out of the SQL's constraints.
     var isImplicit: Bool {
         get { implicit == true }

@@ -1306,6 +1306,35 @@ struct JoineryTests {
             """))
         #expect(!markdown.contains("id uuid primary key"))
 
+        // Indexes, notes and schema are changes too; an index's color isn't.
+        var indexed = after
+        let orders = try #require(indexed.tables.firstIndex { $0.name == "orders" })
+        let amount = try #require(indexed.tables[orders].columns.first { $0.name == "amount" }).id
+        let note = try #require(indexed.tables[orders].columns.first { $0.name == "note" }).id
+        indexed.tables[orders].addIndex(on: [amount], isUnique: false)
+        indexed.tables[orders].notes = "Totals include tax."
+        indexed.groups.append(TableGroup(name: "billing", color: .pink))
+        indexed.tables[orders].group = indexed.groups[0].id
+        var reindexed = indexed
+        reindexed.tables[orders].indexes[0].columns.append(note)
+        reindexed.tables[orders].indexes[0].color = reindexed.tables[orders].indexes[0].color == .red ? .blue : .red
+        reindexed.tables[orders].notes = "Totals exclude tax."
+        let patch = SchemaDiff(from: indexed, to: reindexed)
+        #expect(patch.summary == "indexes, notes or schema changed on 1 table")
+        #expect(patch.markdown(from: "a", to: "b", title: "Shop").contains("""
+              table orders
+            -   index orders_amount_idx (amount)
+            +   index orders_amount_note_idx (amount, note)
+            -   note: Totals include tax.
+            +   note: Totals exclude tax.
+            """))
+        let added = SchemaDiff(from: after, to: indexed)
+        #expect(added.markdown(from: "a", to: "b", title: "Shop").contains("+   schema billing\n+   index orders_amount_idx (amount)\n+   note: Totals include tax."))
+        #expect(added.report(from: "a", to: "b").contains("  + index orders_amount_idx (amount)"))
+        var recolored = indexed
+        recolored.tables[orders].indexes[0].color = indexed.tables[orders].indexes[0].color == .red ? .blue : .red
+        #expect(SchemaDiff(from: indexed, to: recolored).isEmpty)
+
         // Only made implicit: a change, without a constraint.
         var implicit = after
         implicit.setImplicit(true, try #require(after.relationships.first).id)
