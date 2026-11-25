@@ -196,13 +196,15 @@ extension SchemaDiff {
             lines.append("\n\(title):")
             lines += items
         }
-        section("Tables added", model.tables.filter { tables[$0.id] == .added }.map { table in
-            (["- \(table.name): " + table.columns.map(describe).joined(separator: ", ")] + (details[table.id] ?? []).map { "  \($0.text)" })
-                .joined(separator: "\n")
+        section("Tables added", model.tables.filter { tables[$0.id] == .added }.map { table -> String in
+            let head = "- \(table.name): " + table.columns.map(describe).joined(separator: ", ")
+            let rest: [String] = (details[table.id] ?? []).map { "  \($0.text)" }
+            return ([head] + rest).joined(separator: "\n")
         })
         section("Tables removed", model.tables.filter { tables[$0.id] == .removed }.map { "- \($0.name)" })
-        section("Tables changed", model.tables.filter { tables[$0.id] == .modified }.flatMap { table in
-            ["- " + (oldNames[table.id].map { "\($0), renamed to \(table.name)" } ?? table.name)] + table.columns.compactMap { column in
+        section("Tables changed", model.tables.filter { tables[$0.id] == .modified }.flatMap { table -> [String] in
+            let head = "- " + (oldNames[table.id].map { "\($0), renamed to \(table.name)" } ?? table.name)
+            let changed: [String] = table.columns.compactMap { column -> String? in
                 switch columns[column.id] {
                 case .added: "  + \(describe(column))"
                 case .removed where !formerly.contains(column.id): "  - \(describe(column))"
@@ -210,7 +212,9 @@ extension SchemaDiff {
                     table.columns.first { $0.id == Self.former(of: column.id) }.map { "  ~ \(describe($0)) → \(describe(column))" }
                 default: nil
                 }
-            } + (details[table.id] ?? []).map { "  \($0.change == .removed ? "-" : "+") \($0.text)" }
+            }
+            let other: [String] = (details[table.id] ?? []).map { "  \($0.change == .removed ? "-" : "+") \($0.text)" }
+            return [head] + changed + other
         })
         for (title, change) in [("Foreign keys added", Change.added), ("Foreign keys removed", .removed), ("Foreign keys changed", .modified)] {
             section(title, model.relationships.filter { relationships[$0.id] == change }.compactMap { relationship in
@@ -239,18 +243,21 @@ extension SchemaDiff {
         var blocks: [[String]] = []
         for table in model.tables {
             switch tables[table.id] {
-            case .added: blocks.append(["+ table \(table.name)"] + table.columns.map { "+   \(describe($0))" } + detailLines(table))
+            case .added:
+                let added: [String] = table.columns.map { "+   \(describe($0))" }
+                blocks.append(["+ table \(table.name)"] + added + detailLines(table))
             case .removed: blocks.append(["- table \(table.name)"])
             case .modified:
                 // Old rows of changed columns sit just above the new, so in order they read as a patch does.
-                blocks.append((oldNames[table.id].map { ["- table \($0)", "+ table \(table.name)"] } ?? ["  table \(table.name)"])
-                    + table.columns.compactMap { column in
-                        switch columns[column.id] {
-                        case .added, .modified: "+   \(describe(column))"
-                        case .removed: "-   \(describe(column))"
-                        default: nil
-                        }
-                    } + detailLines(table))
+                let head: [String] = oldNames[table.id].map { ["- table \($0)", "+ table \(table.name)"] } ?? ["  table \(table.name)"]
+                let changed: [String] = table.columns.compactMap { column -> String? in
+                    switch columns[column.id] {
+                    case .added, .modified: "+   \(describe(column))"
+                    case .removed: "-   \(describe(column))"
+                    default: nil
+                    }
+                }
+                blocks.append(head + changed + detailLines(table))
             default: break
             }
         }
