@@ -104,11 +104,11 @@ final class OpenModel {
         if let taken = branches.named(name) { throw BranchFailure(errorDescription: "There's already a branch called “\(taken)”.") }
         var version = version, parent = parent
         if version == nil {
-            saveVersion("Before branching to \(name)")
+            try history.save(model, reason: "Before branching to \(name)")
             (version, parent) = (history.versions.first, branches.head)
         }
         guard let version else { throw BranchFailure(errorDescription: "There's no version to start it from.") }
-        try history(of: name).save(try DataModel(contentsOf: version.url), reason: "Branched from \(parent)")
+        // As in git it has no versions of its own until it's left: it starts as the one it was started from.
         var new = branches
         new.others.append(Branches.Branch(name: name, parent: parent, forked: version.date))
         try setBranches(new)
@@ -119,10 +119,11 @@ final class OpenModel {
     /// that branch's newest version. As in git it can't be undone; checking the other branch out again goes back.
     func checkOut(_ name: String) throws {
         guard let name = branches.named(name), name != branches.head else { return }
-        guard let tip = history(of: name).versions.first else { throw BranchFailure(errorDescription: "“\(name)” has no versions.") }
+        guard let tip = tip(of: name) else { throw BranchFailure(errorDescription: "“\(name)” has no versions.") }
         let new = try DataModel(contentsOf: tip.url)
         saveNow()
-        saveVersion("Before switching to \(name)")
+        // Even a new branch not changed yet, so it has a row in version history to check it out from.
+        try history.save(model, reason: "Before switching to \(name)")
         var switched = branches
         switched.head = name
         try setBranches(switched)
@@ -133,6 +134,14 @@ final class OpenModel {
         onChange?(ops)
         undoManager.removeAllActions()
         scheduleSave()
+    }
+
+    /// The branch called `name`'s newest version, or, with none of its own yet, the one it was started from.
+    func tip(of name: String) -> History.Version? {
+        if let newest = history(of: name).versions.first { return newest }
+        guard let branch = branches.others.first(where: { $0.name == name }) else { return nil }
+        let parent = history(of: branch.parent).versions
+        return parent.first { $0.date <= branch.forked.addingTimeInterval(0.0005) } ?? parent.last
     }
 
     /// Deletes the branch called `name` and its versions, for good. Branches started from it then start from where it
@@ -230,6 +239,8 @@ final class OpenModel {
 
     /// Saves the model as it is now as a version, to go back to. Failing to is no reason to stop the change coming.
     func saveVersion(_ reason: String) {
+        // A new branch, not changed yet, is the version it started from: keeping that again would only repeat it.
+        if history.versions.isEmpty, let tip = tip(of: branches.head), (try? DataModel(contentsOf: tip.url)) == model { return }
         try? history.save(model, reason: reason)
     }
 
@@ -275,11 +286,12 @@ final class OpenModel {
         let moves = Set(model.tables.compactMap { table in
             positions[table.id].flatMap { $0 == table.position ? nil : [$0.x - table.position.x, $0.y - table.position.y] }
         })
+        let tip = tip(of: branches.head)
         if !deleted.isEmpty {
             saveVersion("Before deleting " + (deleted.count == 1 ? deleted[0] : "\(deleted.count) tables"))
         } else if moves.count >= 4 {
             saveVersion("Before rearranging tables")
-        } else if history.versions.first.map({ Date.now.timeIntervalSince($0.date) > 3600 }) ?? true {
+        } else if tip.map({ Date.now.timeIntervalSince($0.date) > 3600 }) ?? true {
             saveVersion("While editing")
         }
         let next = Replica(new, keeping: replica, was: model)
